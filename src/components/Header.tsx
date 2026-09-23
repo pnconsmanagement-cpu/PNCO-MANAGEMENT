@@ -12,6 +12,8 @@ interface HeaderProps {
   onOpenBatchZalo?: () => void;
   onToggleSidebar?: () => void;
   onOpenSupabaseModal?: () => void;
+  cloudSyncStatus?: 'synced' | 'syncing' | 'error' | 'idle';
+  lastSyncedText?: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,6 +25,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBatchZalo,
   onToggleSidebar,
   onOpenSupabaseModal,
+  cloudSyncStatus = 'idle',
+  lastSyncedText,
 }) => {
   const isZaloReady = Boolean(config.zaloOA?.oaId && config.zaloOA?.accessToken);
 
@@ -107,20 +111,50 @@ export const Header: React.FC<HeaderProps> = ({
               id="btn-header-supabase"
               onClick={onOpenSupabaseModal}
               className={`px-2.5 sm:px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border ${
-                isSupabaseConfigured()
+                cloudSyncStatus === 'syncing'
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white border-amber-300 animate-pulse'
+                  : cloudSyncStatus === 'error'
+                  ? 'bg-rose-700 hover:bg-rose-600 text-white border-rose-400'
+                  : isSupabaseConfigured()
                   ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-400'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 ring-2 ring-emerald-400/30'
               }`}
-              title="Cấu hình kết nối Supabase Cloud & Đồng bộ dữ liệu"
+              title={
+                isSupabaseConfigured()
+                  ? `Supabase Cloud Online • ${
+                      cloudSyncStatus === 'syncing'
+                        ? 'Đang lưu lên Cloud...'
+                        : cloudSyncStatus === 'error'
+                        ? 'Có lỗi đồng bộ'
+                        : lastSyncedText
+                        ? `Đã lưu: ${lastSyncedText}`
+                        : 'Sẵn sàng đồng bộ'
+                    }`
+                  : 'Cấu hình kết nối Supabase Cloud & Đồng bộ dữ liệu'
+              }
             >
               <Database className="w-3.5 h-3.5 text-white" />
               <span className="hidden sm:inline">
-                {isSupabaseConfigured() ? 'Supabase Cloud' : 'Kết Nối Supabase'}
+                {cloudSyncStatus === 'syncing'
+                  ? 'Đang lưu Cloud...'
+                  : cloudSyncStatus === 'error'
+                  ? 'Lỗi Cloud'
+                  : isSupabaseConfigured()
+                  ? 'Supabase Cloud'
+                  : 'Kết Nối Supabase'}
               </span>
-              <span className="sm:hidden">Supabase</span>
+              <span className="sm:hidden">
+                {cloudSyncStatus === 'syncing' ? 'Lưu...' : 'Supabase'}
+              </span>
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isSupabaseConfigured() ? 'bg-emerald-300' : 'bg-amber-300 animate-pulse'
+                  cloudSyncStatus === 'syncing'
+                    ? 'bg-white animate-spin'
+                    : cloudSyncStatus === 'error'
+                    ? 'bg-rose-300 animate-ping'
+                    : isSupabaseConfigured()
+                    ? 'bg-emerald-300 shadow-[0_0_6px_#34d399]'
+                    : 'bg-amber-300 animate-pulse'
                 }`}
               />
             </button>

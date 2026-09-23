@@ -21,6 +21,8 @@ import {
   loadCompanyConfigFromSupabase,
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
+  syncAllDataToSupabase,
+  getLastSyncedTime,
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
 import { initialSeasonalWorkers, recomputeSeasonalWorkerPayroll as recomputeSeasonal } from './data/mockSeasonalWorkers';
@@ -105,6 +107,8 @@ export default function App() {
   const [isZaloSettingsOpen, setIsZaloSettingsOpen] = useState(false);
   const [isBatchZaloOpen, setIsBatchZaloOpen] = useState(false);
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'idle'>('idle');
+  const [lastSyncedText, setLastSyncedText] = useState<string | null>(getLastSyncedTime());
 
   // Persistence LocalStorage
   useEffect(() => {
@@ -119,25 +123,75 @@ export default function App() {
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(seasonalWorkers));
   }, [seasonalWorkers]);
 
-  // Tự động kiểm tra và đồng bộ dữ liệu từ Supabase Cloud khi có cấu hình
+  // Khởi động: Tải dữ liệu từ Supabase Cloud hoặc tự động khởi tạo dữ liệu ban đầu lên Cloud
   useEffect(() => {
     if (isSupabaseConfigured()) {
       (async () => {
         try {
+          setCloudSyncStatus('syncing');
           const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
             loadCompanyConfigFromSupabase(),
             loadEmployeesFromSupabase(config.periodCode),
             loadSeasonalWorkersFromSupabase(config.periodCode),
           ]);
-          if (cloudCfg) setConfig(cloudCfg);
-          if (cloudEmp && cloudEmp.length > 0) setEmployees(cloudEmp);
-          if (cloudSea && cloudSea.length > 0) setSeasonalWorkers(cloudSea);
+
+          let hasAnyDataOnCloud = false;
+          if (cloudCfg) {
+            setConfig(cloudCfg);
+            hasAnyDataOnCloud = true;
+          }
+          if (cloudEmp && cloudEmp.length > 0) {
+            setEmployees(cloudEmp);
+            hasAnyDataOnCloud = true;
+          }
+          if (cloudSea && cloudSea.length > 0) {
+            setSeasonalWorkers(cloudSea);
+            hasAnyDataOnCloud = true;
+          }
+
+          // Nếu Supabase chưa có bản ghi nào (mới tạo bảng), tự động đẩy dữ liệu hiện có lên luôn
+          if (!hasAnyDataOnCloud) {
+            const report = await syncAllDataToSupabase(config, employees, seasonalWorkers);
+            if (report.success) {
+              setCloudSyncStatus('synced');
+              setLastSyncedText(getLastSyncedTime());
+            } else {
+              setCloudSyncStatus('error');
+            }
+          } else {
+            setCloudSyncStatus('synced');
+            setLastSyncedText(getLastSyncedTime());
+          }
         } catch (e) {
-          console.warn('Initial cloud sync:', e);
+          console.warn('Initial cloud sync error:', e);
+          setCloudSyncStatus('error');
         }
       })();
     }
   }, []);
+
+  // Tự động lưu lên Supabase Cloud khi có thay đổi dữ liệu (Debounce 2 giây)
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        setCloudSyncStatus('syncing');
+        const report = await syncAllDataToSupabase(config, employees, seasonalWorkers);
+        if (report.success) {
+          setCloudSyncStatus('synced');
+          setLastSyncedText(getLastSyncedTime());
+        } else {
+          setCloudSyncStatus('error');
+        }
+      } catch (err) {
+        console.warn('Auto cloud sync failed:', err);
+        setCloudSyncStatus('error');
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [config, employees, seasonalWorkers]);
 
   // Cập nhật công nhân thời vụ - đảm bảo so khớp ID chính xác
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
@@ -279,6 +333,8 @@ export default function App() {
         onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
         onToggleSidebar={() => setIsSidebarMobileOpen((prev) => !prev)}
         onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+        cloudSyncStatus={cloudSyncStatus}
+        lastSyncedText={lastSyncedText}
       />
 
       {/* Main Layout: Sidebar on Left + Content on Right */}
@@ -296,6 +352,7 @@ export default function App() {
           onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
           onOpenCompanyModal={() => setIsCompanyOpen(true)}
           onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+          cloudSyncStatus={cloudSyncStatus}
         />
 
         {/* Right Main Content Area */}
@@ -471,6 +528,12 @@ export default function App() {
           if (newCfg) setConfig(newCfg);
           if (newEmps && newEmps.length > 0) setEmployees(newEmps);
           if (newSeas && newSeas.length > 0) setSeasonalWorkers(newSeas);
+          setCloudSyncStatus('synced');
+          setLastSyncedText(getLastSyncedTime());
+        }}
+        onSyncSuccess={() => {
+          setCloudSyncStatus('synced');
+          setLastSyncedText(getLastSyncedTime());
         }}
       />
     </div>

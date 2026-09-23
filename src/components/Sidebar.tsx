@@ -32,6 +32,7 @@ interface SidebarProps {
   onOpenBatchZalo?: () => void;
   onOpenCompanyModal?: () => void;
   onOpenSupabaseModal?: () => void;
+  cloudSyncStatus?: 'synced' | 'syncing' | 'error' | 'idle';
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -46,6 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenBatchZalo,
   onOpenCompanyModal,
   onOpenSupabaseModal,
+  cloudSyncStatus = 'idle',
 }) => {
   interface NavMenuItem {
     id: TabType;
@@ -275,21 +277,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isSupabaseConfigured()
+                  cloudSyncStatus === 'syncing'
+                    ? 'bg-amber-300 animate-pulse'
+                    : cloudSyncStatus === 'error'
+                    ? 'bg-rose-400 animate-ping'
+                    : isSupabaseConfigured()
                     ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
                     : 'bg-amber-400'
                 }`}
-                title={isSupabaseConfigured() ? 'Đã liên kết Supabase' : 'Chưa cấu hình Supabase'}
+                title={
+                  cloudSyncStatus === 'syncing'
+                    ? 'Đang đồng bộ lên Supabase...'
+                    : cloudSyncStatus === 'error'
+                    ? 'Lỗi đồng bộ'
+                    : isSupabaseConfigured()
+                    ? 'Đã liên kết Supabase'
+                    : 'Chưa cấu hình Supabase'
+                }
               />
             </div>
             <p className="text-[10px] text-slate-300 mb-2 leading-tight">
-              {isSupabaseConfigured()
-                ? 'Đã liên kết DB đám mây • Sẵn sàng đồng bộ'
+              {cloudSyncStatus === 'syncing'
+                ? 'Đang đồng bộ dữ liệu lên Cloud...'
+                : cloudSyncStatus === 'error'
+                ? 'Có lỗi đồng bộ • Bấm để xem chi tiết'
+                : isSupabaseConfigured()
+                ? 'Đã liên kết DB đám mây • Tự động lưu'
                 : 'Lưu trữ online & Deploy Vercel'}
             </p>
             <button
               onClick={onOpenSupabaseModal}
-              className="w-full py-1.5 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+              className={`w-full py-1.5 px-2 rounded text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer ${
+                cloudSyncStatus === 'syncing'
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
             >
               <Cloud className="w-3.5 h-3.5" />
               <span>{isSupabaseConfigured() ? 'Quản lý Supabase Cloud' : 'Cấu hình kết nối ngay'}</span>
