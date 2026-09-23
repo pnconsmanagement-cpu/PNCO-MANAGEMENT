@@ -1,0 +1,6 @@
+{
+  "name": "Hệ Thống Chấm Công & Tính Lương",
+  "description": "Quản lý chấm công, tính lương nhân viên chính thức và nhân lực thời vụ công trình (lương tuần), in phiếu lương Mẫu 02-LĐTL, Mẫu 03-LĐTL và xuất file chi trả ngân hàng.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
