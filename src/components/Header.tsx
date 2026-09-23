@@ -1,6 +1,7 @@
 import React from 'react';
-import { Upload, Download, Building2, Calendar, Zap, Settings } from 'lucide-react';
+import { Upload, Download, Building2, Calendar, Zap, Settings, Menu, Database } from 'lucide-react';
 import { CompanyConfig } from '../types';
+import { isSupabaseConfigured } from '../services/supabaseService';
 
 interface HeaderProps {
   config: CompanyConfig;
@@ -9,6 +10,8 @@ interface HeaderProps {
   onEditCompany: () => void;
   onOpenZaloSettings?: () => void;
   onOpenBatchZalo?: () => void;
+  onToggleSidebar?: () => void;
+  onOpenSupabaseModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,46 +21,69 @@ export const Header: React.FC<HeaderProps> = ({
   onEditCompany,
   onOpenZaloSettings,
   onOpenBatchZalo,
+  onToggleSidebar,
+  onOpenSupabaseModal,
 }) => {
   const isZaloReady = Boolean(config.zaloOA?.oaId && config.zaloOA?.accessToken);
 
   return (
-    <header className="bg-[#0f3d64] text-white shadow-md">
-      <div className="max-w-[1700px] mx-auto px-4 sm:px-6 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div 
+    <header className="bg-[#09233b] text-white shadow-md border-b border-[#13375c] no-print">
+      <div className="w-full px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+        {/* Left: Mobile hamburger & Brand info */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="p-2 -ml-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 md:hidden cursor-pointer"
+              title="Mở menu"
+              aria-label="Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
+
+          <div
             onClick={onEditCompany}
-            className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center cursor-pointer hover:bg-white/20 transition-colors"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-sky-500/20 border border-sky-400/30 flex items-center justify-center cursor-pointer hover:bg-sky-500/30 transition-colors shrink-0"
             title="Chỉnh sửa thông tin công ty"
           >
-            <Building2 className="w-6 h-6 text-sky-200" />
+            <Building2 className="w-5 h-5 text-sky-200" />
           </div>
-          <div>
-            <h1 className="text-lg font-bold uppercase tracking-wide flex items-center gap-2">
-              <span>{config.name}</span>
+
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-base font-bold uppercase tracking-wide flex items-center gap-2 truncate text-white">
+              <span className="truncate">{config.name}</span>
             </h1>
-            <p className="text-xs text-sky-100 flex items-center gap-2 mt-0.5">
-              <Calendar className="w-3.5 h-3.5 opacity-80" />
-              <span>{config.period}</span>
-              <span className="opacity-40">•</span>
-              <span>Ngày chi trả: <strong>{config.paymentDate}</strong></span>
-              <span className="opacity-40">•</span>
-              <span>Ngày công chuẩn: <strong>{config.standardWorkDays} ngày</strong></span>
+            <p className="text-[11px] sm:text-xs text-sky-200 flex flex-wrap items-center gap-1.5 sm:gap-2 mt-0.5">
+              <span className="flex items-center gap-1 font-semibold text-sky-100">
+                <Calendar className="w-3.5 h-3.5 text-sky-400" />
+                {config.period}
+              </span>
+              <span className="opacity-40 hidden sm:inline">•</span>
+              <span className="hidden sm:inline">
+                Ngày chi trả: <strong className="text-white">{config.paymentDate}</strong>
+              </span>
+              <span className="opacity-40 hidden md:inline">•</span>
+              <span className="hidden md:inline">
+                Ngày công chuẩn: <strong className="text-white">{config.standardWorkDays} ngày</strong>
+              </span>
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Right: Actions */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Zalo OA Buttons */}
           {onOpenBatchZalo && (
             <button
               id="btn-header-batch-zalo"
               onClick={onOpenBatchZalo}
-              className="px-3 py-1.5 bg-[#0068FF] hover:bg-[#0052cc] text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border border-blue-400"
+              className="px-2.5 sm:px-3 py-1.5 bg-[#0068FF] hover:bg-[#0052cc] text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border border-blue-400"
               title="Gửi phiếu lương tự động qua Zalo OA cho toàn bộ công nhân & nhân viên"
             >
               <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-              <span>Gửi Zalo OA</span>
+              <span className="hidden sm:inline">Gửi Zalo OA</span>
+              <span className="sm:hidden">Zalo</span>
             </button>
           )}
 
@@ -65,36 +91,63 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="btn-header-zalo-settings"
               onClick={onOpenZaloSettings}
-              className="px-2.5 py-1.5 bg-white/15 hover:bg-white/25 text-sky-100 rounded text-xs font-medium flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+              className="px-2 sm:px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-sky-100 rounded text-xs font-medium flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
               title="Cấu hình Zalo OA (Access Token, OA ID, Template ZNS)"
             >
               <Settings className="w-3.5 h-3.5 text-sky-200" />
-              <span>Cài đặt OA</span>
+              <span className="hidden md:inline">Cài đặt OA</span>
               {isZaloReady && (
                 <span className="w-2 h-2 rounded-full bg-emerald-400" title="Đã có cấu hình Zalo OA" />
               )}
             </button>
           )}
 
+          {onOpenSupabaseModal && (
+            <button
+              id="btn-header-supabase"
+              onClick={onOpenSupabaseModal}
+              className={`px-2.5 sm:px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border ${
+                isSupabaseConfigured()
+                  ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-400'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 ring-2 ring-emerald-400/30'
+              }`}
+              title="Cấu hình kết nối Supabase Cloud & Đồng bộ dữ liệu"
+            >
+              <Database className="w-3.5 h-3.5 text-white" />
+              <span className="hidden sm:inline">
+                {isSupabaseConfigured() ? 'Supabase Cloud' : 'Kết Nối Supabase'}
+              </span>
+              <span className="sm:hidden">Supabase</span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isSupabaseConfigured() ? 'bg-emerald-300' : 'bg-amber-300 animate-pulse'
+                }`}
+              />
+            </button>
+          )}
+
           <button
             id="btn-upload-payroll"
             onClick={onOpenImport}
-            className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap"
+            className="px-2.5 sm:px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>↑ Nạp bảng lương</span>
+            <span className="hidden sm:inline">↑ Nạp bảng lương</span>
+            <span className="sm:hidden">Nạp</span>
           </button>
           <button
             id="btn-export-bank"
             onClick={onOpenBankExport}
-            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap"
+            className="px-2.5 sm:px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>↓ Xuất CK (CSV)</span>
+            <span className="hidden sm:inline">↓ Xuất CK (CSV)</span>
+            <span className="sm:hidden">Xuất CK</span>
           </button>
         </div>
       </div>
     </header>
   );
 };
+
 

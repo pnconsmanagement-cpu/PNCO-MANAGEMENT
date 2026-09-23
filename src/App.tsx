@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
 import { MetricCards } from './components/MetricCards';
-import { NavigationTabs, TabType } from './components/NavigationTabs';
+import { TabType } from './components/NavigationTabs';
 import { PayslipTab } from './components/PayslipTab';
 import { DepartmentSummaryTab } from './components/DepartmentSummaryTab';
 import { PayrollTableTab } from './components/PayrollTableTab';
@@ -14,6 +15,13 @@ import { ImportModal } from './components/ImportModal';
 import { CompanyModal } from './components/CompanyModal';
 import { ZaloOASettingsModal } from './components/ZaloOASettingsModal';
 import { BatchSendZaloModal } from './components/BatchSendZaloModal';
+import { SupabaseSyncModal } from './components/SupabaseSyncModal';
+import {
+  isSupabaseConfigured,
+  loadCompanyConfigFromSupabase,
+  loadEmployeesFromSupabase,
+  loadSeasonalWorkersFromSupabase,
+} from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
 import { initialSeasonalWorkers, recomputeSeasonalWorkerPayroll as recomputeSeasonal } from './data/mockSeasonalWorkers';
 import { CompanyConfig, Employee, SeasonalWorker } from './types';
@@ -90,13 +98,15 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<TabType>('PAYSLIP');
+  const [isSidebarMobileOpen, setIsSidebarMobileOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isBankExportOpen, setIsBankExportOpen] = useState(false);
   const [isCompanyOpen, setIsCompanyOpen] = useState(false);
   const [isZaloSettingsOpen, setIsZaloSettingsOpen] = useState(false);
   const [isBatchZaloOpen, setIsBatchZaloOpen] = useState(false);
+  const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
 
-  // Persistence
+  // Persistence LocalStorage
   useEffect(() => {
     localStorage.setItem('payroll_company_config', JSON.stringify(config));
   }, [config]);
@@ -108,6 +118,26 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(seasonalWorkers));
   }, [seasonalWorkers]);
+
+  // Tự động kiểm tra và đồng bộ dữ liệu từ Supabase Cloud khi có cấu hình
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      (async () => {
+        try {
+          const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
+            loadCompanyConfigFromSupabase(),
+            loadEmployeesFromSupabase(config.periodCode),
+            loadSeasonalWorkersFromSupabase(config.periodCode),
+          ]);
+          if (cloudCfg) setConfig(cloudCfg);
+          if (cloudEmp && cloudEmp.length > 0) setEmployees(cloudEmp);
+          if (cloudSea && cloudSea.length > 0) setSeasonalWorkers(cloudSea);
+        } catch (e) {
+          console.warn('Initial cloud sync:', e);
+        }
+      })();
+    }
+  }, []);
 
   // Cập nhật công nhân thời vụ - đảm bảo so khớp ID chính xác
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
@@ -247,27 +277,37 @@ export default function App() {
         onEditCompany={() => setIsCompanyOpen(true)}
         onOpenZaloSettings={() => setIsZaloSettingsOpen(true)}
         onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
+        onToggleSidebar={() => setIsSidebarMobileOpen((prev) => !prev)}
+        onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
       />
 
-      {/* Main Content Area */}
-      <main className="max-w-[1700px] w-full mx-auto p-3 sm:p-5 flex-1 flex flex-col">
-        {/* Metric Summary Cards */}
-        <div className="no-print">
-          <MetricCards employees={employees} />
-        </div>
+      {/* Main Layout: Sidebar on Left + Content on Right */}
+      <div className="flex flex-1 min-h-[calc(100vh-60px)] relative">
+        {/* Left Sidebar Navigation */}
+        <Sidebar
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          auditIssuesCount={auditCount}
+          seasonalCount={seasonalWorkers.length}
+          employeeCount={employees.length}
+          config={config}
+          isOpenMobile={isSidebarMobileOpen}
+          onCloseMobile={() => setIsSidebarMobileOpen(false)}
+          onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
+          onOpenCompanyModal={() => setIsCompanyOpen(true)}
+          onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+        />
 
-        {/* Navigation Tabs */}
-        <div className="no-print">
-          <NavigationTabs
-            activeTab={activeTab}
-            onSelectTab={setActiveTab}
-            auditIssuesCount={auditCount}
-            seasonalCount={seasonalWorkers.length}
-          />
-        </div>
+        {/* Right Main Content Area */}
+        <main className="flex-1 min-w-0 bg-slate-100 p-3 sm:p-5 flex flex-col overflow-x-hidden">
+          <div className="w-full mx-auto flex-1 flex flex-col">
+            {/* Metric Summary Cards */}
+            <div className="no-print">
+              <MetricCards employees={employees} />
+            </div>
 
-        {/* Tab Views */}
-        <div className="flex-1">
+            {/* Tab Views */}
+            <div className="flex-1">
           {activeTab === 'PAYSLIP' && (
             <PayslipTab
               employees={employees}
@@ -357,8 +397,10 @@ export default function App() {
               onResetWorkers={handleResetSeasonalWorkers}
             />
           )}
-        </div>
-      </main>
+            </div>
+          </div>
+        </main>
+      </div>
 
       {/* Modals */}
       <ImportModal
@@ -416,6 +458,19 @@ export default function App() {
         onOpenSettings={() => {
           setIsBatchZaloOpen(false);
           setIsZaloSettingsOpen(true);
+        }}
+      />
+
+      <SupabaseSyncModal
+        isOpen={isSupabaseOpen}
+        onClose={() => setIsSupabaseOpen(false)}
+        config={config}
+        employees={employees}
+        seasonalWorkers={seasonalWorkers}
+        onDataLoadedFromCloud={({ config: newCfg, employees: newEmps, seasonalWorkers: newSeas }) => {
+          if (newCfg) setConfig(newCfg);
+          if (newEmps && newEmps.length > 0) setEmployees(newEmps);
+          if (newSeas && newSeas.length > 0) setSeasonalWorkers(newSeas);
         }}
       />
     </div>
