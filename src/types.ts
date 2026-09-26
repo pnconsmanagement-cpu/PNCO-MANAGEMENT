@@ -64,11 +64,13 @@ export interface Employee {
   contractFileUrl?: string; // Đường dẫn URL file Hợp đồng lao động (Google Drive, OneDrive, file nội bộ...)
   contractFileName?: string; // Tên file tài liệu đính kèm (vd: HDLD_PNC0001.pdf)
   contractAddendums?: ContractAddendum[]; // Phụ lục hợp đồng & Lịch sử nâng lương hàng năm
+  sortOrder?: number; // Thứ tự sắp xếp STT hiển thị cố định giữa các máy tính
 }
 
 export interface SeasonalWorker {
   id: string; // STT / ID
   code: string; // PNC-TV01, PNC-TV02...
+  sortOrder?: number; // Thứ tự sắp xếp STT hiển thị cố định giữa các máy tính
   fullName: string; // Họ tên công nhân kỹ thuật
   trade: string; // Nghề / Chuyên môn: Thợ hàn kết cấu, Thợ điện M&E, Thợ lắp ống PCCC, Thợ HVAC, Thợ cơ khí, Thợ phụ công trình...
   skillLevel: string; // Bậc thợ / Tay nghề: Thợ bậc 4/7, Thợ chính, Thợ 6G, Thợ phụ, Thợ lành nghề...

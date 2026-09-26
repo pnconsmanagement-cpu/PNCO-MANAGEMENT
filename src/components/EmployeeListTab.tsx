@@ -161,6 +161,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
       }
 
       return matchSearch && matchDept && matchStatus && matchAttendance && matchContract;
+    }).sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [employees, searchTerm, selectedDept, statusFilter, attendanceFilter, contractFilter]);
 

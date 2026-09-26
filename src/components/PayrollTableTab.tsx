@@ -84,6 +84,11 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         e.code.toLowerCase().includes(term) ||
         e.title.toLowerCase().includes(term);
       return matchDept && matchSearch;
+    }).sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [employees, selectedDept, searchTerm, attendanceOnly, salaryTypeFilter, showResignedHistory]);
 

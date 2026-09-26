@@ -22,6 +22,7 @@ import {
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
   syncAllDataToSupabase,
+  syncSeasonalWorkersToSupabase,
   getLastSyncedTime,
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
@@ -56,7 +57,7 @@ export default function App() {
         // BẢO LƯU 100% DỮ LIỆU NGƯỜI DÙNG:
         // Luôn giữ nguyên dữ liệu nhân viên đã được chỉnh sửa hoặc thêm mới
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((emp) => {
+          const list = parsed.map((emp) => {
             const withContract = ensureEmployeeContract(emp);
             if (withContract.code === 'PNC0008' && (withContract.baseSalary === 16000000 || withContract.actualWorkDays === 2 || withContract.actualWorkDays === 0)) {
               withContract.baseSalary = 11500000;
@@ -72,6 +73,12 @@ export default function App() {
               withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 7000000;
             }
             return recomputeEmployeePayroll(withContract);
+          });
+          return list.sort((a, b) => {
+            if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+              return a.sortOrder - b.sortOrder;
+            }
+            return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
           });
         }
       } catch (e) {
@@ -90,7 +97,13 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.map((w) => recomputeSeasonal(w));
+          const list = parsed.map((w) => recomputeSeasonal(w));
+          return list.sort((a, b) => {
+            if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+              return a.sortOrder - b.sortOrder;
+            }
+            return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+          });
         }
       } catch (e) {
         console.error('Error parsing saved seasonal workers', e);
@@ -138,14 +151,17 @@ export default function App() {
           let hasAnyDataOnCloud = false;
           if (cloudCfg) {
             setConfig(cloudCfg);
+            localStorage.setItem('payroll_company_config', JSON.stringify(cloudCfg));
             hasAnyDataOnCloud = true;
           }
           if (cloudEmp && cloudEmp.length > 0) {
             setEmployees(cloudEmp);
+            localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
             hasAnyDataOnCloud = true;
           }
           if (cloudSea && cloudSea.length > 0) {
             setSeasonalWorkers(cloudSea);
+            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(cloudSea));
             hasAnyDataOnCloud = true;
           }
 
@@ -203,7 +219,22 @@ export default function App() {
 
   const handleAddSeasonalWorker = (newWorker: SeasonalWorker) => {
     const recalculated = recomputeSeasonal(newWorker);
-    setSeasonalWorkers((prev) => [recalculated, ...prev]);
+    setSeasonalWorkers((prev) => {
+      const maxOrder = prev.reduce((max, w) => Math.max(max, w.sortOrder || 0), 0);
+      const workerWithOrder: SeasonalWorker = {
+        ...recalculated,
+        sortOrder: recalculated.sortOrder || (maxOrder + 1),
+      };
+      return [...prev, workerWithOrder];
+    });
+  };
+
+  const handleReorderSeasonalWorkers = (reordered: SeasonalWorker[]) => {
+    setSeasonalWorkers(reordered);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(reordered));
+    if (isSupabaseConfigured()) {
+      syncSeasonalWorkersToSupabase(reordered, config.periodCode);
+    }
   };
 
   const handleDeleteSeasonalWorker = (id: string) => {
@@ -452,6 +483,7 @@ export default function App() {
               onDeleteBatchWorkers={handleDeleteBatchSeasonalWorkers}
               onClearAllWorkers={handleClearAllSeasonalWorkers}
               onResetWorkers={handleResetSeasonalWorkers}
+              onReorderWorkers={handleReorderSeasonalWorkers}
             />
           )}
             </div>
@@ -525,9 +557,18 @@ export default function App() {
         employees={employees}
         seasonalWorkers={seasonalWorkers}
         onDataLoadedFromCloud={({ config: newCfg, employees: newEmps, seasonalWorkers: newSeas }) => {
-          if (newCfg) setConfig(newCfg);
-          if (newEmps && newEmps.length > 0) setEmployees(newEmps);
-          if (newSeas && newSeas.length > 0) setSeasonalWorkers(newSeas);
+          if (newCfg) {
+            setConfig(newCfg);
+            localStorage.setItem('payroll_company_config', JSON.stringify(newCfg));
+          }
+          if (newEmps && newEmps.length > 0) {
+            setEmployees(newEmps);
+            localStorage.setItem('payroll_employees', JSON.stringify(newEmps));
+          }
+          if (newSeas && newSeas.length > 0) {
+            setSeasonalWorkers(newSeas);
+            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(newSeas));
+          }
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());
         }}

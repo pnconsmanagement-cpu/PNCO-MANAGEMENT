@@ -33,6 +33,10 @@ import {
   Sparkles,
   Layers,
   ArrowRightLeft,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ListOrdered,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption } from '../types';
@@ -55,6 +59,9 @@ import {
   downloadSeasonalWorkersBatchHTML,
 } from '../utils/printPayrollReceipt';
 
+export type WorkerSortField = 'default' | 'code' | 'name' | 'dailyRate' | 'actualWorkDays' | 'netSalary';
+export type SortDirection = 'asc' | 'desc';
+
 interface SeasonalWorkersTabProps {
   workers: SeasonalWorker[];
   config: CompanyConfig;
@@ -65,6 +72,7 @@ interface SeasonalWorkersTabProps {
   onDeleteBatchWorkers?: (ids: string[]) => void;
   onClearAllWorkers?: () => void;
   onResetWorkers: () => void;
+  onReorderWorkers?: (workers: SeasonalWorker[]) => void;
 }
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
@@ -77,6 +85,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   onDeleteBatchWorkers,
   onClearAllWorkers,
   onResetWorkers,
+  onReorderWorkers,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState('ALL');
@@ -133,6 +142,46 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
   // Chế độ sửa nhanh trực tiếp trên bảng
   const [isQuickEditMode, setIsQuickEditMode] = useState(false);
+
+  // Trạng thái Sắp xếp danh sách (Đảm bảo 2 máy tính luôn hiển thị thứ tự giống hệt nhau)
+  const [sortField, setSortField] = useState<WorkerSortField>('default');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  const handleToggleSort = (field: WorkerSortField) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const handleNormalizeOrder = (mode: 'code' | 'name' = 'code') => {
+    const sorted = [...workers].sort((a, b) => {
+      if (mode === 'name') {
+        return (a.fullName || '').localeCompare(b.fullName || '', 'vi', { sensitivity: 'base' });
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    const updated = sorted.map((w, index) => ({
+      ...w,
+      sortOrder: index + 1,
+    }));
+
+    if (onReorderWorkers) {
+      onReorderWorkers(updated);
+    } else {
+      updated.forEach((w) => onUpdateWorker(w));
+    }
+    setSortField('default');
+    setSortDirection('asc');
+    showToast(
+      mode === 'code'
+        ? 'Đã chuẩn hóa STT cố định theo Mã thợ (PNC-TV01, PNC-TV02...) và lưu lên Cloud cho tất cả thiết bị!'
+        : 'Đã chuẩn hóa STT cố định theo Họ tên (A-Z) và lưu lên Cloud cho tất cả thiết bị!'
+    );
+  };
 
   // Chọn nhiều dòng để xóa/in hàng loạt
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
@@ -191,7 +240,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
   // Lọc danh sách công nhân theo kỳ hiện tại
   const filteredWorkers = useMemo(() => {
-    return workersInCurrentPeriod.filter((w) => {
+    const list = workersInCurrentPeriod.filter((w) => {
       // 1. Tìm kiếm text
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
@@ -230,6 +279,32 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
       return true;
     });
+
+    // Sắp xếp nhất quán tuyệt đối giữa 2 máy tính:
+    return [...list].sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'code') {
+        cmp = (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+      } else if (sortField === 'name') {
+        cmp = (a.fullName || '').localeCompare(b.fullName || '', 'vi', { sensitivity: 'base' });
+      } else if (sortField === 'dailyRate') {
+        cmp = (a.dailyRate || 0) - (b.dailyRate || 0);
+      } else if (sortField === 'actualWorkDays') {
+        cmp = (a.actualWorkDays || 0) - (b.actualWorkDays || 0);
+      } else if (sortField === 'netSalary') {
+        cmp = (a.netSalary || 0) - (b.netSalary || 0);
+      } else {
+        // Mặc định 'default':
+        // 1. Ưu tiên sortOrder được gán cố định
+        // 2. Tự nhiên theo mã thợ: PNC-TV01 < PNC-TV02 < PNC-TV03 < ... < PNC-TV13
+        if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+          cmp = a.sortOrder - b.sortOrder;
+        } else {
+          cmp = (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+        }
+      }
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
   }, [
     workersInCurrentPeriod,
     searchTerm,
@@ -239,6 +314,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     selectedTaxFilter,
     selectedStatus,
     selectedWorkerCycleFilter,
+    sortField,
+    sortDirection,
   ]);
 
   // Thống kê tổng hợp tại kỳ hiện tại
@@ -926,8 +1003,45 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           </select>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 font-semibold">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Bộ sắp xếp thứ tự đồng bộ đa máy */}
+          <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-300 rounded-lg px-2.5 py-1 text-xs">
+            <ArrowUpDown className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+            <span className="font-semibold text-slate-600 hidden sm:inline">Sắp xếp:</span>
+            <select
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as any)}
+              className="bg-transparent font-medium text-slate-800 focus:outline-none cursor-pointer text-xs"
+            >
+              <option value="default">Thứ tự STT / Mã thợ (Chuẩn đồng bộ)</option>
+              <option value="code">Mã thợ (PNC-TV01, TV02...)</option>
+              <option value="name">Họ và tên thợ (A &rarr; Z)</option>
+              <option value="dailyRate">Đơn giá ngày</option>
+              <option value="actualWorkDays">Số ngày công</option>
+              <option value="netSalary">Thực lĩnh chi trả</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-white text-sky-800 border border-slate-300 hover:bg-sky-50 cursor-pointer shadow-2xs transition"
+              title={sortDirection === 'asc' ? 'Đang sắp xếp Tăng dần (A-Z, 1-9). Bấm để đảo chiều.' : 'Đang sắp xếp Giảm dần (Z-A, 9-1). Bấm để đảo chiều.'}
+            >
+              {sortDirection === 'asc' ? '▲ Tăng' : '▼ Giảm'}
+            </button>
+          </div>
+
+          {/* Nút Chuẩn hóa & Khóa STT đồng bộ đa máy */}
+          <button
+            type="button"
+            onClick={() => handleNormalizeOrder('code')}
+            className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-[#0f3d64] border border-sky-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+            title="Đánh lại số thứ tự STT (1, 2, 3...) theo Mã thợ tăng dần và lưu cố định lên Cloud để tất cả máy tính hiển thị chuẩn xác 100%"
+          >
+            <ListOrdered className="w-3.5 h-3.5 text-sky-700" />
+            <span>Chuẩn hóa STT (1, 2, 3...)</span>
+          </button>
+
+          <span className="text-xs text-slate-500 font-semibold ml-auto">
             Hiển thị <strong>{filteredWorkers.length}</strong> / {workers.length} công nhân
           </span>
         </div>
@@ -1020,19 +1134,76 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   title="Chọn tất cả công nhân"
                 />
               </th>
-              <th className="p-2 border-r border-sky-800 text-center w-10">STT</th>
-              <th className="p-2 border-r border-sky-800 text-center w-20">Mã thợ</th>
-              <th className="p-2 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[170px]">
-                Họ và tên công nhân
+              <th 
+                onClick={() => handleToggleSort('default')}
+                className="p-2 border-r border-sky-800 text-center w-10 cursor-pointer hover:bg-sky-800/80 transition select-none"
+                title="Sắp xếp theo STT cố định"
+              >
+                <div className="flex items-center justify-center gap-1">
+                  <span>STT</span>
+                  {sortField === 'default' && (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  )}
+                </div>
+              </th>
+              <th 
+                onClick={() => handleToggleSort('code')}
+                className="p-2 border-r border-sky-800 text-center w-20 cursor-pointer hover:bg-sky-800/80 transition select-none"
+                title="Sắp xếp theo Mã thợ (PNC-TV01, TV02...)"
+              >
+                <div className="flex items-center justify-center gap-1">
+                  <span>Mã thợ</span>
+                  {sortField === 'code' ? (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  ) : (
+                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
+                  )}
+                </div>
+              </th>
+              <th 
+                onClick={() => handleToggleSort('name')}
+                className="p-2 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[170px] cursor-pointer hover:bg-sky-800/80 transition select-none"
+                title="Sắp xếp theo Họ tên (A-Z)"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Họ và tên công nhân</span>
+                  {sortField === 'name' ? (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  ) : (
+                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
+                  )}
+                </div>
               </th>
               <th className="p-2 border-r border-sky-800 min-w-[150px]">Nghề nghiệp / Bậc thợ</th>
               <th className="p-2 border-r border-sky-800 min-w-[140px]">Công trình / Đội</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[100px]">SĐT / CCCD</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[110px] bg-[#124977]">
-                Đơn giá ngày
+              <th 
+                onClick={() => handleToggleSort('dailyRate')}
+                className="p-2 border-r border-sky-800 text-right min-w-[110px] bg-[#124977] cursor-pointer hover:bg-[#185e99] transition select-none"
+                title="Sắp xếp theo Đơn giá ngày"
+              >
+                <div className="flex items-center justify-end gap-1">
+                  <span>Đơn giá ngày</span>
+                  {sortField === 'dailyRate' ? (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  ) : (
+                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
+                  )}
+                </div>
               </th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[115px] bg-[#124977]">
-                Số ngày công
+              <th 
+                onClick={() => handleToggleSort('actualWorkDays')}
+                className="p-2 border-r border-sky-800 text-center min-w-[115px] bg-[#124977] cursor-pointer hover:bg-[#185e99] transition select-none"
+                title="Sắp xếp theo Số ngày công"
+              >
+                <div className="flex items-center justify-center gap-1">
+                  <span>Số ngày công</span>
+                  {sortField === 'actualWorkDays' ? (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  ) : (
+                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
+                  )}
+                </div>
               </th>
               <th className="p-2 border-r border-sky-800 text-right min-w-[110px]">Lương theo công</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[85px]">Giờ OT</th>
@@ -1049,8 +1220,19 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               <th className="p-2 border-r border-sky-800 text-right min-w-[100px] text-rose-200">
                 Tạm ứng tại CT
               </th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[125px] bg-emerald-800 text-white font-extrabold">
-                THỰC LĨNH CHI TRẢ
+              <th 
+                onClick={() => handleToggleSort('netSalary')}
+                className="p-2 border-r border-sky-800 text-right min-w-[125px] bg-emerald-800 text-white font-extrabold cursor-pointer hover:bg-emerald-700 transition select-none"
+                title="Sắp xếp theo Thực lĩnh chi trả"
+              >
+                <div className="flex items-center justify-end gap-1">
+                  <span>THỰC LĨNH CHI TRẢ</span>
+                  {sortField === 'netSalary' ? (
+                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  ) : (
+                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
+                  )}
+                </div>
               </th>
               <th className="p-2 border-r border-sky-800 min-w-[120px]">Hình thức & STK</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[95px] bg-[#124977]">Chu kỳ lương</th>

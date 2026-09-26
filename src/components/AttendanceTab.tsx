@@ -114,8 +114,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
 
   // Filter display list
   const displayedEmployees = useMemo(() => {
-    if (!onlySelected) return modifiedEmployees;
-    return modifiedEmployees.filter((e) => e.selectedForAttendance !== false && e.status !== 'RESIGNED');
+    const list = !onlySelected
+      ? modifiedEmployees
+      : modifiedEmployees.filter((e) => e.selectedForAttendance !== false && e.status !== 'RESIGNED');
+    return [...list].sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
   }, [modifiedEmployees, onlySelected]);
 
   const selectedCount = modifiedEmployees.filter((e) => e.selectedForAttendance !== false && e.status !== 'RESIGNED').length;

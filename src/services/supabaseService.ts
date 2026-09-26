@@ -293,31 +293,37 @@ export const syncEmployeesToSupabase = async (
   }
 
   try {
-    const payload = employees.map((emp, idx) => ({
-      id: String(emp.id || emp.code || `EMP_${idx + 1}`),
-      code: String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`),
-      name: String(emp.fullName || 'Nhân viên'),
-      department: String(emp.department || 'Phòng ban'),
-      position: String(emp.title || ''),
-      phone: String(emp.phone || ''),
-      email: String(emp.email || ''),
-      tax_code: String(emp.taxCode || ''),
-      id_card: String(emp.idCard || ''),
-      bank_account: String(emp.bankAccount || ''),
-      bank_name: String(emp.bankName || ''),
-      join_date: String(emp.joinDate || ''),
-      status: String(emp.status || 'ACTIVE'),
-      base_salary: Number(emp.baseSalary || 0),
-      insurance_salary: Number(emp.insuranceSalary || 0),
-      standard_work_days: Number(emp.standardWorkDays || 26),
-      actual_work_days: Number(emp.actualWorkDays || 0),
-      overtime_hours: Number(emp.overtimeHours || 0),
-      advance_payment: Number(emp.advancePayment || 0),
-      net_salary: Number(emp.netSalary || 0),
-      period_code: String(periodCode || '09/2026'),
-      employee_data: emp,
-      updated_at: new Date().toISOString(),
-    }));
+    const payload = employees.map((emp, idx) => {
+      const sortOrder = typeof emp.sortOrder === 'number' ? emp.sortOrder : idx + 1;
+      return {
+        id: String(emp.id || emp.code || `EMP_${idx + 1}`),
+        code: String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`),
+        name: String(emp.fullName || 'Nhân viên'),
+        department: String(emp.department || 'Phòng ban'),
+        position: String(emp.title || ''),
+        phone: String(emp.phone || ''),
+        email: String(emp.email || ''),
+        tax_code: String(emp.taxCode || ''),
+        id_card: String(emp.idCard || ''),
+        bank_account: String(emp.bankAccount || ''),
+        bank_name: String(emp.bankName || ''),
+        join_date: String(emp.joinDate || ''),
+        status: String(emp.status || 'ACTIVE'),
+        base_salary: Number(emp.baseSalary || 0),
+        insurance_salary: Number(emp.insuranceSalary || 0),
+        standard_work_days: Number(emp.standardWorkDays || 26),
+        actual_work_days: Number(emp.actualWorkDays || 0),
+        overtime_hours: Number(emp.overtimeHours || 0),
+        advance_payment: Number(emp.advancePayment || 0),
+        net_salary: Number(emp.netSalary || 0),
+        period_code: String(periodCode || '09/2026'),
+        employee_data: {
+          ...emp,
+          sortOrder,
+        },
+        updated_at: new Date().toISOString(),
+      };
+    });
 
     const { error } = await client.from('employees').upsert(payload, {
       onConflict: 'id',
@@ -374,9 +380,17 @@ export const loadEmployeesFromSupabase = async (
 
     if (error || !data || data.length === 0) return null;
 
-    return data
+    const list = data
       .map((item) => item.employee_data as Employee)
       .filter((emp) => emp && emp.fullName);
+
+    // Sắp xếp nhất quán tuyệt đối giữa tất cả các máy tính:
+    return list.sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
   } catch {
     return null;
   }
@@ -398,31 +412,37 @@ export const syncSeasonalWorkersToSupabase = async (
   }
 
   try {
-    const payload = workers.map((w, idx) => ({
-      id: String(w.id || `SW_${idx + 1}`),
-      code: String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`),
-      name: String(w.fullName || 'Công nhân'),
-      trade: String(w.trade || ''),
-      skill_level: String(w.skillLevel || ''),
-      project: String(w.project || ''),
-      team: String(w.teamName || ''),
-      phone: String(w.phone || ''),
-      id_card: String(w.idCard || ''),
-      bank_account: String(w.bankAccount || ''),
-      bank_name: String(w.bankName || ''),
-      daily_rate: Number(w.dailyRate || 0),
-      actual_work_days: Number(w.actualWorkDays || 0),
-      overtime_hours: Number(w.overtimeHours || 0),
-      advance_payment: Number(w.advancePayment || 0),
-      has_tax_commitment: Boolean(w.hasTaxCommitment ?? true),
-      payment_method: String(w.paymentMethod || 'BANK'),
-      payroll_cycle_type: String(w.payrollCycleType || '1_WEEK'),
-      status: String(w.status || 'ACTIVE'),
-      net_salary: Number(w.netSalary || 0),
-      period_code: String(periodCode || '09/2026'),
-      worker_data: w,
-      updated_at: new Date().toISOString(),
-    }));
+    const payload = workers.map((w, idx) => {
+      const sortOrder = typeof w.sortOrder === 'number' ? w.sortOrder : idx + 1;
+      return {
+        id: String(w.id || `SW_${idx + 1}`),
+        code: String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`),
+        name: String(w.fullName || 'Công nhân'),
+        trade: String(w.trade || ''),
+        skill_level: String(w.skillLevel || ''),
+        project: String(w.project || ''),
+        team: String(w.teamName || ''),
+        phone: String(w.phone || ''),
+        id_card: String(w.idCard || ''),
+        bank_account: String(w.bankAccount || ''),
+        bank_name: String(w.bankName || ''),
+        daily_rate: Number(w.dailyRate || 0),
+        actual_work_days: Number(w.actualWorkDays || 0),
+        overtime_hours: Number(w.overtimeHours || 0),
+        advance_payment: Number(w.advancePayment || 0),
+        has_tax_commitment: Boolean(w.hasTaxCommitment ?? true),
+        payment_method: String(w.paymentMethod || 'BANK'),
+        payroll_cycle_type: String(w.payrollCycleType || '1_WEEK'),
+        status: String(w.status || 'ACTIVE'),
+        net_salary: Number(w.netSalary || 0),
+        period_code: String(periodCode || '09/2026'),
+        worker_data: {
+          ...w,
+          sortOrder,
+        },
+        updated_at: new Date().toISOString(),
+      };
+    });
 
     const { error } = await client.from('seasonal_workers').upsert(payload, {
       onConflict: 'id',
@@ -479,9 +499,19 @@ export const loadSeasonalWorkersFromSupabase = async (
 
     if (error || !data || data.length === 0) return null;
 
-    return data
+    const list = data
       .map((item) => item.worker_data as SeasonalWorker)
       .filter((w) => w && w.fullName);
+
+    // Sắp xếp nhất quán tuyệt đối giữa tất cả các máy tính:
+    // 1. Ưu tiên sortOrder được lưu
+    // 2. Sắp xếp tự nhiên theo Mã thợ: PNC-TV01 < PNC-TV02 < PNC-TV03 < ... < PNC-TV13
+    return list.sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
   } catch {
     return null;
   }
