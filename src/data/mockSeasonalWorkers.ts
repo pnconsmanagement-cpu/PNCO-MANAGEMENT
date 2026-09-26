@@ -19,48 +19,95 @@ export interface MonthWeekOption {
 }
 
 /**
+ * Lấy thông tin thứ trong tuần và định dạng ngày chính xác từ chuỗi ngày (vd: '01/09', '31/08') và năm
+ * Tính toán trực tiếp bằng JavaScript Date để khớp 100% với lịch thực tế
+ */
+export function getDayOfWeekInfo(
+  dateStr: string,
+  periodYear: number = 2026,
+  periodMonth?: number
+): { dayOfWeek: string; dayName: string; isSunday: boolean } {
+  let d = 1;
+  let m = periodMonth || 9;
+  let y = periodYear;
+
+  if (dateStr.includes('/')) {
+    const parts = dateStr.split('/');
+    d = parseInt(parts[0], 10);
+    m = parseInt(parts[1], 10);
+    if (parts.length >= 3) {
+      y = parseInt(parts[2], 10);
+    } else if (periodMonth) {
+      // Xử lý giáp hạt năm (Tháng 12 sang Tháng 1)
+      if (periodMonth === 1 && m === 12) y = periodYear - 1;
+      else if (periodMonth === 12 && m === 1) y = periodYear + 1;
+    }
+  } else if (dateStr.includes('-')) {
+    const parts = dateStr.split('-');
+    y = parseInt(parts[0], 10);
+    m = parseInt(parts[1], 10);
+    d = parseInt(parts[2], 10);
+  }
+
+  // Sử dụng 12:00 trưa để đảm bảo không bị lệch múi giờ (DST / Timezone GMT+7)
+  const dateObj = new Date(y, m - 1, d, 12, 0, 0);
+  const dayIdx = dateObj.getDay(); // 0 = Chủ Nhật, 1 = Thứ Hai, 2 = Thứ Ba, 3 = Thứ Tư, 4 = Thứ Năm, 5 = Thứ Sáu, 6 = Thứ Bảy
+
+  const dayOfWeeks = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+
+  return {
+    dayOfWeek: dayOfWeeks[dayIdx],
+    dayName: dayNames[dayIdx],
+    isSunday: dayIdx === 0,
+  };
+}
+
+/**
  * Tính toán danh sách các tuần trong bất kỳ Tháng & Năm nào (Lương 1 tuần)
+ * Chuẩn lịch tuần Thứ Hai đến Chủ Nhật (Monday to Sunday) khớp 100% lịch thực tế
  */
 export function getWeeksForMonth(year: number, month: number): MonthWeekOption[] {
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const mStr = String(month).padStart(2, '0');
+  const firstDay = new Date(year, month - 1, 1);
+  const lastDay = new Date(year, month, 0); // Ngày cuối cùng của tháng
 
-  const defs = [
-    { id: 'W1', weekNum: 1, startDay: 1, endDay: Math.min(7, daysInMonth) },
-    { id: 'W2', weekNum: 2, startDay: 8, endDay: Math.min(14, daysInMonth) },
-    { id: 'W3', weekNum: 3, startDay: 15, endDay: Math.min(21, daysInMonth) },
-    { id: 'W4', weekNum: 4, startDay: 22, endDay: Math.min(28, daysInMonth) },
-    { id: 'W5', weekNum: 5, startDay: 29, endDay: daysInMonth },
-  ];
+  // Tìm ngày Thứ Hai của tuần chứa ngày 1 của tháng
+  const firstDayOfWeek = firstDay.getDay(); // 0 là CN, 1 là T2...
+  const diffToMonday = firstDayOfWeek === 0 ? -6 : 1 - firstDayOfWeek;
+  const startMonday = new Date(year, month - 1, 1 + diffToMonday);
 
-  return defs
-    .filter((d) => d.startDay <= daysInMonth)
-    .map((d) => {
-      const dates: string[] = [];
-      for (let i = 0; i < 7; i++) {
-        const curDay = d.startDay + i;
-        if (curDay <= daysInMonth) {
-          dates.push(`${String(curDay).padStart(2, '0')}/${mStr}`);
-        } else {
-          const nextM = month === 12 ? 1 : month + 1;
-          const nextDay = curDay - daysInMonth;
-          dates.push(`${String(nextDay).padStart(2, '0')}/${String(nextM).padStart(2, '0')}`);
-        }
-      }
+  const weeks: MonthWeekOption[] = [];
+  const curMonday = new Date(startMonday.getFullYear(), startMonday.getMonth(), startMonday.getDate());
+  let wNum = 1;
 
-      const sStr = String(d.startDay).padStart(2, '0');
-      const eStr = String(d.endDay).padStart(2, '0');
+  while (curMonday <= lastDay) {
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(curMonday.getFullYear(), curMonday.getMonth(), curMonday.getDate() + i);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      dates.push(`${dd}/${mm}`);
+    }
 
-      return {
-        id: d.id,
-        weekNum: d.weekNum,
-        label: `Tuần ${d.weekNum} (${sStr}/${mStr} - ${eStr}/${mStr})`,
-        shortLabel: `Tuần ${d.weekNum}`,
-        startDay: d.startDay,
-        endDay: d.endDay,
-        dates,
-      };
+    const startStr = dates[0];
+    const endStr = dates[6];
+    const id = `W${wNum}`;
+
+    weeks.push({
+      id,
+      weekNum: wNum,
+      label: `Tuần ${wNum} (${startStr} - ${endStr})`,
+      shortLabel: `Tuần ${wNum}`,
+      startDay: parseInt(dates[0].split('/')[0], 10),
+      endDay: parseInt(dates[6].split('/')[0], 10),
+      dates,
     });
+
+    wNum++;
+    curMonday.setDate(curMonday.getDate() + 7);
+  }
+
+  return weeks;
 }
 
 /**
@@ -96,6 +143,8 @@ export function getBiWeeklyPeriodsForMonth(year: number, month: number): Payroll
       endDay: 15,
       dates: d1Dates,
       maxStandardDays: 13,
+      year,
+      month,
     },
     {
       id: 'BI2',
@@ -107,6 +156,8 @@ export function getBiWeeklyPeriodsForMonth(year: number, month: number): Payroll
       endDay: daysInMonth,
       dates: d2Dates,
       maxStandardDays: daysInMonth - 15 >= 15 ? 13 : 12,
+      year,
+      month,
     },
   ];
 }
@@ -137,56 +188,58 @@ export function getPayrollPeriods(
     endDay: w.endDay,
     dates: w.dates,
     maxStandardDays: 6,
+    year,
+    month,
   }));
 }
 
 /**
  * Tạo bảng chấm công trống (0 công) cho một chu kỳ để người dùng chấm lại từ đầu
+ * Khớp đúng thứ trong tuần thực tế theo từng ngày
  */
 export function createEmptyTimesheetForPeriod(period: PayrollPeriodOption): WeeklyDayAttendance[] {
-  const dayNames = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy', 'Chủ Nhật'];
-  const dayOfWeeks = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+  const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
+  const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
 
-  return period.dates.map((dateStr, idx) => {
-    const dow = dayOfWeeks[idx % 7];
-    const dName = dayNames[idx % 7];
+  return period.dates.map((dateStr) => {
+    const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
 
     return {
-      dayOfWeek: dow,
-      dayName: dName,
+      dayOfWeek,
+      dayName,
       dateLabel: dateStr,
       workUnits: 0, // Mặc định 0 công
       otHours: 0,
       shiftType: 'DAY',
-      note: 'Chưa chấm công',
+      note: isSunday ? 'Nghỉ Chủ Nhật' : 'Chưa chấm công',
     };
   });
 }
 
 /**
  * Tạo bảng chấm công có số công và OT cho một chu kỳ
+ * Ưu tiên điền công vào các ngày Thứ Hai đến Thứ Bảy, Chủ Nhật nghỉ
  */
 export function createTimesheetForPeriod(
   period: PayrollPeriodOption,
   workDays: number = 0,
   otHours: number = 0
 ): WeeklyDayAttendance[] {
-  const dayNames = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy', 'Chủ Nhật'];
-  const dayOfWeeks = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+  const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
+  const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
 
   let remainingDays = workDays;
   let remainingOT = otHours;
 
-  return period.dates.map((dateStr, idx) => {
-    const dow = dayOfWeeks[idx % 7];
-    const dName = dayNames[idx % 7];
-    const isSunday = dow === 'CN';
+  return period.dates.map((dateStr) => {
+    const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
 
     let dayWork = 0;
+    // Ưu tiên chấm các ngày làm việc (T2 - T7) trước
     if (!isSunday && remainingDays >= 1) {
       dayWork = 1;
       remainingDays -= 1;
-    } else if (isSunday && remainingDays >= 1) {
+    } else if (remainingDays >= 1) {
       dayWork = 1;
       remainingDays -= 1;
     } else if (remainingDays >= 0.5) {
@@ -201,13 +254,15 @@ export function createTimesheetForPeriod(
     }
 
     return {
-      dayOfWeek: dow,
-      dayName: dName,
+      dayOfWeek,
+      dayName,
       dateLabel: dateStr,
       workUnits: dayWork,
       otHours: dayOT,
       shiftType: 'DAY',
-      note: dayWork > 0 ? (dayOT > 0 ? `Thi công + ${dayOT}h OT` : 'Thi công bình thường') : 'Nghỉ ca',
+      note: dayWork > 0
+        ? (dayOT > 0 ? `Thi công + ${dayOT}h OT` : (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường'))
+        : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'),
     };
   });
 }
@@ -302,8 +357,36 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
 export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriodOption): SeasonalWorker {
   const pKey = period.periodKey;
   const existingRecord = worker.periodRecords?.[pKey];
+  const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
+  const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
 
   if (existingRecord) {
+    // Chuẩn hóa weeklyTimesheet đảm bảo thứ và ngày luôn khớp 100% với lịch thực tế
+    let normalizedTimesheet: WeeklyDayAttendance[];
+    if (existingRecord.weeklyTimesheet && existingRecord.weeklyTimesheet.length > 0) {
+      normalizedTimesheet = period.dates.map((dateStr, idx) => {
+        const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
+        // Tìm xem bản ghi cũ có ngày này không (theo dateLabel) hoặc lấy theo index
+        const match = existingRecord.weeklyTimesheet?.find((d) => d.dateLabel === dateStr) || existingRecord.weeklyTimesheet?.[idx];
+        const workUnits = match ? match.workUnits : 0;
+        const otHours = match ? match.otHours : 0;
+        const shiftType = match?.shiftType || 'DAY';
+        const note = match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+
+        return {
+          dayOfWeek,
+          dayName,
+          dateLabel: dateStr,
+          workUnits,
+          otHours,
+          shiftType,
+          note,
+        };
+      });
+    } else {
+      normalizedTimesheet = createTimesheetForPeriod(period, existingRecord.actualWorkDays, existingRecord.overtimeHours);
+    }
+
     return recomputeSeasonalWorkerPayroll({
       ...worker,
       currentPeriodKey: pKey,
@@ -317,9 +400,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       otherBonus: existingRecord.otherBonus,
       hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
       advancePayment: existingRecord.advancePayment,
-      weeklyTimesheet:
-        existingRecord.weeklyTimesheet ||
-        createTimesheetForPeriod(period, existingRecord.actualWorkDays, existingRecord.overtimeHours),
+      weeklyTimesheet: normalizedTimesheet,
       notes: existingRecord.notes ?? worker.notes,
     });
   }
@@ -810,7 +891,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
 
   const w1Record: SeasonalPeriodRecord = {
     periodKey: '2026-09_W1',
-    periodLabel: 'Tuần 1 (01/09 - 07/09)',
+    periodLabel: w1Period.label,
     cycleType: '1_WEEK',
     isRecorded: true,
     actualWorkDays: w1Days,
@@ -830,7 +911,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     notes: 'Đã hoàn thành thi công Tuần 1',
   };
 
-  // W2 (Tuần 2: 08/09 - 14/09)
+  // W2 (Tuần 2)
   const w2Calc = recomputeSeasonalWorkerPayroll({
     ...w,
     actualWorkDays: w2Days,
@@ -846,7 +927,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
 
   const w2Record: SeasonalPeriodRecord = {
     periodKey: '2026-09_W2',
-    periodLabel: 'Tuần 2 (08/09 - 14/09)',
+    periodLabel: w2Period.label,
     cycleType: '1_WEEK',
     isRecorded: true,
     actualWorkDays: w2Days,
@@ -887,7 +968,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
 
   const bi1Record: SeasonalPeriodRecord = {
     periodKey: '2026-09_BI1',
-    periodLabel: 'Đợt 1 (01/09 - 15/09)',
+    periodLabel: bi1Period.label,
     cycleType: '2_WEEKS',
     isRecorded: true,
     actualWorkDays: bi1Days,
@@ -920,7 +1001,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     payrollCycleType: '1_WEEK',
     currentPeriodKey: '2026-09_W2',
     currentWeekId: 'W2',
-    currentWeekLabel: 'Tuần 2 (08/09 - 14/09)',
+    currentWeekLabel: w2Period.label,
     attendanceMonth: 9,
     attendanceYear: 2026,
     weeklyTimesheet: w2Timesheet,

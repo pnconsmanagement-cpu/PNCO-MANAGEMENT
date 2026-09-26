@@ -118,15 +118,17 @@ export interface SeasonalWorker {
 export type SeasonalCycleType = '1_WEEK' | '2_WEEKS';
 
 export interface PayrollPeriodOption {
-  id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'BI1' | 'BI2'
+  id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'W6' | 'BI1' | 'BI2'
   periodKey: string; // vd: "2026-09_W1", "2026-09_BI1"
   cycleType: SeasonalCycleType;
-  label: string; // vd: "Tuần 1 (01/09 - 07/09)", "Đợt 1 (01/09 - 15/09)"
+  label: string; // vd: "Tuần 1 (31/08 - 06/09)", "Đợt 1 (01/09 - 15/09)"
   shortLabel: string; // vd: "Tuần 1", "Đợt 1"
   startDay: number;
   endDay: number;
   dates: string[];
   maxStandardDays: number;
+  year?: number;
+  month?: number;
 }
 
 export interface SeasonalPeriodRecord {

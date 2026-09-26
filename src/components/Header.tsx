@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, Download, Building2, Calendar, Zap, Settings, Menu, Database } from 'lucide-react';
+import { Upload, Download, Building2, Calendar, Zap, Settings, Menu, Database, RefreshCw } from 'lucide-react';
 import { CompanyConfig } from '../types';
 import { isSupabaseConfigured } from '../services/supabaseService';
 
@@ -12,6 +12,7 @@ interface HeaderProps {
   onOpenBatchZalo?: () => void;
   onToggleSidebar?: () => void;
   onOpenSupabaseModal?: () => void;
+  onManualSync?: () => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'error' | 'idle';
   lastSyncedText?: string | null;
 }
@@ -25,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBatchZalo,
   onToggleSidebar,
   onOpenSupabaseModal,
+  onManualSync,
   cloudSyncStatus = 'idle',
   lastSyncedText,
 }) => {
@@ -107,57 +109,71 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {onOpenSupabaseModal && (
-            <button
-              id="btn-header-supabase"
-              onClick={onOpenSupabaseModal}
-              className={`px-2.5 sm:px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border ${
-                cloudSyncStatus === 'syncing'
-                  ? 'bg-amber-600 hover:bg-amber-500 text-white border-amber-300 animate-pulse'
-                  : cloudSyncStatus === 'error'
-                  ? 'bg-rose-700 hover:bg-rose-600 text-white border-rose-400'
-                  : isSupabaseConfigured()
-                  ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-400'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 ring-2 ring-emerald-400/30'
-              }`}
-              title={
-                isSupabaseConfigured()
-                  ? `Supabase Cloud Online • ${
-                      cloudSyncStatus === 'syncing'
-                        ? 'Đang lưu lên Cloud...'
-                        : cloudSyncStatus === 'error'
-                        ? 'Có lỗi đồng bộ'
-                        : lastSyncedText
-                        ? `Đã lưu: ${lastSyncedText}`
-                        : 'Sẵn sàng đồng bộ'
-                    }`
-                  : 'Cấu hình kết nối Supabase Cloud & Đồng bộ dữ liệu'
-              }
-            >
-              <Database className="w-3.5 h-3.5 text-white" />
-              <span className="hidden sm:inline">
-                {cloudSyncStatus === 'syncing'
-                  ? 'Đang lưu Cloud...'
-                  : cloudSyncStatus === 'error'
-                  ? 'Lỗi Cloud'
-                  : isSupabaseConfigured()
-                  ? 'Supabase Cloud'
-                  : 'Kết Nối Supabase'}
-              </span>
-              <span className="sm:hidden">
-                {cloudSyncStatus === 'syncing' ? 'Lưu...' : 'Supabase'}
-              </span>
-              <span
-                className={`w-2 h-2 rounded-full ${
+            <div className="flex items-center gap-1">
+              <button
+                id="btn-header-supabase"
+                onClick={onOpenSupabaseModal}
+                className={`px-2.5 sm:px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer whitespace-nowrap border ${
                   cloudSyncStatus === 'syncing'
-                    ? 'bg-white animate-spin'
+                    ? 'bg-amber-600 hover:bg-amber-500 text-white border-amber-300 animate-pulse'
                     : cloudSyncStatus === 'error'
-                    ? 'bg-rose-300 animate-ping'
+                    ? 'bg-rose-700 hover:bg-rose-600 text-white border-rose-400'
                     : isSupabaseConfigured()
-                    ? 'bg-emerald-300 shadow-[0_0_6px_#34d399]'
-                    : 'bg-amber-300 animate-pulse'
+                    ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-400'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 ring-2 ring-emerald-400/30'
                 }`}
-              />
-            </button>
+                title={
+                  isSupabaseConfigured()
+                    ? `Supabase Cloud Online • ${
+                        cloudSyncStatus === 'syncing'
+                          ? 'Đang lưu lên Cloud...'
+                          : cloudSyncStatus === 'error'
+                          ? 'Có lỗi đồng bộ'
+                          : lastSyncedText
+                          ? `Đã lưu: ${lastSyncedText}`
+                          : 'Sẵn sàng đồng bộ'
+                      }`
+                    : 'Cấu hình kết nối Supabase Cloud & Đồng bộ dữ liệu'
+                }
+              >
+                <Database className="w-3.5 h-3.5 text-white" />
+                <span className="hidden sm:inline">
+                  {cloudSyncStatus === 'syncing'
+                    ? 'Đang lưu Cloud...'
+                    : cloudSyncStatus === 'error'
+                    ? 'Lỗi Cloud'
+                    : isSupabaseConfigured()
+                    ? 'Supabase Cloud'
+                    : 'Kết Nối Supabase'}
+                </span>
+                <span className="sm:hidden">
+                  {cloudSyncStatus === 'syncing' ? 'Lưu...' : 'Supabase'}
+                </span>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    cloudSyncStatus === 'syncing'
+                      ? 'bg-white animate-spin'
+                      : cloudSyncStatus === 'error'
+                      ? 'bg-rose-300 animate-ping'
+                      : isSupabaseConfigured()
+                      ? 'bg-emerald-300 shadow-[0_0_6px_#34d399]'
+                      : 'bg-amber-300 animate-pulse'
+                  }`}
+                />
+              </button>
+
+              {isSupabaseConfigured() && onManualSync && (
+                <button
+                  id="btn-header-quick-sync"
+                  onClick={onManualSync}
+                  disabled={cloudSyncStatus === 'syncing'}
+                  className="p-1.5 bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 rounded text-xs transition border border-emerald-500/50 cursor-pointer disabled:opacity-50"
+                  title="Nhấn để tải ngay dữ liệu mới nhất từ Supabase Cloud (Đồng bộ tức thì đa máy tính)"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-spin text-amber-300' : ''}`} />
+                </button>
+              )}
+            </div>
           )}
 
           <button

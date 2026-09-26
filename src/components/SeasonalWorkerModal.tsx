@@ -67,6 +67,21 @@ const MONTHS_LIST = [
 
 const YEARS_LIST = [2025, 2026, 2027, 2028];
 
+const getNextWorkerCode = (existingCodes: string[]): string => {
+  let maxNum = 0;
+  for (const c of existingCodes) {
+    const match = c?.match(/PNC-TV(\d+)/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxNum) {
+        maxNum = num;
+      }
+    }
+  }
+  const nextNum = maxNum > 0 ? maxNum + 1 : existingCodes.length + 1;
+  return `PNC-TV${String(nextNum).padStart(2, '0')}`;
+};
+
 const DEFAULT_CONFIG: CompanyConfig = {
   name: 'CÔNG TY TNHH XÂY DỰNG- CƠ ĐIỆN PHÚC NGUYÊN',
   taxCode: '0314890123',
@@ -80,17 +95,6 @@ const DEFAULT_CONFIG: CompanyConfig = {
   standardWorkDays: 26,
   formNumber: 'Mẫu số 02-LĐTL',
 };
-
-function getNextWorkerCode(codes: string[]): string {
-  let max = 0;
-  for (const c of codes) {
-    const num = parseInt((c || '').replace(/\D/g, ''), 10);
-    if (!isNaN(num) && num > max) {
-      max = num;
-    }
-  }
-  return `PNC-TV${String(max + 1).padStart(2, '0')}`;
-}
 
 export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
   isOpen,
@@ -162,7 +166,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const defaultSheet = createTimesheetForPeriod(activePeriod, activePeriod.cycleType === '1_WEEK' ? 6 : 13, 0);
     return recomputeSeasonalWorkerPayroll({
       id: String(Date.now()),
-      code: getNextWorkerCode(existingCodes),
+      code: `PNC-TV${String(existingCodes.length + 1).padStart(2, '0')}`,
       fullName: '',
       trade: 'Thợ điện chính M&E',
       skillLevel: 'Thợ chính (bậc 4/7)',
@@ -230,7 +234,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         setTimesheet(defaultSheet);
         setForm(
           recomputeSeasonalWorkerPayroll({
-            id: String(Date.now()),
+            id: `SW_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             code: getNextWorkerCode(existingCodes),
             fullName: '',
             trade: 'Thợ điện chính M&E',
@@ -446,20 +450,29 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setForm((prev) => ({ ...prev, weeklyTimesheet: updated }));
   };
 
-  // Chấm nhanh công cho cả kỳ (T2 - T7)
+  // Chấm nhanh công cho cả kỳ (ưu tiên T2 - T7, sau đó đến CN nếu thừa công)
   const handleQuickFillPeriod = (workDaysCount: number) => {
     let remaining = workDaysCount;
+    const nonSundays = timesheet.filter((d) => d.dayOfWeek !== 'CN');
+    let remainingNonSunday = Math.min(remaining, nonSundays.length);
+    let remainingSunday = Math.max(0, remaining - nonSundays.length);
+
     const updated = timesheet.map((d) => {
       const isSunday = d.dayOfWeek === 'CN';
       let wUnits = 0;
-      if (!isSunday && remaining > 0) {
+      if (!isSunday && remainingNonSunday > 0) {
         wUnits = 1;
-        remaining -= 1;
+        remainingNonSunday -= 1;
+      } else if (isSunday && remainingSunday > 0) {
+        wUnits = 1;
+        remainingSunday -= 1;
       }
       return {
         ...d,
         workUnits: wUnits,
-        note: wUnits > 0 ? 'Thi công bình thường' : 'Nghỉ ca',
+        note: wUnits > 0
+          ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường')
+          : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'),
       };
     });
     syncTimesheetToForm(updated);
@@ -486,7 +499,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       ...d,
       workUnits: 0,
       otHours: 0,
-      note: 'Nghỉ ca',
+      note: d.dayOfWeek === 'CN' ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca',
     }));
     syncTimesheetToForm(updated);
   };

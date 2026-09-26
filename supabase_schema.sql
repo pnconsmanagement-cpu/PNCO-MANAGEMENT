@@ -114,3 +114,15 @@ CREATE POLICY "Public access to seasonal_workers"
   FOR ALL
   USING (true)
   WITH CHECK (true);
+
+-- ========================================================================
+-- KÍCH HOẠT SUPABASE REALTIME ĐỂ TỰ ĐỘNG ĐỒNG BỘ ĐA THIẾT BỊ / ĐA TRÌNH DUYỆT
+-- ========================================================================
+ALTER TABLE public.company_config REPLICA IDENTITY FULL;
+ALTER TABLE public.employees REPLICA IDENTITY FULL;
+ALTER TABLE public.seasonal_workers REPLICA IDENTITY FULL;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.company_config;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.employees;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;
+

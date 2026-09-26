@@ -31,6 +31,7 @@ import {
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
   getLastSyncedTime,
+  getShareableConfigUrl,
   ConnectionHealth,
   FullSyncResult,
 } from '../services/supabaseService';
@@ -71,6 +72,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   const [loadStatus, setLoadStatus] = useState<string | null>(null);
 
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -329,7 +331,16 @@ DROP POLICY IF EXISTS "Public access to employees" ON public.employees;
 CREATE POLICY "Public access to employees" ON public.employees FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Public access to seasonal_workers" ON public.seasonal_workers;
-CREATE POLICY "Public access to seasonal_workers" ON public.seasonal_workers FOR ALL USING (true) WITH CHECK (true);`;
+CREATE POLICY "Public access to seasonal_workers" ON public.seasonal_workers FOR ALL USING (true) WITH CHECK (true);
+
+-- BẬT SUPABASE REALTIME ĐỒNG BỘ TỨC THÌ ĐA MÁY TÍNH & ĐA TRÌNH DUYỆT
+ALTER TABLE public.company_config REPLICA IDENTITY FULL;
+ALTER TABLE public.employees REPLICA IDENTITY FULL;
+ALTER TABLE public.seasonal_workers REPLICA IDENTITY FULL;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.company_config;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.employees;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
 
     navigator.clipboard.writeText(sqlContent);
     setCopiedSql(true);
@@ -462,6 +473,25 @@ CREATE POLICY "Public access to seasonal_workers" ON public.seasonal_workers FOR
                 <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
                 <span>Kiểm tra lại</span>
               </button>
+
+              {isConfigured && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const shareLink = getShareableConfigUrl();
+                    if (shareLink) {
+                      navigator.clipboard.writeText(shareLink);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 4000);
+                    }
+                  }}
+                  className="px-3 py-2 bg-sky-50 border border-sky-300 hover:bg-sky-100 text-sky-800 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Sao chép đường dẫn chứa cấu hình để dán và mở ngay trên Máy tính thứ 2 hoặc trình duyệt khác (không cần gõ lại URL & Anon Key)"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-sky-600" />}
+                  <span>{copiedLink ? 'Đã sao chép link Máy 2!' : 'Sao chép link Máy 2'}</span>
+                </button>
+              )}
 
               {isConfigured && (
                 <button
