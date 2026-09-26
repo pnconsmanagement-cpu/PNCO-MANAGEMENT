@@ -81,6 +81,17 @@ const DEFAULT_CONFIG: CompanyConfig = {
   formNumber: 'Mẫu số 02-LĐTL',
 };
 
+function getNextWorkerCode(codes: string[]): string {
+  let max = 0;
+  for (const c of codes) {
+    const num = parseInt((c || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num) && num > max) {
+      max = num;
+    }
+  }
+  return `PNC-TV${String(max + 1).padStart(2, '0')}`;
+}
+
 export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
   isOpen,
   worker,
@@ -151,7 +162,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const defaultSheet = createTimesheetForPeriod(activePeriod, activePeriod.cycleType === '1_WEEK' ? 6 : 13, 0);
     return recomputeSeasonalWorkerPayroll({
       id: String(Date.now()),
-      code: `PNC-TV${String(existingCodes.length + 1).padStart(2, '0')}`,
+      code: getNextWorkerCode(existingCodes),
       fullName: '',
       trade: 'Thợ điện chính M&E',
       skillLevel: 'Thợ chính (bậc 4/7)',
@@ -220,7 +231,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         setForm(
           recomputeSeasonalWorkerPayroll({
             id: String(Date.now()),
-            code: `PNC-TV${String(existingCodes.length + 1).padStart(2, '0')}`,
+            code: getNextWorkerCode(existingCodes),
             fullName: '',
             trade: 'Thợ điện chính M&E',
             skillLevel: 'Thợ chính (bậc 4/7)',

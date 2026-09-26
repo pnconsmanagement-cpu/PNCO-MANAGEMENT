@@ -17,12 +17,20 @@ import { ZaloOASettingsModal } from './components/ZaloOASettingsModal';
 import { BatchSendZaloModal } from './components/BatchSendZaloModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import {
+  getSupabaseClient,
   isSupabaseConfigured,
   loadCompanyConfigFromSupabase,
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
   syncAllDataToSupabase,
   syncSeasonalWorkersToSupabase,
+  syncSingleSeasonalWorkerToSupabase,
+  deleteSeasonalWorkerFromSupabase,
+  deleteBatchSeasonalWorkersFromSupabase,
+  clearAllSeasonalWorkersFromSupabase,
+  syncEmployeesToSupabase,
+  syncSingleEmployeeToSupabase,
+  deleteEmployeeFromSupabase,
   getLastSyncedTime,
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
@@ -209,59 +217,216 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [config, employees, seasonalWorkers]);
 
-  // Cập nhật công nhân thời vụ - đảm bảo so khớp ID chính xác
-  const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
+  // Lắng nghe Realtime từ Supabase & tự động cập nhật đa máy tính (Real-time Cloud Sync)
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    const channel = client
+      .channel('payroll_realtime_stream')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'seasonal_workers' },
+        async () => {
+          const cloudSea = await loadSeasonalWorkersFromSupabase(config.periodCode);
+          if (cloudSea) {
+            setSeasonalWorkers(cloudSea);
+            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(cloudSea));
+            setLastSyncedText(getLastSyncedTime());
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employees' },
+        async () => {
+          const cloudEmp = await loadEmployeesFromSupabase(config.periodCode);
+          if (cloudEmp) {
+            setEmployees(cloudEmp);
+            localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
+            setLastSyncedText(getLastSyncedTime());
+          }
+        }
+      )
+      .subscribe();
+
+    // Khi người dùng bấm lại vào tab trình duyệt trên máy tính thứ 2, tự động tải dữ liệu mới nhất
+    const handleWindowFocus = async () => {
+      try {
+        const [cloudEmp, cloudSea] = await Promise.all([
+          loadEmployeesFromSupabase(config.periodCode),
+          loadSeasonalWorkersFromSupabase(config.periodCode),
+        ]);
+        if (cloudEmp && cloudEmp.length > 0) {
+          setEmployees(cloudEmp);
+          localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
+        }
+        if (cloudSea && cloudSea.length > 0) {
+          setSeasonalWorkers(cloudSea);
+          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(cloudSea));
+        }
+      } catch (err) {
+        console.debug('Cloud refresh on focus warning:', err);
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      client.removeChannel(channel);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [config.periodCode]);
+
+  // Cập nhật công nhân thời vụ - đồng bộ tức thì lên Supabase Cloud
+  const handleUpdateSeasonalWorker = async (updated: SeasonalWorker) => {
     const recalculated = recomputeSeasonal(updated);
-    setSeasonalWorkers((prev) =>
-      prev.map((w) => (String(w.id) === String(recalculated.id) ? recalculated : w))
+    const nextList = seasonalWorkers.map((w) =>
+      String(w.id) === String(recalculated.id) ? recalculated : w
     );
-  };
+    setSeasonalWorkers(nextList);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
 
-  const handleAddSeasonalWorker = (newWorker: SeasonalWorker) => {
-    const recalculated = recomputeSeasonal(newWorker);
-    setSeasonalWorkers((prev) => {
-      const maxOrder = prev.reduce((max, w) => Math.max(max, w.sortOrder || 0), 0);
-      const workerWithOrder: SeasonalWorker = {
-        ...recalculated,
-        sortOrder: recalculated.sortOrder || (maxOrder + 1),
-      };
-      return [...prev, workerWithOrder];
-    });
-  };
-
-  const handleReorderSeasonalWorkers = (reordered: SeasonalWorker[]) => {
-    setSeasonalWorkers(reordered);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(reordered));
     if (isSupabaseConfigured()) {
-      syncSeasonalWorkersToSupabase(reordered, config.periodCode);
+      setCloudSyncStatus('syncing');
+      const res = await syncSingleSeasonalWorkerToSupabase(recalculated, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
     }
   };
 
-  const handleDeleteSeasonalWorker = (id: string) => {
-    setSeasonalWorkers((prev) => prev.filter((w) => String(w.id) !== String(id)));
+  // Thêm mới công nhân thời vụ - đồng bộ tức thì lên Supabase Cloud (không cần nhấn F5)
+  const handleAddSeasonalWorker = async (newWorker: SeasonalWorker) => {
+    const recalculated = recomputeSeasonal(newWorker);
+    const maxOrder = seasonalWorkers.reduce((max, w) => Math.max(max, w.sortOrder || 0), 0);
+    const workerWithOrder: SeasonalWorker = {
+      ...recalculated,
+      sortOrder: recalculated.sortOrder || (maxOrder + 1),
+    };
+    const nextList = [...seasonalWorkers, workerWithOrder];
+    setSeasonalWorkers(nextList);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await syncSingleSeasonalWorkerToSupabase(workerWithOrder, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
-  const handleDeleteBatchSeasonalWorkers = (ids: string[]) => {
+  const handleReorderSeasonalWorkers = async (reordered: SeasonalWorker[]) => {
+    setSeasonalWorkers(reordered);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(reordered));
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await syncSeasonalWorkersToSupabase(reordered, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
+  };
+
+  // Xóa công nhân thời vụ - Xóa dứt điểm khỏi Supabase Cloud (không bị nạp lại)
+  const handleDeleteSeasonalWorker = async (id: string) => {
+    const target = seasonalWorkers.find((w) => String(w.id) === String(id));
+    const nextList = seasonalWorkers.filter((w) => String(w.id) !== String(id));
+    setSeasonalWorkers(nextList);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await deleteSeasonalWorkerFromSupabase(String(id), target?.code);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
+  };
+
+  // Xóa hàng loạt công nhân thời vụ khỏi Supabase Cloud
+  const handleDeleteBatchSeasonalWorkers = async (ids: string[]) => {
     const idSet = new Set(ids.map((item) => String(item)));
-    setSeasonalWorkers((prev) => prev.filter((w) => !idSet.has(String(w.id))));
+    const nextList = seasonalWorkers.filter((w) => !idSet.has(String(w.id)));
+    setSeasonalWorkers(nextList);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await deleteBatchSeasonalWorkersFromSupabase(ids);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
-  const handleClearAllSeasonalWorkers = () => {
+  // Xóa toàn bộ công nhân thời vụ khỏi Supabase Cloud
+  const handleClearAllSeasonalWorkers = async () => {
     setSeasonalWorkers([]);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify([]));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await clearAllSeasonalWorkersFromSupabase();
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
-  const handleResetSeasonalWorkers = () => {
+  const handleResetSeasonalWorkers = async () => {
     setSeasonalWorkers(initialSeasonalWorkers);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(initialSeasonalWorkers));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await syncSeasonalWorkersToSupabase(initialSeasonalWorkers, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
   // Update employee
-  const handleUpdateEmployee = (updated: Employee) => {
+  const handleUpdateEmployee = async (updated: Employee) => {
     const recalculated = recomputeEmployeePayroll(updated);
-    setEmployees((prev) =>
-      prev.map((emp) => (emp.id === recalculated.id ? recalculated : emp))
-    );
+    const nextList = employees.map((emp) => (emp.id === recalculated.id ? recalculated : emp));
+    setEmployees(nextList);
+    localStorage.setItem('payroll_employees', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await syncSingleEmployeeToSupabase(recalculated, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
   // Change Month and Year for entire payroll & timekeeping
@@ -321,13 +486,40 @@ export default function App() {
     setEmployees(freshForNewMonth);
   };
 
-  const handleAddEmployee = (newEmp: Employee) => {
+  const handleAddEmployee = async (newEmp: Employee) => {
     const recalculated = recomputeEmployeePayroll(newEmp);
-    setEmployees((prev) => [...prev, recalculated]);
+    const nextList = [...employees, recalculated];
+    setEmployees(nextList);
+    localStorage.setItem('payroll_employees', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await syncSingleEmployeeToSupabase(recalculated, config.periodCode);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
-  const handleDeleteEmployee = (id: string) => {
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
+  const handleDeleteEmployee = async (id: string) => {
+    const target = employees.find((e) => String(e.id) === String(id));
+    const nextList = employees.filter((e) => String(e.id) !== String(id));
+    setEmployees(nextList);
+    localStorage.setItem('payroll_employees', JSON.stringify(nextList));
+
+    if (isSupabaseConfigured()) {
+      setCloudSyncStatus('syncing');
+      const res = await deleteEmployeeFromSupabase(String(id), target?.code);
+      if (res.success) {
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
+      } else {
+        setCloudSyncStatus('error');
+      }
+    }
   };
 
   const handleBatchUpdate = (updatedList: Employee[]) => {

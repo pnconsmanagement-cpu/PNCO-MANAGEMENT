@@ -288,11 +288,31 @@ export const syncEmployeesToSupabase = async (
   if (!client) {
     return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
   }
-  if (employees.length === 0) {
-    return { success: true, count: 0, message: 'Không có nhân viên nào để đồng bộ.' };
-  }
 
   try {
+    // Nếu danh sách rỗng, xóa toàn bộ nhân viên trên Supabase
+    if (employees.length === 0) {
+      await client.from('employees').delete().neq('id', '__empty_placeholder__');
+      return { success: true, count: 0, message: 'Đã xóa toàn bộ nhân viên trên Supabase.' };
+    }
+
+    // Tự động đối chiếu và xóa khỏi Supabase những nhân viên đã bị xóa ở giao diện
+    try {
+      const { data: existingRows } = await client.from('employees').select('id');
+      if (existingRows && existingRows.length > 0) {
+        const activeIds = new Set(employees.map((e) => String(e.id)));
+        const toDelete = existingRows
+          .map((r) => String(r.id))
+          .filter((id) => !activeIds.has(id));
+
+        if (toDelete.length > 0) {
+          await client.from('employees').delete().in('id', toDelete);
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('Reconcile employees delete warning:', cleanErr);
+    }
+
     const payload = employees.map((emp, idx) => {
       const sortOrder = typeof emp.sortOrder === 'number' ? emp.sortOrder : idx + 1;
       return {
@@ -355,6 +375,95 @@ export const syncEmployeesToSupabase = async (
 };
 
 /**
+ * Lưu hoặc cập nhật ngay 1 nhân viên lên Supabase tức thì
+ */
+export const syncSingleEmployeeToSupabase = async (
+  emp: Employee,
+  periodCode?: string
+): Promise<{ success: boolean; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Chưa cấu hình Supabase Client.' };
+  }
+
+  try {
+    const payload = {
+      id: String(emp.id || emp.code),
+      code: String(emp.code),
+      name: String(emp.fullName || 'Nhân viên'),
+      department: String(emp.department || 'Phòng ban'),
+      position: String(emp.title || ''),
+      phone: String(emp.phone || ''),
+      email: String(emp.email || ''),
+      tax_code: String(emp.taxCode || ''),
+      id_card: String(emp.idCard || ''),
+      bank_account: String(emp.bankAccount || ''),
+      bank_name: String(emp.bankName || ''),
+      join_date: String(emp.joinDate || ''),
+      status: String(emp.status || 'ACTIVE'),
+      base_salary: Number(emp.baseSalary || 0),
+      insurance_salary: Number(emp.insuranceSalary || 0),
+      standard_work_days: Number(emp.standardWorkDays || 26),
+      actual_work_days: Number(emp.actualWorkDays || 0),
+      overtime_hours: Number(emp.overtimeHours || 0),
+      advance_payment: Number(emp.advancePayment || 0),
+      net_salary: Number(emp.netSalary || 0),
+      period_code: String(periodCode || '09/2026'),
+      employee_data: emp,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await client.from('employees').upsert(payload, {
+      onConflict: 'id',
+    });
+
+    if (error) {
+      console.error('Sync single employee failed:', error);
+      return { success: false, message: `Lỗi lưu nhân viên: ${error.message}`, error: error.message };
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, message: `Đã lưu nhân viên ${emp.fullName} lên Supabase.` };
+  } catch (e: any) {
+    console.error('Sync single employee exception:', e);
+    return { success: false, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
+  }
+};
+
+/**
+ * Xóa một nhân viên khỏi Supabase Cloud
+ */
+export const deleteEmployeeFromSupabase = async (
+  id: string,
+  code?: string
+): Promise<{ success: boolean; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Chưa cấu hình Supabase Client.' };
+  }
+
+  try {
+    const cleanId = String(id).trim();
+    const { error } = await client.from('employees').delete().eq('id', cleanId);
+    if (error) {
+      console.error('Delete employee failed:', error);
+      return { success: false, message: `Lỗi xóa nhân viên: ${error.message}`, error: error.message };
+    }
+
+    if (code) {
+      const cleanCode = String(code).trim();
+      await client.from('employees').delete().eq('code', cleanCode);
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, message: 'Đã xóa nhân viên khỏi Supabase.' };
+  } catch (e: any) {
+    console.error('Delete employee exception:', e);
+    return { success: false, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
+  }
+};
+
+/**
  * Tải danh sách Nhân viên từ Supabase
  */
 export const loadEmployeesFromSupabase = async (
@@ -407,11 +516,31 @@ export const syncSeasonalWorkersToSupabase = async (
   if (!client) {
     return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
   }
-  if (workers.length === 0) {
-    return { success: true, count: 0, message: 'Không có thợ thời vụ nào để đồng bộ.' };
-  }
 
   try {
+    // Nếu danh sách rỗng, xóa toàn bộ thợ trên Supabase
+    if (workers.length === 0) {
+      await client.from('seasonal_workers').delete().neq('id', '__empty_placeholder__');
+      return { success: true, count: 0, message: 'Đã xóa toàn bộ công nhân thời vụ trên Supabase.' };
+    }
+
+    // Tự động đối chiếu và xóa khỏi Supabase những công nhân đã bị xóa ở giao diện
+    try {
+      const { data: existingRows } = await client.from('seasonal_workers').select('id');
+      if (existingRows && existingRows.length > 0) {
+        const activeIds = new Set(workers.map((w) => String(w.id)));
+        const toDelete = existingRows
+          .map((r) => String(r.id))
+          .filter((id) => !activeIds.has(id));
+
+        if (toDelete.length > 0) {
+          await client.from('seasonal_workers').delete().in('id', toDelete);
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('Reconcile seasonal workers delete warning:', cleanErr);
+    }
+
     const payload = workers.map((w, idx) => {
       const sortOrder = typeof w.sortOrder === 'number' ? w.sortOrder : idx + 1;
       return {
@@ -470,6 +599,150 @@ export const syncSeasonalWorkersToSupabase = async (
       message: `Ngoại lệ: ${e.message || String(e)}`,
       error: e.message,
     };
+  }
+};
+
+/**
+ * Lưu hoặc cập nhật ngay 1 công nhân thời vụ lên Supabase tức thì (không chờ debounce)
+ */
+export const syncSingleSeasonalWorkerToSupabase = async (
+  worker: SeasonalWorker,
+  periodCode?: string
+): Promise<{ success: boolean; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Chưa cấu hình Supabase Client.' };
+  }
+
+  try {
+    const payload = {
+      id: String(worker.id),
+      code: String(worker.code),
+      name: String(worker.fullName || 'Công nhân'),
+      trade: String(worker.trade || ''),
+      skill_level: String(worker.skillLevel || ''),
+      project: String(worker.project || ''),
+      team: String(worker.teamName || ''),
+      phone: String(worker.phone || ''),
+      id_card: String(worker.idCard || ''),
+      bank_account: String(worker.bankAccount || ''),
+      bank_name: String(worker.bankName || ''),
+      daily_rate: Number(worker.dailyRate || 0),
+      actual_work_days: Number(worker.actualWorkDays || 0),
+      overtime_hours: Number(worker.overtimeHours || 0),
+      advance_payment: Number(worker.advancePayment || 0),
+      has_tax_commitment: Boolean(worker.hasTaxCommitment ?? true),
+      payment_method: String(worker.paymentMethod || 'BANK'),
+      payroll_cycle_type: String(worker.payrollCycleType || '1_WEEK'),
+      status: String(worker.status || 'ACTIVE'),
+      net_salary: Number(worker.netSalary || 0),
+      period_code: String(periodCode || '09/2026'),
+      worker_data: worker,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await client.from('seasonal_workers').upsert(payload, {
+      onConflict: 'id',
+    });
+
+    if (error) {
+      console.error('Sync single seasonal worker failed:', error);
+      return { success: false, message: `Lỗi lưu thợ: ${error.message}`, error: error.message };
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, message: `Đã lưu công nhân ${worker.fullName} lên Supabase.` };
+  } catch (e: any) {
+    console.error('Sync single seasonal worker exception:', e);
+    return { success: false, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
+  }
+};
+
+/**
+ * Xóa một công nhân thời vụ khỏi Supabase Cloud tức thì
+ */
+export const deleteSeasonalWorkerFromSupabase = async (
+  id: string,
+  code?: string
+): Promise<{ success: boolean; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Chưa cấu hình Supabase Client.' };
+  }
+
+  try {
+    const cleanId = String(id).trim();
+    const { error } = await client.from('seasonal_workers').delete().eq('id', cleanId);
+
+    if (error) {
+      console.error('Delete seasonal worker failed:', error);
+      return { success: false, message: `Lỗi xóa thợ: ${error.message}`, error: error.message };
+    }
+
+    // Nếu có mã thợ (code), kiểm tra xóa dứt điểm
+    if (code) {
+      const cleanCode = String(code).trim();
+      await client.from('seasonal_workers').delete().eq('code', cleanCode);
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, message: 'Đã xóa thợ khỏi Supabase thành công.' };
+  } catch (e: any) {
+    console.error('Delete seasonal worker exception:', e);
+    return { success: false, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
+  }
+};
+
+/**
+ * Xóa danh sách nhiều công nhân thời vụ khỏi Supabase Cloud
+ */
+export const deleteBatchSeasonalWorkersFromSupabase = async (
+  ids: string[]
+): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client || ids.length === 0) {
+    return { success: true, count: 0, message: 'Không có thợ nào cần xóa.' };
+  }
+
+  try {
+    const cleanIds = ids.map((id) => String(id).trim());
+    const { error } = await client.from('seasonal_workers').delete().in('id', cleanIds);
+
+    if (error) {
+      console.error('Delete batch seasonal workers failed:', error);
+      return { success: false, count: 0, message: `Lỗi xóa nhiều thợ: ${error.message}`, error: error.message };
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, count: cleanIds.length, message: `Đã xóa ${cleanIds.length} thợ khỏi Supabase.` };
+  } catch (e: any) {
+    console.error('Delete batch seasonal workers exception:', e);
+    return { success: false, count: 0, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
+  }
+};
+
+/**
+ * Xóa toàn bộ danh sách công nhân thời vụ trên Supabase
+ */
+export const clearAllSeasonalWorkersFromSupabase = async (): Promise<{ success: boolean; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Chưa cấu hình Supabase Client.' };
+  }
+
+  try {
+    const { error } = await client.from('seasonal_workers').delete().neq('id', '__empty_placeholder__');
+
+    if (error) {
+      console.error('Clear all seasonal workers failed:', error);
+      return { success: false, message: `Lỗi xóa toàn bộ: ${error.message}`, error: error.message };
+    }
+
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
+    return { success: true, message: 'Đã xóa toàn bộ thợ thời vụ trên Supabase.' };
+  } catch (e: any) {
+    console.error('Clear all seasonal workers exception:', e);
+    return { success: false, message: `Ngoại lệ: ${e.message || String(e)}`, error: e.message };
   }
 };
 
