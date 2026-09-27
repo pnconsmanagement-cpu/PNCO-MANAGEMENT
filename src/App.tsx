@@ -43,6 +43,51 @@ import { ensureEmployeeContract } from './utils/contractHelper';
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
 
+// Hàm nhận diện chuẩn xác chế độ xem Chấm Công Di Động (bảo vệ tuyệt đối thông tin bảng lương quản trị)
+function checkShouldShowAttendanceView(): { shouldShow: boolean; workerCode?: string } {
+  if (typeof window === 'undefined') return { shouldShow: false };
+
+  const href = window.location.href.toLowerCase();
+  const search = window.location.search;
+  const hash = window.location.hash.toLowerCase();
+  const searchParams = new URLSearchParams(search);
+
+  // Lấy workerCode từ search params hoặc hash
+  let workerCode = searchParams.get('worker') || undefined;
+  if (!workerCode && window.location.hash.includes('worker=')) {
+    const match = window.location.hash.match(/worker=([^&]+)/);
+    if (match && match[1]) workerCode = decodeURIComponent(match[1]);
+  }
+
+  // 1. Kiểm tra nếu URL có chứa dấu hiệu chấm công ở bất cứ đâu (search, hash, pathname, href)
+  const hasAttendanceParam =
+    searchParams.get('view') === 'chamcong' ||
+    searchParams.get('mode') === 'attendance' ||
+    searchParams.get('mode') === 'mobile_attendance' ||
+    searchParams.get('chamcong') === '1' ||
+    hash.includes('chamcong') ||
+    href.includes('view=chamcong') ||
+    href.includes('mode=attendance') ||
+    href.includes('chamcong');
+
+  if (hasAttendanceParam) {
+    return { shouldShow: true, workerCode };
+  }
+
+  // 2. Kiểm tra nếu thiết bị là điện thoại di động (Màn hình nhỏ <= 768px)
+  // và người dùng chưa từng đăng nhập chế độ Admin trên thiết bị này:
+  const isMobileScreen = window.innerWidth <= 768;
+  const isAdminAuthenticated = sessionStorage.getItem('pncons_admin_auth') === 'true';
+
+  if (isMobileScreen && !isAdminAuthenticated) {
+    // Trên điện thoại: MẶC ĐỊNH LUÔN VÀO TRANG CHẤM CÔNG!
+    // TUYỆT ĐỐI không bao giờ để lộ bảng lương, phiếu lương tổng hợp của công ty!
+    return { shouldShow: true, workerCode };
+  }
+
+  return { shouldShow: false, workerCode };
+}
+
 // DỮ LIỆU ĐƯỢC BẢO LƯU 100% - KHÔNG TỰ ĐỘNG XÓA HOẶC RESET KHI SỬA CODE
 export default function App() {
   const [config, setConfig] = useState<CompanyConfig>(() => {
@@ -135,54 +180,28 @@ export default function App() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'idle'>('idle');
   const [lastSyncedText, setLastSyncedText] = useState<string | null>(getLastSyncedTime());
 
-  // Chế độ xem Web App Chấm Công Di Động (dành riêng cho điện thoại thợ hoặc mở từ link riêng)
-  const [isMobileAttendanceView, setIsMobileAttendanceView] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const search = window.location.search;
-      const hash = window.location.hash;
-      const params = new URLSearchParams(search);
-      return (
-        params.get('view') === 'chamcong' ||
-        params.get('mode') === 'attendance' ||
-        params.get('mode') === 'mobile_attendance' ||
-        params.get('chamcong') === '1' ||
-        hash.includes('view=chamcong') ||
-        hash.includes('#chamcong')
-      );
-    }
-    return false;
-  });
+  const initialAttendanceCheck = useMemo(() => checkShouldShowAttendanceView(), []);
 
-  const [activeMobileWorkerCode, setActiveMobileWorkerCode] = useState<string | undefined>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('worker') || undefined;
-    }
-    return undefined;
-  });
+  // Chế độ xem Web App Chấm Công Di Động (dành riêng cho điện thoại thợ hoặc mở từ link riêng)
+  const [isMobileAttendanceView, setIsMobileAttendanceView] = useState<boolean>(
+    () => initialAttendanceCheck.shouldShow
+  );
+
+  const [activeMobileWorkerCode, setActiveMobileWorkerCode] = useState<string | undefined>(
+    () => initialAttendanceCheck.workerCode
+  );
 
   // Lắng nghe thay đổi URL (popstate & hashchange) để tự động chuyển sang chế độ chấm công khi có param
   useEffect(() => {
     const handleUrlChange = () => {
-      if (typeof window === 'undefined') return;
-      const search = window.location.search;
-      const hash = window.location.hash;
-      const params = new URLSearchParams(search);
-      const isMobile =
-        params.get('view') === 'chamcong' ||
-        params.get('mode') === 'attendance' ||
-        params.get('mode') === 'mobile_attendance' ||
-        params.get('chamcong') === '1' ||
-        hash.includes('view=chamcong') ||
-        hash.includes('#chamcong');
-
-      if (isMobile) {
+      const check = checkShouldShowAttendanceView();
+      if (check.shouldShow) {
         setIsMobileAttendanceView(true);
-        const wCode = params.get('worker');
-        if (wCode) setActiveMobileWorkerCode(wCode);
+        if (check.workerCode) setActiveMobileWorkerCode(check.workerCode);
       }
     };
 
+    handleUrlChange();
     window.addEventListener('popstate', handleUrlChange);
     window.addEventListener('hashchange', handleUrlChange);
     return () => {
@@ -598,6 +617,7 @@ export default function App() {
         initialWorkerCode={activeMobileWorkerCode}
         onUpdateWorker={handleUpdateSeasonalWorker}
         onExitMobileView={() => {
+          sessionStorage.setItem('pncons_admin_auth', 'true');
           setIsMobileAttendanceView(false);
           try {
             const cleanUrl = window.location.pathname;

@@ -343,17 +343,18 @@ export function generateShareableAttendanceUrl(
     params.set('y', String(options.year));
   }
 
-  let finalUrl = `${baseUrl}/?${params.toString()}`;
+  // Đính kèm cả hash #chamcong để bất kỳ trình duyệt di động nào bị redirect 302 vẫn giữ nguyên 100% trang chấm công
+  let hashPart = `chamcong${workerCode ? `&worker=${workerCode}` : ''}`;
 
   // Tự động đính kèm cấu hình Supabase nếu có
   if (options?.includeConfig !== false && isSupabaseConfigured()) {
     const { url, anonKey } = getSupabaseConfig();
     if (url && anonKey) {
-      finalUrl += `#sb_url=${encodeURIComponent(url)}&sb_key=${encodeURIComponent(anonKey)}`;
+      hashPart += `&sb_url=${encodeURIComponent(url)}&sb_key=${encodeURIComponent(anonKey)}`;
     }
   }
 
-  return finalUrl;
+  return `${baseUrl}/?${params.toString()}#${hashPart}`;
 }
 
 /**
