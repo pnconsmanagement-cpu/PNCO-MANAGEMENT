@@ -15,6 +15,7 @@ import {
   X,
   Database,
   Cloud,
+  Smartphone,
 } from 'lucide-react';
 import { TabType } from './NavigationTabs';
 import { CompanyConfig } from '../types';
@@ -32,6 +33,7 @@ interface SidebarProps {
   onOpenBatchZalo?: () => void;
   onOpenCompanyModal?: () => void;
   onOpenSupabaseModal?: () => void;
+  onOpenMobileAttendance?: () => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'error' | 'idle';
 }
 
@@ -47,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenBatchZalo,
   onOpenCompanyModal,
   onOpenSupabaseModal,
+  onOpenMobileAttendance,
   cloudSyncStatus = 'idle',
 }) => {
   interface NavMenuItem {
@@ -263,6 +266,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="px-2 py-1 bg-[#0068FF] hover:bg-blue-600 text-white rounded text-[11px] font-bold transition shadow-xs cursor-pointer shrink-0"
             >
               Gửi ngay
+            </button>
+          </div>
+        )}
+
+        {/* Nút Chấm Công Di Động */}
+        {onOpenMobileAttendance && (
+          <div className="p-2.5 mx-2.5 mb-2 rounded-lg bg-gradient-to-r from-emerald-900/60 to-teal-900/60 border border-emerald-500/40 flex items-center justify-between">
+            <div className="min-w-0 pr-2">
+              <div className="text-[11px] font-bold text-emerald-200 flex items-center gap-1.5 truncate">
+                <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Chấm Công Di Động</span>
+              </div>
+              <p className="text-[10px] text-emerald-200/70 truncate">Điện thoại thợ & tổ đội</p>
+            </div>
+            <button
+              onClick={onOpenMobileAttendance}
+              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold transition shadow-xs cursor-pointer shrink-0"
+            >
+              Mở app
             </button>
           </div>
         )}

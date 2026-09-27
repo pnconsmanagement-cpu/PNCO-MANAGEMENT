@@ -113,6 +113,32 @@ export interface SeasonalWorker {
   weeklyTimesheet?: WeeklyDayAttendance[]; // Bảng chấm công các ngày trong chu kỳ
   // Bản ghi chấm công lưu độc lập theo từng chu kỳ (Tuần 1, Tuần 2, Đợt 1, Đợt 2...)
   periodRecords?: { [periodKey: string]: SeasonalPeriodRecord };
+  // Bản ghi chấm công theo lịch tháng đầy đủ (dùng cho web app chấm công di động trên điện thoại)
+  monthlyAttendance?: { [monthKey: string]: MonthlyAttendanceRecord };
+}
+
+export interface DailyAttendanceDetail {
+  day: number; // 1 -> 31
+  dateStr: string; // '01/09/2026'
+  workUnits: number; // 1 = cả ngày, 0.5 = nửa ngày, 0 = nghỉ
+  statusType?: 'FULL' | 'HALF' | 'ABSENT' | 'LATE' | 'LEAVE'; // Đủ công, Nửa công, Vắng mặt, Đi muộn, Nghỉ phép
+  otHours: number; // số giờ tăng ca (0, 1, 2, 3...)
+  otMultiplier?: number; // Hệ số tăng ca (1.5, 2.0, 3.0)
+  location?: string; // Vị trí làm việc (vd: Công trình chính, Khu vực hoàn thiện...)
+  note?: string; // Ghi chú công việc / vị trí thi công (vd: Đổ bê tông dầm sàn, Kéo cáp điện...)
+  shiftType?: 'DAY' | 'NIGHT'; // Ca ngày hoặc ca đêm
+  updatedAt?: string;
+}
+
+export interface MonthlyAttendanceRecord {
+  monthKey: string; // "2026-09"
+  month: number; // 9
+  year: number; // 2026
+  totalWorkDays: number;
+  totalOtHours: number;
+  days: { [dayNumber: number]: DailyAttendanceDetail };
+  lastSubmittedAt?: string;
+  submittedBy?: string; // 'WORKER' | 'FOREMAN' | 'ADMIN'
 }
 
 export type SeasonalCycleType = '1_WEEK' | '2_WEEKS';

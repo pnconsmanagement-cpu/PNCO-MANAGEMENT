@@ -16,6 +16,7 @@ import { CompanyModal } from './components/CompanyModal';
 import { ZaloOASettingsModal } from './components/ZaloOASettingsModal';
 import { BatchSendZaloModal } from './components/BatchSendZaloModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
+import { MobileAttendanceApp } from './components/MobileAttendanceApp';
 import {
   isSupabaseConfigured,
   loadCompanyConfigFromSupabase,
@@ -133,6 +134,62 @@ export default function App() {
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'idle'>('idle');
   const [lastSyncedText, setLastSyncedText] = useState<string | null>(getLastSyncedTime());
+
+  // Chế độ xem Web App Chấm Công Di Động (dành riêng cho điện thoại thợ hoặc mở từ link riêng)
+  const [isMobileAttendanceView, setIsMobileAttendanceView] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const search = window.location.search;
+      const hash = window.location.hash;
+      const params = new URLSearchParams(search);
+      return (
+        params.get('view') === 'chamcong' ||
+        params.get('mode') === 'attendance' ||
+        params.get('mode') === 'mobile_attendance' ||
+        params.get('chamcong') === '1' ||
+        hash.includes('view=chamcong') ||
+        hash.includes('#chamcong')
+      );
+    }
+    return false;
+  });
+
+  const [activeMobileWorkerCode, setActiveMobileWorkerCode] = useState<string | undefined>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('worker') || undefined;
+    }
+    return undefined;
+  });
+
+  // Lắng nghe thay đổi URL (popstate & hashchange) để tự động chuyển sang chế độ chấm công khi có param
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (typeof window === 'undefined') return;
+      const search = window.location.search;
+      const hash = window.location.hash;
+      const params = new URLSearchParams(search);
+      const isMobile =
+        params.get('view') === 'chamcong' ||
+        params.get('mode') === 'attendance' ||
+        params.get('mode') === 'mobile_attendance' ||
+        params.get('chamcong') === '1' ||
+        hash.includes('view=chamcong') ||
+        hash.includes('#chamcong');
+
+      if (isMobile) {
+        setIsMobileAttendanceView(true);
+        const wCode = params.get('worker');
+        if (wCode) setActiveMobileWorkerCode(wCode);
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   // Cờ nhận diện cập nhật từ xa (Cloud/Broadcast) để tránh vòng lặp tự lưu (echo loop)
   const isRemoteUpdateRef = useRef(false);
@@ -532,6 +589,25 @@ export default function App() {
     (e) => !e.bankAccount || e.netSalary <= 0 || e.actualWorkDays > e.standardWorkDays
   ).length;
 
+  // Khi người dùng hoặc thợ mở link Web App Chấm Công Di Động riêng trên điện thoại
+  if (isMobileAttendanceView) {
+    return (
+      <MobileAttendanceApp
+        workers={seasonalWorkers}
+        config={config}
+        initialWorkerCode={activeMobileWorkerCode}
+        onUpdateWorker={handleUpdateSeasonalWorker}
+        onExitMobileView={() => {
+          setIsMobileAttendanceView(false);
+          try {
+            const cleanUrl = window.location.pathname;
+            window.history.pushState(null, '', cleanUrl);
+          } catch {}
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans">
       {/* Top Header */}
@@ -564,6 +640,7 @@ export default function App() {
           onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
           onOpenCompanyModal={() => setIsCompanyOpen(true)}
           onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+          onOpenMobileAttendance={() => setIsMobileAttendanceView(true)}
           cloudSyncStatus={cloudSyncStatus}
         />
 
@@ -665,6 +742,10 @@ export default function App() {
               onClearAllWorkers={handleClearAllSeasonalWorkers}
               onResetWorkers={handleResetSeasonalWorkers}
               onReorderWorkers={handleReorderSeasonalWorkers}
+              onOpenMobileView={(workerCode) => {
+                setActiveMobileWorkerCode(workerCode);
+                setIsMobileAttendanceView(true);
+              }}
             />
           )}
             </div>

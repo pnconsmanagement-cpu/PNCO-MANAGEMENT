@@ -37,11 +37,14 @@ import {
   ArrowUp,
   ArrowDown,
   ListOrdered,
+  Smartphone,
+  QrCode,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption } from '../types';
 import { SeasonalWorkerModal } from './SeasonalWorkerModal';
 import { SeasonalWorkerReceiptModal } from './SeasonalWorkerReceiptModal';
+import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 import { MonthYearPicker } from './MonthYearPicker';
 import { formatNumberOnly, numberToVietnameseWords } from '../utils/numberToVietnameseWords';
 import {
@@ -73,6 +76,7 @@ interface SeasonalWorkersTabProps {
   onClearAllWorkers?: () => void;
   onResetWorkers: () => void;
   onReorderWorkers?: (workers: SeasonalWorker[]) => void;
+  onOpenMobileView?: (workerCode?: string) => void;
 }
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
@@ -86,6 +90,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   onClearAllWorkers,
   onResetWorkers,
   onReorderWorkers,
+  onOpenMobileView,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState('ALL');
@@ -191,6 +196,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [viewingReceiptWorker, setViewingReceiptWorker] = useState<SeasonalWorker | null>(null);
   const [batchPrintNotice, setBatchPrintNotice] = useState(false);
+  const [isMobileShareOpen, setIsMobileShareOpen] = useState(false);
+  const [selectedWorkerIdForShare, setSelectedWorkerIdForShare] = useState<string | null>(null);
 
   // In-app Confirmation Dialogs
   const [workerToDelete, setWorkerToDelete] = useState<SeasonalWorker | null>(null);
@@ -570,6 +577,33 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
         {/* Thanh tác vụ chính */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Nút Tạo link chấm công điện thoại */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedWorkerIdForShare(null);
+              setIsMobileShareOpen(true);
+            }}
+            className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs rounded-lg shadow-md flex items-center gap-1.5 transition cursor-pointer border border-emerald-300"
+            title="Tạo link web app riêng và mã QR để gửi cho thợ chấm công trên điện thoại - Tự động đồng bộ về phần mềm"
+          >
+            <Smartphone className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+            <span>Tạo Link Chấm Công Điện Thoại</span>
+          </button>
+
+          {/* Nút Xem thử giao diện di động */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenMobileView) onOpenMobileView();
+            }}
+            className="px-3 py-2 bg-sky-500/25 hover:bg-sky-500/40 text-sky-100 font-bold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer border border-sky-400/40"
+            title="Mở trực tiếp giao diện Web App Chấm Công Di Động của thợ"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Xem giao diện thợ</span>
+          </button>
+
           {/* Nút Thêm công nhân */}
           <button
             type="button"
@@ -1661,6 +1695,20 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                     {/* CỘT THAO TÁC RÕ RÀNG, DỄ BẤM */}
                     <td className="p-2 text-center no-print sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-300 shadow-[-2px_0_4px_rgba(0,0,0,0.06)]">
                       <div className="flex items-center justify-center gap-1.5">
+                        {/* Nút Link Chấm Công Điện Thoại */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedWorkerIdForShare(String(w.id));
+                            setIsMobileShareOpen(true);
+                          }}
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-bold text-xs flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                          title="Tạo link & mã QR chấm công trên điện thoại cho thợ này"
+                        >
+                          <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Link thợ</span>
+                        </button>
+
                         {/* Nút Sửa rõ ràng */}
                         <button
                           type="button"
@@ -2055,6 +2103,22 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL 7: TẠO LINK & MÃ QR CHẤM CÔNG DI ĐỘNG TRÊN ĐIỆN THOẠI */}
+      <MobileAttendanceShareModal
+        isOpen={isMobileShareOpen}
+        onClose={() => {
+          setIsMobileShareOpen(false);
+          setSelectedWorkerIdForShare(null);
+        }}
+        workers={workers}
+        config={config}
+        selectedWorkerId={selectedWorkerIdForShare}
+        onOpenMobileView={(workerCode) => {
+          setIsMobileShareOpen(false);
+          if (onOpenMobileView) onOpenMobileView(workerCode);
+        }}
+      />
     </div>
   );
 };
