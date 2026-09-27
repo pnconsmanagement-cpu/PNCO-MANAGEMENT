@@ -66,18 +66,18 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     contractNumber: '',
     salaryType: 'MONTHLY',
     dailyRate: 0,
-    baseSalary: 16000000,
-    mealAllowance: 780000,
-    phoneTravelAllowance: 800000,
-    responsibilityAllowance: 800000,
-    projectAllowance: 1500000,
+    baseSalary: 0,
+    mealAllowance: 0,
+    phoneTravelAllowance: 0,
+    responsibilityAllowance: 0,
+    projectAllowance: 0,
     kpiBonus: 0,
     dependents: 0,
-    insuranceSalary: 7000000,
+    insuranceSalary: 0,
     bankAccount: '',
     bankName: 'Techcombank',
     standardWorkDays: 26,
-    actualWorkDays: 26,
+    actualWorkDays: 0,
     paidLeaveDays: 0,
     unpaidLeaveDays: 0,
     overtimeHours: 0,
@@ -90,14 +90,14 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       const ensured = ensureEmployeeContract(initialData);
       setFormData({
         ...ensured,
-        insuranceSalary: ensured.insuranceSalary !== undefined ? ensured.insuranceSalary : 7000000,
+        insuranceSalary: ensured.insuranceSalary !== undefined ? ensured.insuranceSalary : 0,
       });
     } else {
       const code = defaultNextCode();
       setFormData({
         code,
         fullName: '',
-        title: 'Kỹ sư kỹ thuật',
+        title: '',
         department: 'Kỹ thuật - Giám sát',
         joinDate: new Date().toLocaleDateString('vi-VN'),
         email: '',
@@ -107,18 +107,18 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         contractStartDate: new Date().toLocaleDateString('vi-VN'),
         contractEndDate: '31/12/2026',
         contractNumber: `HĐLĐ-${code}/PNC`,
-        baseSalary: 16000000,
-        mealAllowance: 780000,
-        phoneTravelAllowance: 800000,
-        responsibilityAllowance: 800000,
-        projectAllowance: 1500000,
+        baseSalary: 0,
+        mealAllowance: 0,
+        phoneTravelAllowance: 0,
+        responsibilityAllowance: 0,
+        projectAllowance: 0,
         kpiBonus: 0,
         dependents: 0,
-        insuranceSalary: 7000000,
+        insuranceSalary: 0,
         bankAccount: '',
         bankName: 'Techcombank',
         standardWorkDays: 26,
-        actualWorkDays: 26,
+        actualWorkDays: 0,
         paidLeaveDays: 0,
         unpaidLeaveDays: 0,
         overtimeHours: 0,
@@ -555,7 +555,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
                     const currentVal = formData.baseSalary || 0;
                     // Nếu đang từ ngày sang tháng và giá trị nhỏ (< 2 triệu), gợi ý chuyển sang mức lương tháng
                     const newSalary = currentVal < 2000000 && currentVal > 0 ? currentVal * 26 : currentVal;
-                    setFormData({ ...formData, salaryType: 'MONTHLY', baseSalary: newSalary || 11500000 });
+                    setFormData({ ...formData, salaryType: 'MONTHLY', baseSalary: newSalary });
                   }}
                   className={`p-2.5 rounded-md border text-left cursor-pointer transition ${
                     formData.salaryType !== 'DAILY'
@@ -579,7 +579,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
                   onClick={() => {
                     const currentVal = formData.baseSalary || 0;
                     // Nếu đang từ tháng sang ngày và giá trị lớn (> 2 triệu), gợi ý đổi sang đơn giá ngày tương ứng
-                    const newDaily = currentVal >= 2000000 ? Math.round(currentVal / 26) : (currentVal || 500000);
+                    const newDaily = currentVal >= 2000000 ? Math.round(currentVal / 26) : currentVal;
                     setFormData({ ...formData, salaryType: 'DAILY', baseSalary: newDaily });
                   }}
                   className={`p-2.5 rounded-md border text-left cursor-pointer transition ${
@@ -724,7 +724,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
                   <input
                     type="number"
                     step={100000}
-                    value={formData.insuranceSalary !== undefined ? formData.insuranceSalary : 7000000}
+                    value={formData.insuranceSalary !== undefined ? formData.insuranceSalary : 0}
                     onChange={(e) => setFormData({ ...formData, insuranceSalary: Number(e.target.value) })}
                     className="w-full px-2.5 py-1.5 border border-rose-300 rounded font-mono font-bold text-rose-950 focus:outline-rose-600 bg-white"
                     placeholder="VD: 7000000"

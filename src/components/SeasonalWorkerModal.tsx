@@ -163,7 +163,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     if (worker) {
       return getWorkerForPeriod(worker, activePeriod);
     }
-    const defaultSheet = createTimesheetForPeriod(activePeriod, activePeriod.cycleType === '1_WEEK' ? 6 : 13, 0);
+    const defaultSheet = createEmptyTimesheetForPeriod(activePeriod);
     return recomputeSeasonalWorkerPayroll({
       id: String(Date.now()),
       code: `PNC-TV${String(existingCodes.length + 1).padStart(2, '0')}`,
@@ -179,13 +179,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       bankName: 'Vietcombank',
       paymentMethod: 'BANK',
       joinDate: new Date().toLocaleDateString('vi-VN'),
-      dailyRate: 550000,
-      actualWorkDays: activePeriod.cycleType === '1_WEEK' ? 6 : 13,
+      dailyRate: 0,
+      actualWorkDays: 0,
       salaryByDays: 0,
       overtimeHours: 0,
       overtimePay: 0,
-      mealAllowance: activePeriod.cycleType === '1_WEEK' ? 180000 : 390000,
-      travelSafetyAllowance: 200000,
+      mealAllowance: 0,
+      travelSafetyAllowance: 0,
       otherBonus: 0,
       totalIncome: 0,
       hasTaxCommitment: true,
@@ -230,7 +230,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         setForm({ ...workerForThisPeriod });
         setTimesheet(workerForThisPeriod.weeklyTimesheet || createEmptyTimesheetForPeriod(curPeriod));
       } else {
-        const defaultSheet = createTimesheetForPeriod(curPeriod, curPeriod.cycleType === '1_WEEK' ? 6 : 13, 0);
+        const defaultSheet = createEmptyTimesheetForPeriod(curPeriod);
         setTimesheet(defaultSheet);
         setForm(
           recomputeSeasonalWorkerPayroll({
@@ -248,13 +248,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
             bankName: 'Vietcombank',
             paymentMethod: 'BANK',
             joinDate: new Date().toLocaleDateString('vi-VN'),
-            dailyRate: 550000,
-            actualWorkDays: curPeriod.cycleType === '1_WEEK' ? 6 : 13,
+            dailyRate: 0,
+            actualWorkDays: 0,
             salaryByDays: 0,
             overtimeHours: 0,
             overtimePay: 0,
-            mealAllowance: curPeriod.cycleType === '1_WEEK' ? 180000 : 390000,
-            travelSafetyAllowance: 200000,
+            mealAllowance: 0,
+            travelSafetyAllowance: 0,
             otherBonus: 0,
             totalIncome: 0,
             hasTaxCommitment: true,
