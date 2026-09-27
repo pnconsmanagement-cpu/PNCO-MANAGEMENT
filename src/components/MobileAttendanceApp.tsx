@@ -34,6 +34,7 @@ import {
   generateShareableAttendanceUrl,
 } from '../utils/seasonalAttendanceHelper';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
+import { saveAttendanceToServer, fetchServerData } from '../services/backendSyncService';
 
 interface MobileAttendanceAppProps {
   workers: SeasonalWorker[];
@@ -278,10 +279,12 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
+      // Đồng bộ ngay lập tức lên Máy chủ Backend để Web App nhận được tức thì
+      saveAttendanceToServer(updatedWorker);
     }
 
     setEditingCell(null);
-    showToast(`Đã lưu chấm công ngày ${dayNum}/${month}/${year}`);
+    showToast(`Đã lưu & đồng bộ chấm công ngày ${dayNum}/${month}/${year}`);
   };
 
   // Xóa trạng thái của ngày trong popup
@@ -302,10 +305,34 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
+      saveAttendanceToServer(updatedWorker);
     }
 
     setEditingCell(null);
-    showToast(`Đã xóa trạng thái ngày ${dayNum}/${month}/${year}`);
+    showToast(`Đã xóa & đồng bộ trạng thái ngày ${dayNum}/${month}/${year}`);
+  };
+
+  const [isSyncing, setIsSyncing] = useState(false);
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      const data = await fetchServerData();
+      if (data && data.seasonalWorkers) {
+        const found = data.seasonalWorkers.find(
+          (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode
+        );
+        if (found) {
+          onUpdateWorker(found);
+          const record = getWorkerMonthlyAttendance(found, year, month);
+          setAttendanceDays(record.days);
+        }
+      }
+      showToast('Đã đồng bộ dữ liệu mới nhất từ máy chủ');
+    } catch {
+      showToast('Không thể kết nối máy chủ');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const dayHeaders = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
@@ -333,10 +360,16 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Đồng bộ</span>
-            </div>
+            <button
+              type="button"
+              onClick={handleManualSync}
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full text-xs font-medium transition-colors cursor-pointer"
+              title="Bấm để làm mới và kiểm tra đồng bộ máy chủ"
+            >
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
+              <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ'}</span>
+              <RotateCcw className={`w-3 h-3 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
+            </button>
 
             <button
               type="button"

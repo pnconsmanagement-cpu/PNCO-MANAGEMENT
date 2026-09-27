@@ -286,7 +286,10 @@ export function updateWorkerMonthlyAttendance(
 }
 
 // URL Web App Public chính thức của ứng dụng trên Google Cloud Run
-export const PUBLIC_APP_URL = 'https://ais-pre-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
+const envAppUrl = (import.meta as any).env?.VITE_APP_URL || '';
+export const PUBLIC_APP_URL = envAppUrl && envAppUrl.startsWith('http')
+  ? envAppUrl.replace(/\/$/, '')
+  : 'https://ais-dev-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
 
 /**
  * Lấy URL gốc công khai của Web App để chia sẻ cho công nhân / thợ trên điện thoại
@@ -310,7 +313,12 @@ export function getPublicBaseUrl(): string {
     }
 
     // 3. Nếu đang trong AI Studio (aistudio.google.com), iframe hoặc localhost,
-    // BẮT BUỘC dùng domain Public Cloud Run để khi gửi link Zalo cho thợ mở trên điện thoại không bị 404
+    // Ưu tiên VITE_APP_URL của container đang chạy để đồng bộ 100% dữ liệu
+    const envUrl = (import.meta as any).env?.VITE_APP_URL;
+    if (envUrl && envUrl.startsWith('http')) {
+      return envUrl.replace(/\/$/, '');
+    }
+
     return PUBLIC_APP_URL;
   }
   return PUBLIC_APP_URL;

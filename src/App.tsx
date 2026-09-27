@@ -39,6 +39,14 @@ import { initialSeasonalWorkers, recomputeSeasonalWorkerPayroll as recomputeSeas
 import { CompanyConfig, Employee, SeasonalWorker } from './types';
 import { recomputeEmployeePayroll } from './utils/payrollCalculator';
 import { ensureEmployeeContract } from './utils/contractHelper';
+import {
+  fetchServerData,
+  saveAllToServer,
+  saveAttendanceToServer,
+  saveSingleWorkerToServer,
+  subscribeToSync,
+  getLastSyncedTime as getServerLastSyncedTime,
+} from './services/backendSyncService';
 
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
@@ -282,6 +290,98 @@ export default function App() {
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(seasonalWorkers));
   }, [seasonalWorkers]);
 
+  // ĐỒNG BỘ 2 CHIỀU VỚI MÁY CHỦ BACKEND (SERVER REALTIME SYNC)
+  // Giúp link chấm công trên điện thoại và webapp trên máy tính luôn đồng bộ 100% dữ liệu ngay tức thì
+  useEffect(() => {
+    let isMounted = true;
+
+    // 1. Tải dữ liệu ban đầu từ máy chủ
+    (async () => {
+      try {
+        const serverData = await fetchServerData();
+        if (!isMounted) return;
+
+        if (serverData && serverData.lastUpdated > 0) {
+          isRemoteUpdateRef.current = true;
+          if (serverData.config) {
+            setConfig(serverData.config);
+            localStorage.setItem('payroll_company_config', JSON.stringify(serverData.config));
+          }
+          if (serverData.employees && serverData.employees.length > 0) {
+            const recomputedEmps = serverData.employees.map((e) => recomputeEmployeePayroll(e));
+            setEmployees(recomputedEmps);
+            localStorage.setItem('payroll_employees', JSON.stringify(recomputedEmps));
+          }
+          if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
+            const recomputedWorkers = serverData.seasonalWorkers.map((w) => recomputeSeasonal(w));
+            setSeasonalWorkers(recomputedWorkers);
+            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(recomputedWorkers));
+          }
+          setCloudSyncStatus('synced');
+          setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
+        } else {
+          // Nếu máy chủ chưa có dữ liệu, khởi tạo đẩy dữ liệu từ Web App lên máy chủ
+          saveAllToServer(config, employees, seasonalWorkers);
+        }
+      } catch (err) {
+        console.warn('Initial server sync error:', err);
+      }
+    })();
+
+    // 2. Lắng nghe cập nhật Real-time từ máy chủ (khi thợ chấm công trên điện thoại)
+    const unsubscribe = subscribeToSync((serverData) => {
+      if (!isMounted) return;
+      isRemoteUpdateRef.current = true;
+
+      if (serverData.config) {
+        setConfig(serverData.config);
+        localStorage.setItem('payroll_company_config', JSON.stringify(serverData.config));
+      }
+      if (serverData.employees && serverData.employees.length > 0) {
+        const recomputedEmps = serverData.employees.map((e) => recomputeEmployeePayroll(e));
+        setEmployees(recomputedEmps);
+        localStorage.setItem('payroll_employees', JSON.stringify(recomputedEmps));
+      }
+      if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
+        const recomputedWorkers = serverData.seasonalWorkers.map((w) => recomputeSeasonal(w));
+        setSeasonalWorkers(recomputedWorkers);
+        localStorage.setItem('payroll_seasonal_workers', JSON.stringify(recomputedWorkers));
+      }
+      setCloudSyncStatus('synced');
+      setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
+      notifyCrossTab();
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Tự động lưu lên Máy chủ Backend khi có thay đổi dữ liệu trên Web App (Debounce 1.5 giây)
+  useEffect(() => {
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setCloudSyncStatus('syncing');
+        const ok = await saveAllToServer(config, employees, seasonalWorkers);
+        if (ok) {
+          setCloudSyncStatus('synced');
+          setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
+          notifyCrossTab();
+        }
+      } catch (err) {
+        console.warn('Auto server sync error:', err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [config, employees, seasonalWorkers]);
+
   // Khởi động: Tải dữ liệu từ Supabase Cloud hoặc tự động khởi tạo dữ liệu ban đầu lên Cloud
   useEffect(() => {
     if (isSupabaseConfigured()) {
@@ -423,12 +523,14 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [config, employees, seasonalWorkers]);
 
-  // Cập nhật công nhân thời vụ - đồng bộ ngay lập tức lên Supabase Cloud
+  // Cập nhật công nhân thời vụ - đồng bộ ngay lập tức lên Máy chủ và Supabase Cloud
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
     const recalculated = recomputeSeasonal(updated);
     setSeasonalWorkers((prev) =>
       prev.map((w) => (String(w.id) === String(recalculated.id) ? recalculated : w))
     );
+    // Lưu ngay lên máy chủ Backend để các thiết bị khác nhận được tức thì
+    saveAttendanceToServer(recalculated);
     if (isSupabaseConfigured()) {
       syncSingleSeasonalWorkerToSupabase(recalculated, config.periodCode).then(() => notifyCrossTab());
     }
@@ -443,6 +545,7 @@ export default function App() {
         ...recalculated,
         sortOrder: recalculated.sortOrder || (maxOrder + 1),
       };
+      saveSingleWorkerToServer(workerWithOrder);
       if (isSupabaseConfigured()) {
         syncSingleSeasonalWorkerToSupabase(workerWithOrder, config.periodCode).then(() => notifyCrossTab());
       }
@@ -453,6 +556,7 @@ export default function App() {
   const handleReorderSeasonalWorkers = (reordered: SeasonalWorker[]) => {
     setSeasonalWorkers(reordered);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(reordered));
+    saveAllToServer(config, employees, reordered);
     if (isSupabaseConfigured()) {
       syncSeasonalWorkersToSupabase(reordered, config.periodCode).then(() => notifyCrossTab());
     }
@@ -460,7 +564,9 @@ export default function App() {
 
   // Xóa triệt để công nhân thời vụ - xóa ngay trên Supabase Cloud
   const handleDeleteSeasonalWorker = (id: string) => {
-    setSeasonalWorkers((prev) => prev.filter((w) => String(w.id) !== String(id)));
+    const filtered = seasonalWorkers.filter((w) => String(w.id) !== String(id));
+    setSeasonalWorkers(filtered);
+    saveAllToServer(config, employees, filtered);
     if (isSupabaseConfigured()) {
       deleteSeasonalWorkerFromSupabase(id).then(() => notifyCrossTab());
     }
@@ -469,7 +575,9 @@ export default function App() {
   // Xóa hàng loạt công nhân thời vụ - xóa ngay trên Supabase Cloud
   const handleDeleteBatchSeasonalWorkers = (ids: string[]) => {
     const idSet = new Set(ids.map((item) => String(item)));
-    setSeasonalWorkers((prev) => prev.filter((w) => !idSet.has(String(w.id))));
+    const filtered = seasonalWorkers.filter((w) => !idSet.has(String(w.id)));
+    setSeasonalWorkers(filtered);
+    saveAllToServer(config, employees, filtered);
     if (isSupabaseConfigured()) {
       deleteBatchSeasonalWorkersFromSupabase(ids).then(() => notifyCrossTab());
     }
@@ -479,6 +587,7 @@ export default function App() {
   const handleClearAllSeasonalWorkers = () => {
     setSeasonalWorkers([]);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify([]));
+    saveAllToServer(config, employees, []);
     if (isSupabaseConfigured()) {
       clearAllSeasonalWorkersFromSupabase(config.periodCode).then(() => notifyCrossTab());
     }
@@ -487,6 +596,7 @@ export default function App() {
   const handleResetSeasonalWorkers = () => {
     setSeasonalWorkers(initialSeasonalWorkers);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(initialSeasonalWorkers));
+    saveAllToServer(config, employees, initialSeasonalWorkers);
     if (isSupabaseConfigured()) {
       syncSeasonalWorkersToSupabase(initialSeasonalWorkers, config.periodCode).then(() => notifyCrossTab());
     }
@@ -522,11 +632,22 @@ export default function App() {
 
   // Nút cưỡng bức làm mới / đồng bộ ngay tức thì
   const handleManualForceSync = async () => {
-    if (!isSupabaseConfigured()) {
-      setIsSupabaseOpen(true);
-      return;
+    setCloudSyncStatus('syncing');
+    try {
+      const serverData = await fetchServerData();
+      if (serverData && serverData.lastUpdated > 0) {
+        if (serverData.config) setConfig(serverData.config);
+        if (serverData.employees) setEmployees(serverData.employees.map((e) => recomputeEmployeePayroll(e)));
+        if (serverData.seasonalWorkers) setSeasonalWorkers(serverData.seasonalWorkers.map((w) => recomputeSeasonal(w)));
+        setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
+      }
+      if (isSupabaseConfigured()) {
+        await reloadLatestFromCloud();
+      }
+      setCloudSyncStatus('synced');
+    } catch {
+      setCloudSyncStatus('error');
     }
-    await reloadLatestFromCloud();
   };
 
   // Change Month and Year for entire payroll & timekeeping
