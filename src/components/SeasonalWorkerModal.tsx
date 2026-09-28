@@ -696,6 +696,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 >
                   <option value="1_WEEK">Lương 1 Tuần (Theo từng tuần W1 - W5)</option>
                   <option value="2_WEEKS">Lương 2 Tuần (Đợt 1: 01-15, Đợt 2: 16-cuối tháng)</option>
+                  <option value="1_MONTH">Lương Cả Tháng (Từ ngày 01 đến cuối tháng)</option>
                 </select>
               </div>
             </div>
@@ -772,11 +773,11 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                       3. BẢNG CHẤM CÔNG & ĐƠN GIÁ LƯƠNG THEO CHU KỲ
                     </h4>
                     <span className="px-2 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[10px] uppercase">
-                      {cycleType === '1_WEEK' ? 'Lương 1 Tuần' : 'Lương 2 Tuần'}
+                      {cycleType === '1_WEEK' ? 'Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Lương 2 Tuần' : 'Lương Cả Tháng'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Hỗ trợ chuyển đổi giữa chu kỳ 1 tuần và 2 tuần. Khi chuyển kỳ mới, số công mặc định 0 để người dùng chấm lại.
+                    Hỗ trợ chuyển đổi giữa chu kỳ 1 tuần, 2 tuần và cả tháng. Tự động đồng bộ với link chấm công di động.
                   </p>
                 </div>
               </div>
@@ -895,12 +896,44 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                       >
                         Lương 2 Tuần
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCycleChange('1_MONTH')}
+                        className={`px-2.5 py-1 rounded font-bold text-xs transition cursor-pointer ${
+                          cycleType === '1_MONTH'
+                            ? 'bg-[#0f3d64] text-white shadow-xs'
+                            : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Lương Tháng
+                      </button>
                     </div>
                   </div>
 
                   {/* CÁC NÚT CHẤM NHANH 1-CLICK */}
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {cycleType === '1_WEEK' ? (
+                    {cycleType === '1_MONTH' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickFillPeriod(26)}
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer text-xs shadow-2xs"
+                          title="Chấm đủ 26 công tiêu chuẩn cả tháng"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>⚡ 26 công (Tiêu chuẩn tháng)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickFillPeriod(timesheet.length)}
+                          className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer text-xs shadow-2xs"
+                          title="Chấm tất cả các ngày trong tháng (kể cả Chủ nhật)"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-blue-600" />
+                          <span>⚡ Đủ cả tháng ({timesheet.length} ngày)</span>
+                        </button>
+                      </>
+                    ) : cycleType === '1_WEEK' ? (
                       <>
                         <button
                           type="button"

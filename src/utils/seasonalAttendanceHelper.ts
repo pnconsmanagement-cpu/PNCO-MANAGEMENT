@@ -3,8 +3,9 @@ import {
   DailyAttendanceDetail,
   MonthlyAttendanceRecord,
   WeeklyDayAttendance,
+  SeasonalPeriodRecord,
 } from '../types';
-import { getDayOfWeekInfo, recomputeSeasonalWorkerPayroll } from '../data/mockSeasonalWorkers';
+import { getDayOfWeekInfo, recomputeSeasonalWorkerPayroll, getPayrollPeriods } from '../data/mockSeasonalWorkers';
 import { getSupabaseConfig, isSupabaseConfigured } from '../services/supabaseService';
 
 export interface CalendarDayCell {
@@ -213,7 +214,7 @@ export function getWorkerMonthlyAttendance(
 }
 
 /**
- * Cập nhật chấm công tháng của công nhân, tính lại lương và đồng bộ bảng tuần
+ * Cập nhật chấm công tháng của công nhân, tính lại lương và đồng bộ bảng tuần lẫn tất cả chu kỳ
  */
 export function updateWorkerMonthlyAttendance(
   worker: SeasonalWorker,
@@ -252,12 +253,90 @@ export function updateWorkerMonthlyAttendance(
     [monthKey]: record,
   };
 
+  // Đồng bộ sang TẤT CẢ các chu kỳ của tháng (1 tuần, 2 tuần và cả tháng)
+  const allPeriods = [
+    ...getPayrollPeriods(year, month, '1_WEEK'),
+    ...getPayrollPeriods(year, month, '2_WEEKS'),
+    ...getPayrollPeriods(year, month, '1_MONTH'),
+  ];
+
+  const periodRecords = { ...(worker.periodRecords || {}) };
+
+  allPeriods.forEach((period) => {
+    let pWorkDays = 0;
+    let pOtHours = 0;
+
+    const timesheet: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
+      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, year, month);
+      const d = days[dayNum];
+      const workUnits = d ? Number(d.workUnits || 0) : 0;
+      const otHours = d ? Number(d.otHours || 0) : 0;
+      pWorkDays += workUnits;
+      pOtHours += otHours;
+      const shiftType = d?.shiftType || 'DAY';
+      const note = d?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công tại công trường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+
+      return {
+        dayOfWeek,
+        dayName,
+        dateLabel: dateStr,
+        workUnits,
+        otHours,
+        shiftType,
+        note,
+      };
+    });
+
+    const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
+    const dailyRate = Math.max(0, worker.dailyRate || 0);
+    const salaryByDays = Math.round(dailyRate * roundedPeriodDays);
+    const hourlyRate = dailyRate / 8;
+    const overtimePay = Math.round(hourlyRate * pOtHours * 1.5);
+    const mealAllowance = Math.max(0, worker.mealAllowance || 0);
+    const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
+    const otherBonus = Math.max(0, worker.otherBonus || 0);
+    const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+    let personalIncomeTax = 0;
+    if (!worker.hasTaxCommitment && totalIncome >= 2000000) {
+      personalIncomeTax = Math.round(totalIncome * 0.1);
+    }
+    const advancePayment = Math.max(0, worker.advancePayment || 0);
+    const totalDeductions = personalIncomeTax + advancePayment;
+    const netSalary = Math.max(0, totalIncome - totalDeductions);
+
+    const pRec: SeasonalPeriodRecord = {
+      periodKey: period.periodKey,
+      periodLabel: period.label,
+      cycleType: period.cycleType,
+      isRecorded: true,
+      actualWorkDays: roundedPeriodDays,
+      salaryByDays,
+      overtimeHours: pOtHours,
+      overtimePay,
+      mealAllowance,
+      travelSafetyAllowance,
+      otherBonus,
+      totalIncome,
+      hasTaxCommitment: worker.hasTaxCommitment,
+      personalIncomeTax,
+      advancePayment,
+      totalDeductions,
+      netSalary,
+      weeklyTimesheet: timesheet,
+      notes: worker.notes,
+    };
+
+    periodRecords[period.periodKey] = pRec;
+  });
+
   // Cập nhật công nhân và tính toán lại lương theo Thông tư 111
   const updatedWorker = recomputeSeasonalWorkerPayroll({
     ...worker,
     actualWorkDays: totalWorkDays,
     overtimeHours: totalOtHours,
     monthlyAttendance,
+    periodRecords,
     attendanceMonth: month,
     attendanceYear: year,
   });
@@ -285,43 +364,50 @@ export function updateWorkerMonthlyAttendance(
   return updatedWorker;
 }
 
-// URL Web App Public chính thức của ứng dụng trên Google Cloud Run
+// URL Web App Public chính thức của ứng dụng cho công nhân và chia sẻ ngoài
 const envAppUrl = (import.meta as any).env?.VITE_APP_URL || '';
-export const PUBLIC_APP_URL = envAppUrl && envAppUrl.startsWith('http')
-  ? envAppUrl.replace(/\/$/, '')
-  : 'https://ais-dev-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
+export const SHARED_PUBLIC_APP_URL =
+  envAppUrl && envAppUrl.startsWith('http')
+    ? envAppUrl.replace(/\/$/, '')
+    : 'https://ais-dev-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
+export const PUBLIC_APP_URL = SHARED_PUBLIC_APP_URL;
 
 /**
  * Lấy URL gốc công khai của Web App để chia sẻ cho công nhân / thợ trên điện thoại
- * Tránh lỗi 404 trên máy chủ nội bộ aistudio.google.com
+ * Đảm bảo liên kết luôn mở được trực tiếp, không bị lỗi 404
  */
 export function getPublicBaseUrl(): string {
   if (typeof window !== 'undefined') {
-    // 1. Nếu người dùng cấu hình URL tùy chỉnh trong bộ nhớ
+    // 1. Tự động dọn dẹp nếu localStorage từng lưu nhầm domain aistudio.google.com
     try {
       const custom = localStorage.getItem('payroll_public_app_url');
-      if (custom && custom.startsWith('http')) {
+      if (custom && custom.includes('aistudio.google.com')) {
+        localStorage.removeItem('payroll_public_app_url');
+      } else if (custom && custom.startsWith('http') && !custom.includes('aistudio.google.com')) {
         return custom.replace(/\/$/, '');
       }
     } catch {}
 
     const origin = window.location.origin || '';
 
-    // 2. Nếu đang mở trực tiếp trên domain Cloud Run (*.run.app)
-    if (origin.includes('.run.app')) {
+    // 2. Nếu đang mở trực tiếp trên app (*.run.app)
+    if (origin.includes('.run.app') && !origin.includes('aistudio.google.com')) {
       return origin;
     }
 
-    // 3. Nếu đang trong AI Studio (aistudio.google.com), iframe hoặc localhost,
-    // Ưu tiên VITE_APP_URL của container đang chạy để đồng bộ 100% dữ liệu
-    const envUrl = (import.meta as any).env?.VITE_APP_URL;
-    if (envUrl && envUrl.startsWith('http')) {
-      return envUrl.replace(/\/$/, '');
+    // 3. Nếu đang mở trên localhost: dùng chính origin để test trực tiếp
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return origin;
     }
 
-    return PUBLIC_APP_URL;
+    // 4. Nếu đang trong AI Studio (aistudio.google.com), iframe:
+    if (envAppUrl && envAppUrl.startsWith('http') && !envAppUrl.includes('aistudio.google.com')) {
+      return envAppUrl.replace(/\/$/, '');
+    }
+
+    return SHARED_PUBLIC_APP_URL;
   }
-  return PUBLIC_APP_URL;
+  return SHARED_PUBLIC_APP_URL;
 }
 
 /**
@@ -334,9 +420,10 @@ export function generateShareableAttendanceUrl(
     month?: number;
     year?: number;
     includeConfig?: boolean;
+    forceOrigin?: string;
   }
 ): string {
-  const baseUrl = getPublicBaseUrl();
+  const baseUrl = options?.forceOrigin || getPublicBaseUrl();
 
   const params = new URLSearchParams();
   params.set('view', 'chamcong');
@@ -352,7 +439,7 @@ export function generateShareableAttendanceUrl(
   }
 
   // Đính kèm cả hash #chamcong để bất kỳ trình duyệt di động nào bị redirect 302 vẫn giữ nguyên 100% trang chấm công
-  let hashPart = `chamcong${workerCode ? `&worker=${workerCode}` : ''}`;
+  let hashPart = `chamcong${workerCode ? `&worker=${encodeURIComponent(workerCode)}` : ''}`;
 
   // Tự động đính kèm cấu hình Supabase nếu có
   if (options?.includeConfig !== false && isSupabaseConfigured()) {

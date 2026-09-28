@@ -55,10 +55,21 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   const [selectedWorkerCode, setSelectedWorkerCode] = useState<string>(() => {
     if (initialWorkerCode) return initialWorkerCode;
     const urlParams = new URLSearchParams(window.location.search);
-    const workerParam = urlParams.get('worker');
+    let workerParam = urlParams.get('worker');
+    if (!workerParam && typeof window !== 'undefined' && window.location.hash.includes('worker=')) {
+      const match = window.location.hash.match(/worker=([^&]+)/);
+      if (match && match[1]) workerParam = decodeURIComponent(match[1]);
+    }
     if (workerParam) return workerParam;
     return workers[0]?.code || 'PNC-TV01';
   });
+
+  // Tự động chuyển công nhân khi prop initialWorkerCode thay đổi
+  useEffect(() => {
+    if (initialWorkerCode) {
+      setSelectedWorkerCode(initialWorkerCode);
+    }
+  }, [initialWorkerCode]);
 
   // Tháng và năm đang chấm công
   const [month, setMonth] = useState<number>(() => {
@@ -134,12 +145,12 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     });
   };
 
-  // Nạp dữ liệu chấm công khi đổi công nhân hoặc đổi tháng
+  // Nạp dữ liệu chấm công khi đổi công nhân, đổi tháng hoặc khi dữ liệu công nhân cập nhật từ xa
   useEffect(() => {
     if (!currentWorker) return;
     const record = getWorkerMonthlyAttendance(currentWorker, year, month);
     setAttendanceDays(record.days);
-  }, [currentWorker?.code, month, year]);
+  }, [currentWorker?.code, currentWorker?.monthlyAttendance, month, year]);
 
   // Sinh lưới lịch tháng
   const calendarGrid = useMemo(() => {

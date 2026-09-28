@@ -98,32 +98,36 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'ALL' | 'BANK' | 'CASH'>('ALL');
   const [selectedTaxFilter, setSelectedTaxFilter] = useState<'ALL' | 'HAS_COMMITMENT' | 'NO_COMMITMENT'>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PAUSED'>('ALL');
-  const [selectedWorkerCycleFilter, setSelectedWorkerCycleFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS'>('ALL');
+  const [selectedWorkerCycleFilter, setSelectedWorkerCycleFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH'>('ALL');
 
-  // Lựa chọn Chu kỳ thanh toán: Lương 1 tuần ('1_WEEK') hoặc Lương 2 tuần ('2_WEEKS')
+  // Lựa chọn Chu kỳ thanh toán: Lương 1 tuần ('1_WEEK'), Lương 2 tuần ('2_WEEKS') hoặc Cả tháng ('1_MONTH')
   const [cycleType, setCycleType] = useState<SeasonalCycleType>(() => {
     const saved = localStorage.getItem('seasonal_payroll_cycle_type');
-    return (saved === '2_WEEKS' ? '2_WEEKS' : '1_WEEK') as SeasonalCycleType;
+    if (saved === '1_MONTH') return '1_MONTH';
+    if (saved === '2_WEEKS') return '2_WEEKS';
+    return '1_WEEK';
   });
 
   const currentMonth = config.month || 9;
   const currentYear = config.year || 2026;
 
-  // Danh sách các kỳ thanh toán sinh tự động theo Chu kỳ (1 tuần hoặc 2 tuần)
+  // Danh sách các kỳ thanh toán sinh tự động theo Chu kỳ (1 tuần, 2 tuần hoặc cả tháng)
   const payrollPeriods = useMemo(() => {
     return getPayrollPeriods(currentYear, currentMonth, cycleType);
   }, [currentYear, currentMonth, cycleType]);
 
-  // Kỳ đang được chọn (Mặc định W1 hoặc BI1)
+  // Kỳ đang được chọn (Mặc định W1, BI1 hoặc M1)
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>(() => {
     const saved = localStorage.getItem('seasonal_payroll_cycle_type');
-    return saved === '2_WEEKS' ? 'BI1' : 'W1';
+    if (saved === '1_MONTH') return 'M1';
+    if (saved === '2_WEEKS') return 'BI1';
+    return 'W1';
   });
 
   // Tự động kiểm tra và căn chỉnh selectedPeriodId nếu đổi tháng hoặc đổi chu kỳ
   useEffect(() => {
     if (!payrollPeriods.some((p) => p.id === selectedPeriodId)) {
-      setSelectedPeriodId(payrollPeriods[0]?.id || (cycleType === '2_WEEKS' ? 'BI1' : 'W1'));
+      setSelectedPeriodId(payrollPeriods[0]?.id || (cycleType === '1_MONTH' ? 'M1' : cycleType === '2_WEEKS' ? 'BI1' : 'W1'));
     }
   }, [payrollPeriods, selectedPeriodId, cycleType]);
 
@@ -137,11 +141,13 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     setCycleType(newType);
     localStorage.setItem('seasonal_payroll_cycle_type', newType);
     const newPeriods = getPayrollPeriods(currentYear, currentMonth, newType);
-    setSelectedPeriodId(newPeriods[0]?.id || (newType === '2_WEEKS' ? 'BI1' : 'W1'));
+    setSelectedPeriodId(newPeriods[0]?.id || (newType === '1_MONTH' ? 'M1' : newType === '2_WEEKS' ? 'BI1' : 'W1'));
     showToast(
       newType === '1_WEEK'
         ? 'Đã chuyển sang chu kỳ: Lương 1 tuần (Tuần 1, Tuần 2...)'
-        : 'Đã chuyển sang chu kỳ: Lương 2 tuần (Đợt 1: 01-15, Đợt 2: 16-cuối tháng)'
+        : newType === '2_WEEKS'
+        ? 'Đã chuyển sang chu kỳ: Lương 2 tuần (Đợt 1: 01-15, Đợt 2: 16-cuối tháng)'
+        : 'Đã chuyển sang chu kỳ: Lương Cả Tháng (Từ ngày 01 đến cuối tháng)'
     );
   };
 
@@ -737,7 +743,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               </div>
             )}
 
-            {/* OPTION CHU KỲ THANH TOÁN (1 TUẦN HOẶC 2 TUẦN) */}
+            {/* OPTION CHU KỲ THANH TOÁN (1 TUẦN, 2 TUẦN HOẶC CẢ THÁNG) */}
             <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
               <span className="text-[11px] font-bold text-slate-600 px-2 flex items-center gap-1">
                 <Layers className="w-3.5 h-3.5 text-sky-700" />
@@ -765,6 +771,17 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               >
                 <span>Lương 2 Tuần (Nửa tháng)</span>
               </button>
+              <button
+                type="button"
+                onClick={() => handleCycleTypeChange('1_MONTH')}
+                className={`px-3 py-1 rounded-md font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  cycleType === '1_MONTH'
+                    ? 'bg-[#0f3d64] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                }`}
+              >
+                <span>Lương Tháng (Cả tháng)</span>
+              </button>
             </div>
           </div>
 
@@ -782,7 +799,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           </div>
         </div>
 
-        {/* DẢI NÚT CHỌN KỲ THANH TOÁN (THEO TUẦN HOẶC 2 TUẦN) */}
+        {/* DẢI NÚT CHỌN KỲ THANH TOÁN (THEO TUẦN, 2 TUẦN HOẶC CẢ THÁNG) */}
         <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
             <span className="text-[11px] font-bold text-slate-600 px-1 shrink-0 flex items-center gap-1">
@@ -797,6 +814,10 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                 const rec = w.periodRecords?.[period.periodKey];
                 return rec && rec.isRecorded && (rec.actualWorkDays > 0 || rec.netSalary > 0);
               }).length;
+
+              const mStr = String(currentMonth).padStart(2, '0');
+              const startStr = period.startDate || `${String(period.startDay).padStart(2, '0')}/${mStr}`;
+              const endStr = period.endDate || `${String(period.endDay).padStart(2, '0')}/${mStr}`;
 
               return (
                 <button
@@ -814,7 +835,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                 >
                   <span>{period.shortLabel}</span>
                   <span className={`text-[10px] font-normal ${isSelected ? 'text-sky-200' : 'text-slate-500'}`}>
-                    ({period.startDate} - {period.endDate})
+                    ({startStr} - {endStr})
                   </span>
                   {recordedCountInThisPeriod > 0 ? (
                     <span
@@ -1034,6 +1055,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             <option value="ALL">Chu kỳ lương thợ (Tất cả)</option>
             <option value="1_WEEK">Thợ nhận lương 1 Tuần</option>
             <option value="2_WEEKS">Thợ nhận lương 2 Tuần</option>
+            <option value="1_MONTH">Thợ nhận lương Cả Tháng</option>
           </select>
         </div>
 

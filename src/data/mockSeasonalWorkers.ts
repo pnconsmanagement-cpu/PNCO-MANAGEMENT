@@ -139,6 +139,8 @@ export function getBiWeeklyPeriodsForMonth(year: number, month: number): Payroll
       cycleType: '2_WEEKS',
       label: `Đợt 1 (01/${mStr} - 15/${mStr})`,
       shortLabel: 'Đợt 1 (1 - 15)',
+      startDate: `01/${mStr}`,
+      endDate: `15/${mStr}`,
       startDay: 1,
       endDay: 15,
       dates: d1Dates,
@@ -152,6 +154,8 @@ export function getBiWeeklyPeriodsForMonth(year: number, month: number): Payroll
       cycleType: '2_WEEKS',
       label: `Đợt 2 (16/${mStr} - ${daysInMonth}/${mStr})`,
       shortLabel: `Đợt 2 (16 - ${daysInMonth})`,
+      startDate: `16/${mStr}`,
+      endDate: `${daysInMonth}/${mStr}`,
       startDay: 16,
       endDay: daysInMonth,
       dates: d2Dates,
@@ -163,7 +167,40 @@ export function getBiWeeklyPeriodsForMonth(year: number, month: number): Payroll
 }
 
 /**
- * Lấy danh sách các kỳ thanh toán theo loại chu kỳ (1 tuần hoặc 2 tuần)
+ * Tính toán kỳ thanh toán cả tháng (Lương Tháng / Toàn bộ tháng)
+ * Từ ngày 01 đến ngày cuối cùng của tháng (28/29/30/31)
+ */
+export function getMonthlyPeriodForMonth(year: number, month: number): PayrollPeriodOption[] {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const mStr = String(month).padStart(2, '0');
+  const yStr = String(year);
+
+  const monthDates: string[] = [];
+  for (let i = 1; i <= daysInMonth; i++) {
+    monthDates.push(`${String(i).padStart(2, '0')}/${mStr}`);
+  }
+
+  return [
+    {
+      id: 'M1',
+      periodKey: `${yStr}-${mStr}_MONTH`,
+      cycleType: '1_MONTH',
+      label: `Cả tháng ${mStr}/${year} (01/${mStr} - ${daysInMonth}/${mStr})`,
+      shortLabel: `Cả tháng ${mStr}`,
+      startDate: `01/${mStr}`,
+      endDate: `${daysInMonth}/${mStr}`,
+      startDay: 1,
+      endDay: daysInMonth,
+      dates: monthDates,
+      maxStandardDays: 26,
+      year,
+      month,
+    },
+  ];
+}
+
+/**
+ * Lấy danh sách các kỳ thanh toán theo loại chu kỳ (1 tuần, 2 tuần hoặc cả tháng)
  */
 export function getPayrollPeriods(
   year: number,
@@ -172,6 +209,10 @@ export function getPayrollPeriods(
 ): PayrollPeriodOption[] {
   const mStr = String(month).padStart(2, '0');
   const yStr = String(year);
+
+  if (cycleType === '1_MONTH') {
+    return getMonthlyPeriodForMonth(year, month);
+  }
 
   if (cycleType === '2_WEEKS') {
     return getBiWeeklyPeriodsForMonth(year, month);
@@ -184,6 +225,8 @@ export function getPayrollPeriods(
     cycleType: '1_WEEK',
     label: w.label,
     shortLabel: w.shortLabel,
+    startDate: w.dates[0],
+    endDate: w.dates[w.dates.length - 1],
     startDay: w.startDay,
     endDay: w.endDay,
     dates: w.dates,
@@ -359,14 +402,32 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const existingRecord = worker.periodRecords?.[pKey];
   const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
   const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
+  const monthKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
 
-  if (existingRecord) {
+  // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
+  const monthlyDays = worker.monthlyAttendance?.[monthKey]?.days;
+  let hasMonthlyDataForPeriod = false;
+  let monthlyWorkDays = 0;
+  let monthlyOtHours = 0;
+
+  if (monthlyDays && period.dates && period.dates.length > 0) {
+    period.dates.forEach((dateStr) => {
+      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      if (monthlyDays[dayNum] !== undefined) {
+        hasMonthlyDataForPeriod = true;
+        monthlyWorkDays += Number(monthlyDays[dayNum].workUnits || 0);
+        monthlyOtHours += Number(monthlyDays[dayNum].otHours || 0);
+      }
+    });
+  }
+
+  // 1. Nếu đã có bản ghi chu kỳ và bản ghi đó có công > 0 hoặc đã ghi nhận
+  if (existingRecord && (existingRecord.actualWorkDays > 0 || !hasMonthlyDataForPeriod)) {
     // Chuẩn hóa weeklyTimesheet đảm bảo thứ và ngày luôn khớp 100% với lịch thực tế
     let normalizedTimesheet: WeeklyDayAttendance[];
     if (existingRecord.weeklyTimesheet && existingRecord.weeklyTimesheet.length > 0) {
       normalizedTimesheet = period.dates.map((dateStr, idx) => {
         const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
-        // Tìm xem bản ghi cũ có ngày này không (theo dateLabel) hoặc lấy theo index
         const match = existingRecord.weeklyTimesheet?.find((d) => d.dateLabel === dateStr) || existingRecord.weeklyTimesheet?.[idx];
         const workUnits = match ? match.workUnits : 0;
         const otHours = match ? match.otHours : 0;
@@ -405,7 +466,46 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     });
   }
 
-  // Chu kỳ chưa được chấm công -> Mặc định 0 công để người dùng chấm lại từ đầu
+  // 2. Nếu có dữ liệu từ link chấm công di động trên điện thoại (monthlyAttendance)
+  if (hasMonthlyDataForPeriod && monthlyDays) {
+    const timesheetFromMonthly: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
+      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
+      const dayDetail = monthlyDays[dayNum];
+      const workUnits = dayDetail ? Number(dayDetail.workUnits || 0) : 0;
+      const otHours = dayDetail ? Number(dayDetail.otHours || 0) : 0;
+      const shiftType = dayDetail?.shiftType || 'DAY';
+      const note = dayDetail?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công tại công trường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+
+      return {
+        dayOfWeek,
+        dayName,
+        dateLabel: dateStr,
+        workUnits,
+        otHours,
+        shiftType,
+        note,
+      };
+    });
+
+    const roundedWorkDays = Math.round(monthlyWorkDays * 10) / 10;
+    return recomputeSeasonalWorkerPayroll({
+      ...worker,
+      currentPeriodKey: pKey,
+      currentWeekId: period.id,
+      currentWeekLabel: period.label,
+      payrollCycleType: period.cycleType,
+      actualWorkDays: roundedWorkDays,
+      overtimeHours: monthlyOtHours,
+      mealAllowance: worker.mealAllowance || 0,
+      travelSafetyAllowance: worker.travelSafetyAllowance || 0,
+      otherBonus: worker.otherBonus || 0,
+      advancePayment: worker.advancePayment || 0,
+      weeklyTimesheet: timesheetFromMonthly,
+    });
+  }
+
+  // 3. Chu kỳ hoàn toàn chưa được chấm công -> Mặc định 0 công để người dùng chấm lại từ đầu
   const emptySheet = createEmptyTimesheetForPeriod(period);
   return recomputeSeasonalWorkerPayroll({
     ...worker,
@@ -424,7 +524,8 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 }
 
 /**
- * Chấm công và record lại số liệu của công nhân cho một chu kỳ cụ thể
+ * Chấm công và record lại số liệu của công nhân cho một chu kỳ cụ thể,
+ * đồng thời đồng bộ vào monthlyAttendance để link di động và quản trị viên luôn thống nhất
  */
 export function recordWorkerPeriod(
   worker: SeasonalWorker,
@@ -468,9 +569,64 @@ export function recordWorkerPeriod(
     [pKey]: periodRecord,
   };
 
+  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này
+  let monthlyAttendance = worker.monthlyAttendance ? { ...worker.monthlyAttendance } : {};
+  if (updated.weeklyTimesheet && updated.weeklyTimesheet.length > 0) {
+    const pYear = period.year || 2026;
+    const pMonth = period.month || 9;
+    const mStr = String(pMonth).padStart(2, '0');
+    const monthKey = `${pYear}-${mStr}`;
+    const curMonthRecord = monthlyAttendance[monthKey] || {
+      monthKey,
+      month: pMonth,
+      year: pYear,
+      totalWorkDays: 0,
+      totalOtHours: 0,
+      days: {},
+    };
+    const updatedDays = { ...(curMonthRecord.days || {}) };
+
+    updated.weeklyTimesheet.forEach((dayItem) => {
+      if (dayItem.dateLabel) {
+        const dayNum = parseInt(dayItem.dateLabel.split('/')[0], 10);
+        if (!isNaN(dayNum)) {
+          updatedDays[dayNum] = {
+            day: dayNum,
+            dateStr: `${String(dayNum).padStart(2, '0')}/${mStr}/${pYear}`,
+            workUnits: dayItem.workUnits,
+            otHours: dayItem.otHours,
+            statusType: dayItem.workUnits === 1 ? 'FULL' : dayItem.workUnits === 0.5 ? 'HALF' : 'ABSENT',
+            location: worker.project || '',
+            shiftType: dayItem.shiftType || 'DAY',
+            otMultiplier: 1.5,
+            note: dayItem.note || '',
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      }
+    });
+
+    let totalMonthWork = 0;
+    let totalMonthOt = 0;
+    Object.values(updatedDays).forEach((d) => {
+      totalMonthWork += Number(d.workUnits || 0);
+      totalMonthOt += Number(d.otHours || 0);
+    });
+
+    monthlyAttendance[monthKey] = {
+      ...curMonthRecord,
+      totalWorkDays: Math.round(totalMonthWork * 10) / 10,
+      totalOtHours: totalMonthOt,
+      days: updatedDays,
+      lastSubmittedAt: new Date().toISOString(),
+      submittedBy: 'ADMIN',
+    };
+  }
+
   return {
     ...updated,
     periodRecords,
+    monthlyAttendance,
   };
 }
 

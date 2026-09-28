@@ -104,8 +104,8 @@ export interface SeasonalWorker {
 
   status: 'ACTIVE' | 'COMPLETED' | 'PAUSED'; // 'ACTIVE' = Đang thi công, 'COMPLETED' = Đã thanh lý đợt khoán, 'PAUSED' = Tạm ngưng
   notes?: string; // Ghi chú hợp đồng hoặc công việc
-  payrollCycleType?: '1_WEEK' | '2_WEEKS'; // Option chu kỳ lương: 1 tuần hoặc 2 tuần
-  currentPeriodKey?: string; // Khóa chu kỳ (vd: "2026-09_W1", "2026-09_BI1")
+  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH'; // Option chu kỳ lương: 1 tuần, 2 tuần hoặc cả tháng
+  currentPeriodKey?: string; // Khóa chu kỳ (vd: "2026-09_W1", "2026-09_BI1", "2026-09_MONTH")
   currentWeekLabel?: string; // Nhãn chu kỳ (vd: "Tuần 2 (08/09 - 14/09)", "Đợt 1 (01/09 - 15/09)")
   currentWeekId?: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'BI1' | 'BI2'
   attendanceMonth?: number; // Tháng chấm công (1 - 12)
@@ -141,16 +141,18 @@ export interface MonthlyAttendanceRecord {
   submittedBy?: string; // 'WORKER' | 'FOREMAN' | 'ADMIN'
 }
 
-export type SeasonalCycleType = '1_WEEK' | '2_WEEKS';
+export type SeasonalCycleType = '1_WEEK' | '2_WEEKS' | '1_MONTH';
 
 export interface PayrollPeriodOption {
-  id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'W6' | 'BI1' | 'BI2'
-  periodKey: string; // vd: "2026-09_W1", "2026-09_BI1"
+  id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'W6' | 'BI1' | 'BI2' | 'M1'
+  periodKey: string; // vd: "2026-09_W1", "2026-09_BI1", "2026-09_MONTH"
   cycleType: SeasonalCycleType;
-  label: string; // vd: "Tuần 1 (31/08 - 06/09)", "Đợt 1 (01/09 - 15/09)"
-  shortLabel: string; // vd: "Tuần 1", "Đợt 1"
+  label: string; // vd: "Tuần 1 (31/08 - 06/09)", "Đợt 1 (01/09 - 15/09)", "Cả tháng 09/2026"
+  shortLabel: string; // vd: "Tuần 1", "Đợt 1", "Cả tháng"
   startDay: number;
   endDay: number;
+  startDate?: string;
+  endDate?: string;
   dates: string[];
   maxStandardDays: number;
   year?: number;

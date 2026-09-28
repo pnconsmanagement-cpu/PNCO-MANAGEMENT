@@ -66,13 +66,25 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
   const currentMonth = config.month || 9;
   const currentYear = config.year || 2026;
 
-  // Sinh đường dẫn URL chia sẻ
+  // Sinh đường dẫn URL chia sẻ công khai
   const shareUrl = React.useMemo(() => {
     const workerCode = shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined;
     return generateShareableAttendanceUrl(workerCode, {
       month: currentMonth,
       year: currentYear,
       includeConfig: true,
+    });
+  }, [shareMode, activeWorker, currentMonth, currentYear]);
+
+  // URL kiểm tra trực tiếp trên trình duyệt hiện tại (nếu đang ở localhost hoặc dev)
+  const localTestUrl = React.useMemo(() => {
+    const workerCode = shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined;
+    const curOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
+    return generateShareableAttendanceUrl(workerCode, {
+      month: currentMonth,
+      year: currentYear,
+      includeConfig: true,
+      forceOrigin: curOrigin,
     });
   }, [shareMode, activeWorker, currentMonth, currentYear]);
 
@@ -443,24 +455,36 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
                   )}
                 </button>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="space-y-2">
                   <button
                     type="button"
                     onClick={handleTestInsideApp}
-                    className="w-full px-3 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                    className="w-full px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
                   >
-                    <Smartphone className="w-4 h-4 text-emerald-400" />
-                    <span>Xem thử tại đây</span>
+                    <Smartphone className="w-4 h-4 text-emerald-200" />
+                    <span>Mở Chấm Công Ngay Cho {activeWorker?.fullName || 'Thợ'} (Trực tiếp)</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleOpenNewTab}
-                    className="w-full px-3 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                  >
-                    <ExternalLink className="w-4 h-4 text-blue-600" />
-                    <span>Mở tab mới</span>
-                  </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <a
+                      href={localTestUrl || shareUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full px-3 py-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs text-center cursor-pointer"
+                    >
+                      <ExternalLink className="w-4 h-4 text-blue-600" />
+                      <span>Mở Link Tab Mới</span>
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="w-full px-3 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Copy className="w-4 h-4 text-blue-600" />
+                      <span>{copied ? 'Đã sao chép!' : 'Sao chép link'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
