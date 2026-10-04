@@ -31,9 +31,19 @@ import {
 interface AnnualSalaryReviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  employee: Employee;
+  employee?: Employee | null;
   config: CompanyConfig;
-  onApplySalaryIncrease: (
+  onApplySalaryIncrease?: (
+    employeeId: string,
+    updates: {
+      newBaseSalary: number;
+      addendum: ContractAddendum;
+      newContractFileUrl?: string;
+      newContractFileName?: string;
+      updatedEmail?: string;
+    }
+  ) => void;
+  onApplyIncrease?: (
     employeeId: string,
     updates: {
       newBaseSalary: number;
@@ -52,8 +62,12 @@ export const AnnualSalaryReviewModal: React.FC<AnnualSalaryReviewModalProps> = (
   employee,
   config,
   onApplySalaryIncrease,
+  onApplyIncrease,
   onUpdateEmployeeEmail,
 }) => {
+  if (!isOpen || !employee) return null;
+
+  const handleApplyCallback = onApplySalaryIncrease || onApplyIncrease;
   const currentYear = config.year || new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [effectiveDate, setEffectiveDate] = useState<string>(`01/01/${currentYear}`);
@@ -206,13 +220,15 @@ export const AnnualSalaryReviewModal: React.FC<AnnualSalaryReviewModalProps> = (
       notifiedEmail: recipientEmail,
     };
 
-    onApplySalaryIncrease(employee.id, {
-      newBaseSalary,
-      addendum: newAddendum,
-      newContractFileUrl: contractFileUrl,
-      newContractFileName: contractFileName,
-      updatedEmail: recipientEmail,
-    });
+    if (handleApplyCallback) {
+      handleApplyCallback(employee.id, {
+        newBaseSalary,
+        addendum: newAddendum,
+        newContractFileUrl: contractFileUrl,
+        newContractFileName: contractFileName,
+        updatedEmail: recipientEmail,
+      });
+    }
 
     setSaveSuccessMsg('✓ Đã cập nhật mức lương mới và lưu Phụ lục HĐLĐ thành công!');
     setTimeout(() => {

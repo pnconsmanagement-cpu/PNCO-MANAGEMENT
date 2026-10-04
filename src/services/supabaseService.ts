@@ -8,6 +8,7 @@ const env = (import.meta as any).env || {};
  * Giúp người dùng chia sẻ cấu hình giữa 2 máy tính hoặc 2 trình duyệt chỉ bằng 1 cú click!
  */
 export const autoApplyUrlConfig = (): boolean => {
+  if (typeof window === 'undefined') return false;
   try {
     const hash = window.location.hash;
     const search = window.location.search;

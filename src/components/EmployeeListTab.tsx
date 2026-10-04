@@ -1725,41 +1725,47 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
       {/* ========================================================================= */}
       {/* MODAL 1: CHỈNH SỬA / THÊM MỚI NHÂN VIÊN */}
       {/* ========================================================================= */}
-      <EmployeeModal
-        isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          setEditingEmployee(null);
-        }}
-        onSave={(savedEmp) => {
-          if (editingEmployee) {
-            onUpdateEmployee(savedEmp);
-            showToast(`Đã cập nhật hồ sơ nhân viên ${savedEmp.fullName} thành công!`);
-          } else {
-            onAddEmployee(savedEmp);
-            showToast(`Đã thêm mới nhân viên ${savedEmp.fullName} thành công!`);
-          }
-          setIsModalOpen(false);
-          setEditingEmployee(null);
-        }}
-        employee={editingEmployee}
-        departments={departments}
-        config={config}
-      />
+      {isModalOpen && (
+        <EmployeeModal
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingEmployee(null);
+          }}
+          onSave={(savedEmp) => {
+            if (editingEmployee) {
+              onUpdateEmployee(savedEmp);
+              showToast(`Đã cập nhật hồ sơ nhân viên ${savedEmp.fullName} thành công!`);
+            } else {
+              onAddEmployee(savedEmp);
+              showToast(`Đã thêm mới nhân viên ${savedEmp.fullName} thành công!`);
+            }
+            setIsModalOpen(false);
+            setEditingEmployee(null);
+          }}
+          initialData={editingEmployee}
+          employee={editingEmployee}
+          existingCodes={employees.map((e) => e.code)}
+          departments={departments}
+          config={config}
+        />
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL 2: QUY TRÌNH TĂNG LƯƠNG HÀNG NĂM & PHỤ LỤC HỢP ĐỒNG LAO ĐỘNG */}
       {/* ========================================================================= */}
-      <AnnualSalaryReviewModal
-        isOpen={isSalaryReviewOpen}
-        onClose={() => {
-          setIsSalaryReviewOpen(false);
-          setSalaryReviewEmployee(null);
-        }}
-        employee={salaryReviewEmployee}
-        config={config}
-        onApplyIncrease={handleApplySalaryIncrease}
-      />
+      {isSalaryReviewOpen && salaryReviewEmployee && (
+        <AnnualSalaryReviewModal
+          isOpen={isSalaryReviewOpen}
+          onClose={() => {
+            setIsSalaryReviewOpen(false);
+            setSalaryReviewEmployee(null);
+          }}
+          employee={salaryReviewEmployee}
+          config={config}
+          onApplySalaryIncrease={handleApplySalaryIncrease}
+        />
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL 3: XÁC NHẬN XÓA NHÂN VIÊN */}

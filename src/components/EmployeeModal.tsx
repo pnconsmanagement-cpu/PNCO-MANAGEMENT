@@ -27,7 +27,10 @@ interface EmployeeModalProps {
   onClose: () => void;
   onSave: (employee: Employee) => void;
   initialData?: Employee | null;
-  existingCodes: string[];
+  employee?: Employee | null;
+  existingCodes?: string[];
+  departments?: string[];
+  config?: any;
 }
 
 export const EmployeeModal: React.FC<EmployeeModalProps> = ({
@@ -35,16 +38,21 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
   onClose,
   onSave,
   initialData,
-  existingCodes,
+  employee,
+  existingCodes = [],
+  departments: propDepartments,
+  config,
 }) => {
-  const isEditing = !!initialData;
+  const currentEmp = initialData || employee;
+  const isEditing = !!currentEmp;
 
   const defaultNextCode = () => {
     let nextNum = 1;
-    existingCodes.forEach((c) => {
-      const match = c.match(/\d+/);
+    (existingCodes || []).forEach((c) => {
+      if (!c) return;
+      const match = String(c).match(/\d+/);
       if (match) {
-        const num = parseInt(match[0]);
+        const num = parseInt(match[0], 10);
         if (num >= nextNum) nextNum = num + 1;
       }
     });
@@ -86,8 +94,8 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
   });
 
   useEffect(() => {
-    if (initialData) {
-      const ensured = ensureEmployeeContract(initialData);
+    if (currentEmp) {
+      const ensured = ensureEmployeeContract(currentEmp);
       setFormData({
         ...ensured,
         insuranceSalary: ensured.insuranceSalary !== undefined ? ensured.insuranceSalary : 0,
@@ -225,7 +233,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     }
   };
 
-  const departments = [
+  const departments = propDepartments && propDepartments.length > 0 ? propDepartments : [
     'Ban Lãnh đạo',
     'Kế toán',
     'Kỹ thuật - Giám sát',
