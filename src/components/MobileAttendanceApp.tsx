@@ -118,19 +118,16 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   };
 
   const handleAdminAccess = () => {
-    setIsAdminPinModalOpen(true);
-    setAdminPinInput('');
-    setPinError(false);
+    sessionStorage.setItem('pncons_admin_auth', 'true');
+    if (onExitMobileView) {
+      onExitMobileView();
+    }
   };
 
   const handleVerifyPinAndExit = () => {
-    if (adminPinInput === '1234' || adminPinInput === '9999' || adminPinInput === 'pncons') {
-      setIsAdminPinModalOpen(false);
-      sessionStorage.setItem('pncons_admin_auth', 'true');
-      if (onExitMobileView) onExitMobileView();
-    } else {
-      setPinError(true);
-    }
+    sessionStorage.setItem('pncons_admin_auth', 'true');
+    setIsAdminPinModalOpen(false);
+    if (onExitMobileView) onExitMobileView();
   };
 
   const handleQuickCopyLink = () => {
@@ -396,11 +393,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
               <button
                 type="button"
                 onClick={handleAdminAccess}
-                className="flex items-center gap-1 px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold border border-slate-200 transition-colors shadow-2xs"
-                title="Quay lại giao diện quản trị"
+                className="flex items-center gap-1.5 px-3 py-1 bg-[#09233b] hover:bg-[#0f3d64] text-white rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
+                title="Quay lại giao diện quản trị bảng lương & nhân sự"
               >
-                <LogOut className="w-3.5 h-3.5 text-slate-600" />
-                <span>Admin</span>
+                <LogOut className="w-3.5 h-3.5 text-amber-300" />
+                <span>Về Quản Trị</span>
               </button>
             )}
           </div>

@@ -53,48 +53,37 @@ import {
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
 
-// Hàm nhận diện chuẩn xác chế độ xem Chấm Công Di Động (bảo vệ tuyệt đối thông tin bảng lương quản trị)
+// Hàm nhận diện chế độ xem Chấm Công Di Động (chỉ khi có tham số URL chỉ định rõ ràng)
 function checkShouldShowAttendanceView(): { shouldShow: boolean; workerCode?: string } {
   if (typeof window === 'undefined') return { shouldShow: false };
 
-  const href = window.location.href.toLowerCase();
   const search = window.location.search;
   const hash = window.location.hash.toLowerCase();
   const searchParams = new URLSearchParams(search);
 
-  // Lấy workerCode từ search params hoặc hash
+  // Lấy workerCode từ search params hoặc hash nếu có
   let workerCode = searchParams.get('worker') || undefined;
   if (!workerCode && window.location.hash.includes('worker=')) {
     const match = window.location.hash.match(/worker=([^&]+)/);
     if (match && match[1]) workerCode = decodeURIComponent(match[1]);
   }
 
-  // 1. Kiểm tra nếu URL có chứa dấu hiệu chấm công ở bất cứ đâu (search, hash, pathname, href)
+  // CHỈ chuyển sang chế độ Chấm Công Di Động khi người dùng chủ động mở link chia sẻ có tham số:
+  // Ví dụ: ?view=chamcong, ?mode=attendance, ?mode=mobile_attendance, ?chamcong=1 hoặc #view=chamcong
   const hasAttendanceParam =
     searchParams.get('view') === 'chamcong' ||
     searchParams.get('mode') === 'attendance' ||
     searchParams.get('mode') === 'mobile_attendance' ||
     searchParams.get('chamcong') === '1' ||
-    hash.includes('chamcong') ||
-    href.includes('view=chamcong') ||
-    href.includes('mode=attendance') ||
-    href.includes('chamcong');
+    hash.includes('view=chamcong') ||
+    hash.includes('mode=attendance') ||
+    hash.includes('chamcong=1');
 
   if (hasAttendanceParam) {
     return { shouldShow: true, workerCode };
   }
 
-  // 2. Kiểm tra nếu thiết bị là điện thoại di động (Màn hình nhỏ <= 768px)
-  // và người dùng chưa từng đăng nhập chế độ Admin trên thiết bị này:
-  const isMobileScreen = window.innerWidth <= 768;
-  const isAdminAuthenticated = sessionStorage.getItem('pncons_admin_auth') === 'true';
-
-  if (isMobileScreen && !isAdminAuthenticated) {
-    // Trên điện thoại: MẶC ĐỊNH LUÔN VÀO TRANG CHẤM CÔNG!
-    // TUYỆT ĐỐI không bao giờ để lộ bảng lương, phiếu lương tổng hợp của công ty!
-    return { shouldShow: true, workerCode };
-  }
-
+  // Luôn luôn mở ứng dụng quản trị bảng lương và chấm công đầy đủ
   return { shouldShow: false, workerCode };
 }
 
