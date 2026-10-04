@@ -30,12 +30,15 @@ import {
   loadCompanyConfigFromSupabase,
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
+  fetchTeamWorkersFromSupabase,
+  fetchProjectsFromSupabase,
+  fetchSalaryAdvancesFromSupabase,
   getLastSyncedTime,
   getShareableConfigUrl,
   ConnectionHealth,
   FullSyncResult,
 } from '../services/supabaseService';
-import { CompanyConfig, Employee, SeasonalWorker } from '../types';
+import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, Project, SalaryAdvance } from '../types';
 
 interface SupabaseSyncModalProps {
   isOpen: boolean;
@@ -43,10 +46,16 @@ interface SupabaseSyncModalProps {
   config: CompanyConfig;
   employees: Employee[];
   seasonalWorkers: SeasonalWorker[];
+  teamWorkers?: TeamWorker[];
+  projects?: Project[];
+  salaryAdvances?: SalaryAdvance[];
   onDataLoadedFromCloud?: (data: {
     config?: CompanyConfig;
     employees?: Employee[];
     seasonalWorkers?: SeasonalWorker[];
+    teamWorkers?: TeamWorker[];
+    projects?: Project[];
+    salaryAdvances?: SalaryAdvance[];
   }) => void;
   onSyncSuccess?: () => void;
 }
@@ -57,6 +66,9 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   config,
   employees,
   seasonalWorkers,
+  teamWorkers = [],
+  projects = [],
+  salaryAdvances = [],
   onDataLoadedFromCloud,
   onSyncSuccess,
 }) => {
@@ -142,12 +154,19 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       setSaveSuccessMsg('Kết nối thành công! Đang tự động đồng bộ toàn bộ dữ liệu lên Supabase...');
 
       try {
-        const report = await syncAllDataToSupabase(config, employees, seasonalWorkers);
+        const report = await syncAllDataToSupabase(
+          config,
+          employees,
+          seasonalWorkers,
+          teamWorkers,
+          projects,
+          salaryAdvances
+        );
         setSyncReport(report);
         setLastSynced(getLastSyncedTime());
 
         if (report.success) {
-          setSaveSuccessMsg(`Đã đồng bộ 100% lên Supabase Cloud (${report.employees.count} NV • ${report.seasonalWorkers.count} Thợ)!`);
+          setSaveSuccessMsg(`Đã đồng bộ 100% lên Supabase Cloud (${report.employees.count} NV • ${report.seasonalWorkers.count} Thợ • ${teamWorkers.length} Tổ đội • ${projects.length} Dự án)!`);
           if (onSyncSuccess) onSyncSuccess();
         } else {
           setSaveSuccessMsg('Có bảng chưa đồng bộ hoàn tất, vui lòng xem chi tiết bên dưới.');
@@ -169,7 +188,14 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     setIsSyncing(true);
     setSaveSuccessMsg(null);
     try {
-      const report = await syncAllDataToSupabase(config, employees, seasonalWorkers);
+      const report = await syncAllDataToSupabase(
+        config,
+        employees,
+        seasonalWorkers,
+        teamWorkers,
+        projects,
+        salaryAdvances
+      );
       setSyncReport(report);
       setLastSynced(getLastSyncedTime());
 
@@ -181,6 +207,9 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             company_config: { exists: true, count: 1 },
             employees: { exists: true, count: employees.length },
             seasonal_workers: { exists: true, count: seasonalWorkers.length },
+            team_workers: { exists: true, count: teamWorkers.length },
+            projects: { exists: true, count: projects.length },
+            salary_advances: { exists: true, count: salaryAdvances.length },
           },
         });
       }
@@ -198,13 +227,16 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
    */
   const handleLoadFromCloud = async () => {
     setIsSyncing(true);
-    setLoadStatus('Đang kéo dữ liệu từ Supabase Cloud về máy...');
+    setLoadStatus('Đang kéo toàn bộ dữ liệu từ Supabase Cloud về máy...');
 
     try {
-      const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
+      const [cloudCfg, cloudEmp, cloudSea, cloudTeam, cloudProj, cloudAdv] = await Promise.all([
         loadCompanyConfigFromSupabase(),
         loadEmployeesFromSupabase(config.periodCode),
         loadSeasonalWorkersFromSupabase(config.periodCode),
+        fetchTeamWorkersFromSupabase(config.periodCode),
+        fetchProjectsFromSupabase(),
+        fetchSalaryAdvancesFromSupabase(config.periodCode),
       ]);
 
       if (onDataLoadedFromCloud) {
@@ -212,13 +244,16 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
           config: cloudCfg || undefined,
           employees: cloudEmp || undefined,
           seasonalWorkers: cloudSea || undefined,
+          teamWorkers: cloudTeam || undefined,
+          projects: cloudProj || undefined,
+          salaryAdvances: cloudAdv || undefined,
         });
       }
 
       setLoadStatus(
         `Nạp thành công: ${cloudEmp?.length || 0} nhân sự chính thức, ${
           cloudSea?.length || 0
-        } công nhân thời vụ từ Supabase!`
+        } công nhân thời vụ, ${cloudTeam?.length || 0} tổ đội, ${cloudProj?.length || 0} dự án!`
       );
     } catch (e: any) {
       setLoadStatus(`Lỗi khi nạp dữ liệu: ${e.message || String(e)}`);

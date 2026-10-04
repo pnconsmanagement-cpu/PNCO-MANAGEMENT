@@ -1,12 +1,26 @@
 import React from 'react';
-import { FileText, PieChart, Table2, Users, CalendarCheck, ShieldAlert, HardHat } from 'lucide-react';
+import {
+  FileText,
+  PieChart,
+  Table2,
+  Users,
+  CalendarCheck,
+  ShieldAlert,
+  HardHat,
+  Building,
+  CreditCard,
+  TrendingUp,
+} from 'lucide-react';
 
 export type TabType =
+  | 'EMPLOYEE_LIST'
+  | 'PROJECTS'
+  | 'PAYROLL_TABLE'
+  | 'SALARY_ADVANCES'
+  | 'ATTENDANCE'
+  | 'FINANCIAL_REPORT'
   | 'PAYSLIP'
   | 'DEPARTMENT'
-  | 'PAYROLL_TABLE'
-  | 'EMPLOYEE_LIST'
-  | 'ATTENDANCE'
   | 'DATA_AUDIT'
   | 'SEASONAL_WORKERS';
 
@@ -15,6 +29,9 @@ interface NavigationTabsProps {
   onSelectTab: (tab: TabType) => void;
   auditIssuesCount: number;
   seasonalCount?: number;
+  teamCount?: number;
+  projectCount?: number;
+  advanceCount?: number;
 }
 
 export const NavigationTabs: React.FC<NavigationTabsProps> = ({
@@ -22,22 +39,28 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   onSelectTab,
   auditIssuesCount,
   seasonalCount,
+  teamCount,
+  projectCount,
+  advanceCount,
 }) => {
   interface TabItem {
     id: TabType;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
     badge?: number;
+    badgeColor?: string;
   }
 
   const tabs: TabItem[] = [
-    { id: 'PAYSLIP', label: 'PHIẾU LƯƠNG', icon: FileText },
-    { id: 'DEPARTMENT', label: 'TỔNG HỢP THEO BỘ PHẬN', icon: PieChart },
-    { id: 'PAYROLL_TABLE', label: 'BẢNG LƯƠNG', icon: Table2 },
-    { id: 'ATTENDANCE', label: 'CHẤM CÔNG', icon: CalendarCheck },
-    { id: 'DATA_AUDIT', label: 'KIỂM TRA DỮ LIỆU', icon: ShieldAlert, badge: auditIssuesCount },
-    { id: 'EMPLOYEE_LIST', label: 'DANH SÁCH NHÂN VIÊN', icon: Users },
-    { id: 'SEASONAL_WORKERS', label: 'NHÂN LỰC THỜI VỤ', icon: HardHat, badge: seasonalCount },
+    { id: 'EMPLOYEE_LIST', label: '1. DANH SÁCH NHÂN VIÊN', icon: Users },
+    { id: 'PROJECTS', label: '2. DỰ ÁN', icon: Building, badge: projectCount },
+    { id: 'PAYROLL_TABLE', label: '3. BẢNG LƯƠNG', icon: Table2 },
+    { id: 'SALARY_ADVANCES', label: '4. LƯƠNG ỨNG', icon: CreditCard, badge: advanceCount },
+    { id: 'ATTENDANCE', label: '5. CHẤM CÔNG', icon: CalendarCheck },
+    { id: 'FINANCIAL_REPORT', label: '6. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
+    { id: 'PAYSLIP', label: '7. PHIẾU LƯƠNG', icon: FileText },
+    { id: 'DEPARTMENT', label: 'BỘ PHẬN', icon: PieChart },
+    { id: 'DATA_AUDIT', label: 'KIỂM TRA', icon: ShieldAlert, badge: auditIssuesCount },
   ];
 
   return (
@@ -59,7 +82,7 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
             <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-[#0f3d64] stroke-[2.5]' : 'text-slate-500 stroke-2'}`} />
             <span>{t.label}</span>
             {t.badge !== undefined && t.badge > 0 && (
-              <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-[10px] font-black leading-none ml-0.5">
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black leading-none ml-0.5 ${t.badgeColor || 'bg-amber-500 text-white'}`}>
                 {t.badge}
               </span>
             )}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Users, HardHat } from 'lucide-react';
+import { Users, HardHat, Building } from 'lucide-react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { MetricCards } from './components/MetricCards';
@@ -11,6 +11,10 @@ import { AttendanceTab } from './components/AttendanceTab';
 import { EmployeeListTab } from './components/EmployeeListTab';
 import { DataAuditTab } from './components/DataAuditTab';
 import { SeasonalWorkersTab } from './components/SeasonalWorkersTab';
+import { TeamWorkersTab } from './components/TeamWorkersTab';
+import { ProjectsTab } from './components/ProjectsTab';
+import { SalaryAdvancesTab } from './components/SalaryAdvancesTab';
+import { FinancialReportTab } from './components/FinancialReportTab';
 import { BankExportModal } from './components/BankExportModal';
 import { ImportModal } from './components/ImportModal';
 import { CompanyModal } from './components/CompanyModal';
@@ -38,7 +42,8 @@ import {
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
 import { initialSeasonalWorkers, recomputeSeasonalWorkerPayroll as recomputeSeasonal } from './data/mockSeasonalWorkers';
-import { CompanyConfig, Employee, SeasonalWorker } from './types';
+import { initialProjects, initialTeamWorkers, initialSalaryAdvances } from './data/mockProjectsAndTeams';
+import { CompanyConfig, Employee, SeasonalWorker, Project, TeamWorker, SalaryAdvance } from './types';
 import { recomputeEmployeePayroll } from './utils/payrollCalculator';
 import { ensureEmployeeContract } from './utils/contractHelper';
 import {
@@ -168,8 +173,50 @@ export default function App() {
     return initialSeasonalWorkers;
   });
 
-  const [activeTab, setActiveTab] = useState<TabType>('PAYSLIP');
-  const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL'>('PERMANENT');
+  // DANH SÁCH DỰ ÁN CÔNG TRÌNH
+  const [projects, setProjects] = useState<Project[]>(() => {
+    const saved = localStorage.getItem('payroll_projects');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing projects', e);
+      }
+    }
+    return initialProjects;
+  });
+
+  // DANH SÁCH NHÂN VIÊN TỔ ĐỘI
+  const [teamWorkers, setTeamWorkers] = useState<TeamWorker[]>(() => {
+    const saved = localStorage.getItem('payroll_team_workers');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing team workers', e);
+      }
+    }
+    return initialTeamWorkers;
+  });
+
+  // DANH SÁCH BẢN LƯƠNG ỨNG
+  const [salaryAdvances, setSalaryAdvances] = useState<SalaryAdvance[]>(() => {
+    const saved = localStorage.getItem('payroll_salary_advances');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing salary advances', e);
+      }
+    }
+    return initialSalaryAdvances;
+  });
+
+  const [activeTab, setActiveTab] = useState<TabType>('EMPLOYEE_LIST');
+  const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
 
   const handleSelectTab = (tab: TabType) => {
     if (tab === 'SEASONAL_WORKERS') {
@@ -177,7 +224,6 @@ export default function App() {
       setEmployeeSubTab('SEASONAL');
     } else if (tab === 'EMPLOYEE_LIST') {
       setActiveTab('EMPLOYEE_LIST');
-      setEmployeeSubTab('PERMANENT');
     } else {
       setActiveTab(tab);
     }
@@ -741,6 +787,88 @@ export default function App() {
     setActiveTab('PAYSLIP');
   };
 
+  // Handlers for Projects
+  const handleAddProject = (p: Project) => {
+    const updated = [p, ...projects];
+    setProjects(updated);
+    localStorage.setItem('payroll_projects', JSON.stringify(updated));
+  };
+  const handleUpdateProject = (p: Project) => {
+    const updated = projects.map((item) => (item.id === p.id ? p : item));
+    setProjects(updated);
+    localStorage.setItem('payroll_projects', JSON.stringify(updated));
+  };
+  const handleDeleteProject = (id: string) => {
+    const updated = projects.filter((item) => item.id !== id);
+    setProjects(updated);
+    localStorage.setItem('payroll_projects', JSON.stringify(updated));
+  };
+
+  // Handlers for Team Workers
+  const handleAddTeamWorker = (tw: TeamWorker) => {
+    const updated = [...teamWorkers, tw];
+    setTeamWorkers(updated);
+    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
+  };
+  const handleUpdateTeamWorker = (tw: TeamWorker) => {
+    const updated = teamWorkers.map((item) => (item.id === tw.id ? tw : item));
+    setTeamWorkers(updated);
+    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
+  };
+  const handleDeleteTeamWorker = (id: string) => {
+    const updated = teamWorkers.filter((item) => item.id !== id);
+    setTeamWorkers(updated);
+    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
+  };
+  const handleBatchUpdateTeamWorkers = (list: TeamWorker[]) => {
+    setTeamWorkers(list);
+    localStorage.setItem('payroll_team_workers', JSON.stringify(list));
+  };
+
+  // Handlers for Salary Advances
+  const handleAddSalaryAdvance = (adv: SalaryAdvance) => {
+    const updated = [adv, ...salaryAdvances];
+    setSalaryAdvances(updated);
+    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
+    if (adv.targetType === 'PERMANENT') {
+      setEmployees((prev) =>
+        prev.map((e) => {
+          if (e.id === adv.workerId || e.code === adv.workerCode) {
+            const newAdv = (e.advancePayment || 0) + adv.amount;
+            return recomputeEmployeePayroll({ ...e, advancePayment: newAdv });
+          }
+          return e;
+        })
+      );
+    } else if (adv.targetType === 'SEASONAL') {
+      setSeasonalWorkers((prev) =>
+        prev.map((w) => {
+          if (w.id === adv.workerId || w.code === adv.workerCode) {
+            const newAdv = (w.advancePayment || 0) + adv.amount;
+            const net = Math.max(0, (w.totalIncome || 0) - (w.personalIncomeTax || 0) - newAdv);
+            return { ...w, advancePayment: newAdv, netSalary: net };
+          }
+          return w;
+        })
+      );
+    }
+  };
+  const handleUpdateSalaryAdvance = (adv: SalaryAdvance) => {
+    const updated = salaryAdvances.map((item) => (item.id === adv.id ? adv : item));
+    setSalaryAdvances(updated);
+    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
+  };
+  const handleDeleteSalaryAdvance = (id: string) => {
+    const updated = salaryAdvances.filter((item) => item.id !== id);
+    setSalaryAdvances(updated);
+    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
+  };
+
+  const handleBatchUpdateSeasonalWorkers = (list: SeasonalWorker[]) => {
+    setSeasonalWorkers(list);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(list));
+  };
+
   // Count issues
   const auditCount = employees.filter(
     (e) => !e.bankAccount || e.netSalary <= 0 || e.actualWorkDays > e.standardWorkDays
@@ -792,6 +920,9 @@ export default function App() {
           auditIssuesCount={auditCount}
           seasonalCount={seasonalWorkers.length}
           employeeCount={employees.length}
+          teamCount={teamWorkers.length}
+          projectCount={projects.length}
+          advanceCount={salaryAdvances.length}
           config={config}
           isOpenMobile={isSidebarMobileOpen}
           onCloseMobile={() => setIsSidebarMobileOpen(false)}
@@ -812,6 +943,7 @@ export default function App() {
 
             {/* Tab Views */}
             <div className="flex-1">
+          {/* Tab 1: Phiếu Lương */}
           {activeTab === 'PAYSLIP' && (
             <PayslipTab
               employees={employees}
@@ -842,13 +974,30 @@ export default function App() {
             />
           )}
 
+          {/* Tab: Tổng Hợp Theo Bộ Phận */}
           {activeTab === 'DEPARTMENT' && (
             <DepartmentSummaryTab employees={employees} />
           )}
 
+          {/* Tab 2: Danh Sách Dự Án */}
+          {activeTab === 'PROJECTS' && (
+            <ProjectsTab
+              projects={projects}
+              employees={employees}
+              seasonalWorkers={seasonalWorkers}
+              teamWorkers={teamWorkers}
+              onAddProject={handleAddProject}
+              onUpdateProject={handleUpdateProject}
+              onDeleteProject={handleDeleteProject}
+            />
+          )}
+
+          {/* Tab 3: Bản Lương (Tuần, Tháng, Quý, Năm) */}
           {activeTab === 'PAYROLL_TABLE' && (
             <PayrollTableTab
               employees={employees}
+              seasonalWorkers={seasonalWorkers}
+              teamWorkers={teamWorkers}
               config={config}
               onChangeMonthYear={handleChangeMonthYear}
               onUpdateEmployee={handleUpdateEmployee}
@@ -857,13 +1006,39 @@ export default function App() {
             />
           )}
 
-          {/* Hub Danh Sách Nhân Viên: Gồm 2 tab con (1. Nhân Viên Thường Trực & 2. Nhân Lực Thời Vụ) */}
+          {/* Tab 4: Bản Lương Ứng (Tạm Ứng) */}
+          {activeTab === 'SALARY_ADVANCES' && (
+            <SalaryAdvancesTab
+              advances={salaryAdvances}
+              employees={employees}
+              seasonalWorkers={seasonalWorkers}
+              teamWorkers={teamWorkers}
+              config={config}
+              onAddAdvance={handleAddSalaryAdvance}
+              onUpdateAdvance={handleUpdateSalaryAdvance}
+              onDeleteAdvance={handleDeleteSalaryAdvance}
+            />
+          )}
+
+          {/* Tab 5: Báo Cáo Tài Chính Tổng Hợp */}
+          {activeTab === 'FINANCIAL_REPORT' && (
+            <FinancialReportTab
+              employees={employees}
+              seasonalWorkers={seasonalWorkers}
+              teamWorkers={teamWorkers}
+              projects={projects}
+              advances={salaryAdvances}
+              config={config}
+            />
+          )}
+
+          {/* Tab 6: Hub Danh Sách Nhân Viên: 3 nhóm (1. Chính thức, 2. Thời vụ, 3. Tổ đội) */}
           {(activeTab === 'EMPLOYEE_LIST' || activeTab === 'SEASONAL_WORKERS') && (
             <div className="flex flex-col gap-3">
-              {/* Thanh chuyển đổi 2 Tab Nhân viên theo đúng yêu cầu người dùng */}
+              {/* Thanh chuyển đổi 3 Sub-tabs Nhân viên */}
               <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-3 select-none">
-                <div className="flex items-center gap-2">
-                  {/* Tab 1: Nhân Viên Thường Trực */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Tab con 1: Nhân Viên Chính Thức */}
                   <button
                     type="button"
                     id="subtab-permanent-employees"
@@ -872,13 +1047,13 @@ export default function App() {
                       setActiveTab('EMPLOYEE_LIST');
                     }}
                     className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
-                      (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')
+                      activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT'
                         ? 'bg-[#0f3d64] text-white shadow-md ring-2 ring-[#0f3d64]/20 font-black'
                         : 'bg-slate-50 text-slate-700 hover:text-[#0f3d64] hover:bg-sky-50 border border-slate-200'
                     }`}
                   >
                     <Users className={`w-4 h-4 ${(activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT') ? 'text-sky-300' : 'text-slate-500'}`} />
-                    <span>1. Nhân Viên Thường Trực</span>
+                    <span>1. Nhân Viên Chính Thức</span>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
                       (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')
                         ? 'bg-sky-500 text-white'
@@ -888,7 +1063,7 @@ export default function App() {
                     </span>
                   </button>
 
-                  {/* Tab 2: Nhân Lực Thời Vụ */}
+                  {/* Tab con 2: Nhân Lực Thời Vụ */}
                   <button
                     type="button"
                     id="subtab-seasonal-workers"
@@ -912,25 +1087,57 @@ export default function App() {
                       {seasonalWorkers.length}
                     </span>
                   </button>
+
+                  {/* Tab con 3: Nhân Viên Tổ Đội */}
+                  <button
+                    type="button"
+                    id="subtab-team-workers"
+                    onClick={() => {
+                      setEmployeeSubTab('TEAM');
+                      setActiveTab('EMPLOYEE_LIST');
+                    }}
+                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
+                      employeeSubTab === 'TEAM'
+                        ? 'bg-indigo-700 text-white shadow-md ring-2 ring-indigo-700/20 font-black'
+                        : 'bg-slate-50 text-slate-700 hover:text-indigo-800 hover:bg-indigo-50 border border-slate-200'
+                    }`}
+                  >
+                    <Building className={`w-4 h-4 ${employeeSubTab === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
+                    <span>3. Nhân Viên Tổ Đội</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                      employeeSubTab === 'TEAM'
+                        ? 'bg-indigo-950 text-indigo-200'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {teamWorkers.length}
+                    </span>
+                  </button>
                 </div>
 
                 <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500 pr-2">
-                  {activeTab !== 'SEASONAL_WORKERS' && employeeSubTab === 'PERMANENT' ? (
+                  {employeeSubTab === 'PERMANENT' && (
                     <span className="flex items-center gap-1.5 text-sky-900 font-medium">
                       <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                       Quản lý {employees.length} nhân sự thường trực (HĐLĐ, phòng ban, lương tháng & đánh giá hàng năm)
                     </span>
-                  ) : (
+                  )}
+                  {employeeSubTab === 'SEASONAL' && (
                     <span className="flex items-center gap-1.5 text-amber-900 font-medium">
                       <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                       Quản lý {seasonalWorkers.length} công nhân kỹ thuật & thợ khoán (lương tuần, chấm công công trình)
+                    </span>
+                  )}
+                  {employeeSubTab === 'TEAM' && (
+                    <span className="flex items-center gap-1.5 text-indigo-900 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                      Quản lý {teamWorkers.length} tổ đội thi công (cai thầu, quân số, đơn giá khoán/ngày)
                     </span>
                   )}
                 </div>
               </div>
 
               {/* Nội dung Tab tương ứng */}
-              {activeTab !== 'SEASONAL_WORKERS' && employeeSubTab === 'PERMANENT' ? (
+              {employeeSubTab === 'PERMANENT' && (
                 <EmployeeListTab
                   employees={employees}
                   config={config}
@@ -946,7 +1153,9 @@ export default function App() {
                   }}
                   onResetDefault={handleResetDefault}
                 />
-              ) : (
+              )}
+
+              {employeeSubTab === 'SEASONAL' && (
                 <SeasonalWorkersTab
                   workers={seasonalWorkers}
                   config={config}
@@ -968,15 +1177,32 @@ export default function App() {
                   }}
                 />
               )}
+
+              {employeeSubTab === 'TEAM' && (
+                <TeamWorkersTab
+                  workers={teamWorkers}
+                  projects={projects}
+                  config={config}
+                  onAddWorker={handleAddTeamWorker}
+                  onUpdateWorker={handleUpdateTeamWorker}
+                  onDeleteWorker={handleDeleteTeamWorker}
+                  onBatchUpdate={handleBatchUpdateTeamWorkers}
+                />
+              )}
             </div>
           )}
 
+          {/* Tab 7: Bản Chấm Công (3 nhóm) */}
           {activeTab === 'ATTENDANCE' && (
             <AttendanceTab
               employees={employees}
+              seasonalWorkers={seasonalWorkers}
+              teamWorkers={teamWorkers}
               config={config}
               onChangeMonthYear={handleChangeMonthYear}
               onBatchUpdate={handleBatchUpdate}
+              onBatchUpdateSeasonal={handleBatchUpdateSeasonalWorkers}
+              onBatchUpdateTeam={handleBatchUpdateTeamWorkers}
               onGoToEmployeeList={() => {
                 setActiveTab('EMPLOYEE_LIST');
                 setEmployeeSubTab('PERMANENT');
@@ -989,6 +1215,7 @@ export default function App() {
             />
           )}
 
+          {/* Tab: Kiểm Tra Dữ Liệu */}
           {activeTab === 'DATA_AUDIT' && (
             <DataAuditTab
               employees={employees}

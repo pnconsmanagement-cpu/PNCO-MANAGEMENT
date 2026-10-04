@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CompanyConfig, Employee } from '../types';
+import { CompanyConfig, Employee, SeasonalWorker, TeamWorker } from '../types';
 import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
 import {
   Calendar,
@@ -20,14 +20,19 @@ import {
   Sparkles,
   Clock,
   Briefcase,
+  Building,
 } from 'lucide-react';
 import { MonthYearPicker } from './MonthYearPicker';
 
 interface AttendanceTabProps {
   employees: Employee[];
+  seasonalWorkers?: SeasonalWorker[];
+  teamWorkers?: TeamWorker[];
   config: CompanyConfig;
   onChangeMonthYear: (month: number, year: number) => void;
   onBatchUpdate: (updated: Employee[]) => void;
+  onBatchUpdateSeasonal?: (updated: SeasonalWorker[]) => void;
+  onBatchUpdateTeam?: (updated: TeamWorker[]) => void;
   onGoToEmployeeList?: () => void;
   onGoToSeasonalAttendance?: () => void;
   seasonalCount?: number;
@@ -35,14 +40,21 @@ interface AttendanceTabProps {
 
 export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   employees,
+  seasonalWorkers = [],
+  teamWorkers = [],
   config,
   onChangeMonthYear,
   onBatchUpdate,
+  onBatchUpdateSeasonal,
+  onBatchUpdateTeam,
   onGoToEmployeeList,
   onGoToSeasonalAttendance,
   seasonalCount = 12,
 }) => {
+  const [attendanceGroup, setAttendanceGroup] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
   const [modifiedEmployees, setModifiedEmployees] = useState<Employee[]>(employees);
+  const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(seasonalWorkers);
+  const [modifiedTeam, setModifiedTeam] = useState<TeamWorker[]>(teamWorkers);
   const [onlySelected, setOnlySelected] = useState(true);
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -77,7 +89,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     setModifiedEmployees(employees);
   }, [employees]);
 
-  // Cập nhật số ngày công thực tế
+  useEffect(() => {
+    setModifiedSeasonal(seasonalWorkers);
+  }, [seasonalWorkers]);
+
+  useEffect(() => {
+    setModifiedTeam(teamWorkers);
+  }, [teamWorkers]);
+
+  // Cập nhật số ngày công thực tế cho NV Chính thức
   const handleWorkDaysChange = (code: string, newDays: number) => {
     const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
     const updated = modifiedEmployees.map((emp) => {
@@ -93,46 +113,154 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     setTimeout(() => setLastSavedCode(null), 1500);
   };
 
-  // Tăng giảm nhanh số ngày công (+/- 0.5 công hoặc 1 công)
-  const handleStepWorkDays = (code: string, delta: number) => {
-    const current = modifiedEmployees.find((e) => e.code === code)?.actualWorkDays || 0;
-    const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
-    // Xóa bộ đệm gõ phím của mã này nếu có
-    setLocalInputs((prev) => {
-      const next = { ...prev };
-      if (next[code]) {
-        delete next[code].actualWorkDays;
+  // Cập nhật công cho Thời vụ
+  const handleSeasonalWorkDaysChange = (code: string, newDays: number) => {
+    const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
+    const updated = modifiedSeasonal.map((w) => {
+      if (w.code === code) {
+        const salaryByDays = Math.round(validDays * (w.dailyRate || 0));
+        const totalIncome = salaryByDays + (w.overtimePay || 0) + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0);
+        const pit = w.hasTaxCommitment ? 0 : Math.round(totalIncome * 0.1);
+        const totalDeductions = pit + (w.advancePayment || 0);
+        const netSalary = Math.max(0, totalIncome - totalDeductions);
+        return {
+          ...w,
+          actualWorkDays: validDays,
+          salaryByDays,
+          totalIncome,
+          personalIncomeTax: pit,
+          totalDeductions,
+          netSalary,
+        };
       }
-      return next;
+      return w;
     });
-    handleWorkDaysChange(code, nextVal);
+    setModifiedSeasonal(updated);
+    if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
+    setLastSavedCode(code);
+    setTimeout(() => setLastSavedCode(null), 1500);
+  };
+
+  // Cập nhật công cho Tổ đội
+  const handleTeamWorkDaysChange = (code: string, newDays: number) => {
+    const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
+    const updated = modifiedTeam.map((t) => {
+      if (t.code === code) {
+        const salaryByDays = Math.round(validDays * (t.unitRate || 0));
+        const totalIncome = salaryByDays + (t.overtimePay || 0) + (t.mealAllowance || 0) + (t.otherBonus || 0);
+        const totalDeductions = t.advancePayment || 0;
+        const netSalary = Math.max(0, totalIncome - totalDeductions);
+        return {
+          ...t,
+          actualWorkDays: validDays,
+          salaryByDays,
+          totalIncome,
+          totalDeductions,
+          netSalary,
+        };
+      }
+      return t;
+    });
+    setModifiedTeam(updated);
+    if (onBatchUpdateTeam) onBatchUpdateTeam(updated);
+    setLastSavedCode(code);
+    setTimeout(() => setLastSavedCode(null), 1500);
+  };
+
+  // Tăng giảm nhanh số ngày công (+/- 0.5 công)
+  const handleStepWorkDays = (code: string, delta: number) => {
+    if (attendanceGroup === 'PERMANENT') {
+      const current = modifiedEmployees.find((e) => e.code === code)?.actualWorkDays || 0;
+      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
+      setLocalInputs((prev) => {
+        const next = { ...prev };
+        if (next[code]) delete next[code].actualWorkDays;
+        return next;
+      });
+      handleWorkDaysChange(code, nextVal);
+    } else if (attendanceGroup === 'SEASONAL') {
+      const current = modifiedSeasonal.find((w) => w.code === code)?.actualWorkDays || 0;
+      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
+      handleSeasonalWorkDaysChange(code, nextVal);
+    } else {
+      const current = modifiedTeam.find((t) => t.code === code)?.actualWorkDays || 0;
+      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
+      handleTeamWorkDaysChange(code, nextVal);
+    }
   };
 
   // Cập nhật giờ tăng ca OT
   const handleOtChange = (code: string, hours: number) => {
     const validOT = Math.max(0, Math.min(200, Number(hours) || 0));
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const item = { ...emp, overtimeHours: validOT };
-        return recomputeEmployeePayroll(item);
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
+    if (attendanceGroup === 'PERMANENT') {
+      const updated = modifiedEmployees.map((emp) => {
+        if (emp.code === code) {
+          const item = { ...emp, overtimeHours: validOT };
+          return recomputeEmployeePayroll(item);
+        }
+        return emp;
+      });
+      setModifiedEmployees(updated);
+      onBatchUpdate(updated);
+    } else if (attendanceGroup === 'SEASONAL') {
+      const updated = modifiedSeasonal.map((w) => {
+        if (w.code === code) {
+          const hourlyRate = (w.dailyRate || 0) / 8;
+          const otPay = Math.round(hourlyRate * validOT * 1.5);
+          const totalIncome = (w.salaryByDays || 0) + otPay + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0);
+          const pit = w.hasTaxCommitment ? 0 : Math.round(totalIncome * 0.1);
+          const netSalary = Math.max(0, totalIncome - pit - (w.advancePayment || 0));
+          return {
+            ...w,
+            overtimeHours: validOT,
+            overtimePay: otPay,
+            totalIncome,
+            personalIncomeTax: pit,
+            netSalary,
+          };
+        }
+        return w;
+      });
+      setModifiedSeasonal(updated);
+      if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
+    } else {
+      const updated = modifiedTeam.map((t) => {
+        if (t.code === code) {
+          const hourlyRate = (t.unitRate || 0) / 8;
+          const otPay = Math.round(hourlyRate * validOT * 1.5);
+          const totalIncome = (t.salaryByDays || 0) + otPay + (t.mealAllowance || 0) + (t.otherBonus || 0);
+          const netSalary = Math.max(0, totalIncome - (t.advancePayment || 0));
+          return {
+            ...t,
+            overtimeHours: validOT,
+            overtimePay: otPay,
+            totalIncome,
+            netSalary,
+          };
+        }
+        return t;
+      });
+      setModifiedTeam(updated);
+      if (onBatchUpdateTeam) onBatchUpdateTeam(updated);
+    }
     setLastSavedCode(code);
     setTimeout(() => setLastSavedCode(null), 1500);
   };
 
   // Tăng giảm nhanh giờ tăng ca OT (+/- 1h)
   const handleStepOT = (code: string, delta: number) => {
-    const current = modifiedEmployees.find((e) => e.code === code)?.overtimeHours || 0;
+    let current = 0;
+    if (attendanceGroup === 'PERMANENT') {
+      current = modifiedEmployees.find((e) => e.code === code)?.overtimeHours || 0;
+    } else if (attendanceGroup === 'SEASONAL') {
+      current = modifiedSeasonal.find((w) => w.code === code)?.overtimeHours || 0;
+    } else {
+      current = modifiedTeam.find((t) => t.code === code)?.overtimeHours || 0;
+    }
     const nextVal = Math.max(0, Math.min(200, current + delta));
     setLocalInputs((prev) => {
       const next = { ...prev };
-      if (next[code]) {
-        delete next[code].overtimeHours;
-      }
+      if (next[code]) delete next[code].overtimeHours;
       return next;
     });
     handleOtChange(code, nextVal);
@@ -250,6 +378,74 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-4">
+      {/* Bộ chuyển đổi 3 nhóm nhân sự chấm công */}
+      <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            id="tab-att-permanent"
+            onClick={() => setAttendanceGroup('PERMANENT')}
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+              attendanceGroup === 'PERMANENT'
+                ? 'bg-[#0f3d64] text-white shadow-md font-black ring-2 ring-[#0f3d64]/20'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <Users className={`w-4 h-4 ${attendanceGroup === 'PERMANENT' ? 'text-sky-300' : 'text-slate-500'}`} />
+            <span>1. Nhân Viên Chính Thức</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              attendanceGroup === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
+            }`}>
+              {modifiedEmployees.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-att-seasonal"
+            onClick={() => setAttendanceGroup('SEASONAL')}
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+              attendanceGroup === 'SEASONAL'
+                ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <HardHat className={`w-4 h-4 ${attendanceGroup === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
+            <span>2. Nhân Lực Thời Vụ</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              attendanceGroup === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
+            }`}>
+              {modifiedSeasonal.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-att-team"
+            onClick={() => setAttendanceGroup('TEAM')}
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+              attendanceGroup === 'TEAM'
+                ? 'bg-indigo-700 text-white shadow-md font-black ring-2 ring-indigo-700/20'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <Building className={`w-4 h-4 ${attendanceGroup === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
+            <span>3. Nhân Viên Tổ Đội</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              attendanceGroup === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'
+            }`}>
+              {modifiedTeam.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-xs text-slate-600 font-medium px-2 hidden sm:block">
+          {attendanceGroup === 'PERMANENT' && 'Chấm công nhân sự văn phòng & kỹ sư cơ hữu'}
+          {attendanceGroup === 'SEASONAL' && 'Chấm công thợ kỹ thuật theo ngày & công trình'}
+          {attendanceGroup === 'TEAM' && 'Chấm công đội khoán & thợ tổ thi công'}
+        </div>
+      </div>
+
       {/* Banner phân loại & liên kết bảng chấm công */}
       <div className="bg-gradient-to-r from-sky-50 via-slate-50 to-sky-50/50 border border-sky-200/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
         <div className="flex items-center gap-2.5">
@@ -262,11 +458,13 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 BẢNG CHẤM CÔNG THÁNG {monthFormatted}/{yearFormatted}
               </h2>
               <span className="px-2 py-0.5 bg-sky-100 text-sky-900 border border-sky-300 font-bold rounded-full text-[10px]">
-                Nhân viên thường trực ({selectedCount}/{modifiedEmployees.length})
+                {attendanceGroup === 'PERMANENT' && `Nhân viên chính thức (${selectedCount}/${modifiedEmployees.length})`}
+                {attendanceGroup === 'SEASONAL' && `Nhân lực thời vụ (${modifiedSeasonal.length} thợ)`}
+                {attendanceGroup === 'TEAM' && `Nhân viên tổ đội (${modifiedTeam.length} tổ)`}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Ghi nhận ngày công thực tế, giờ tăng ca OT và ngày nghỉ để tự động tính chính xác lương tháng
+              Ghi nhận ngày công thực tế, giờ tăng ca OT và ngày nghỉ để tự động tính chính xác lương
             </p>
           </div>
         </div>
@@ -281,7 +479,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             title="Chuyển sang Chấm công theo tuần / công trình cho Nhân lực thời vụ"
           >
             <HardHat className="w-4 h-4 text-amber-600" />
-            <span>Chấm công Nhân Lực Thời Vụ ({seasonalCount} thợ) →</span>
+            <span>Xem chi tiết Tuần Thợ Thời Vụ →</span>
           </button>
         )}
       </div>
@@ -355,8 +553,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         </div>
       </div>
 
-      {/* Bảng chấm công chi tiết */}
+      {/* Bảng chấm công chi tiết theo từng nhóm */}
       <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[660px] text-xs shadow-xs">
+        {attendanceGroup === 'PERMANENT' && (
         <table className="w-full border-collapse text-left whitespace-nowrap">
           <thead className="bg-[#0f3d64] text-white sticky top-0 z-20 text-[11px] select-none">
             <tr>
@@ -764,6 +963,252 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             })}
           </tbody>
         </table>
+        )}
+
+        {/* BẢNG CHẤM CÔNG NHÂN LỰC THỜI VỤ */}
+        {attendanceGroup === 'SEASONAL' && (
+          <table className="w-full border-collapse text-left whitespace-nowrap">
+            <thead className="bg-amber-700 text-white sticky top-0 z-20 text-[11px] select-none">
+              <tr>
+                <th className="p-2.5 border-r border-amber-800 text-center w-12 font-bold">STT</th>
+                <th className="p-2.5 border-r border-amber-800 text-center w-20 font-bold">Mã thợ</th>
+                <th className="p-2.5 border-r border-amber-800 sticky left-0 bg-amber-700 z-30 min-w-[170px] font-bold">
+                  Họ tên thợ kỹ thuật
+                </th>
+                <th className="p-2.5 border-r border-amber-800 min-w-[130px]">Nghề & Tay nghề</th>
+                <th className="p-2.5 border-r border-amber-800 min-w-[150px]">Dự án thi công</th>
+                <th className="p-2.5 border-r border-amber-800 text-right w-28">Đơn giá ngày</th>
+                <th className="p-2.5 border-r border-amber-800 text-center min-w-[180px] bg-amber-800">
+                  <div className="font-bold text-amber-200">Công thực tế *</div>
+                  <div className="text-[9px] text-amber-200/80 font-normal">Nhập số hoặc bấm +/-</div>
+                </th>
+                <th className="p-2.5 border-r border-amber-800 text-center min-w-[130px]">
+                  <div>Tăng ca (OT)</div>
+                  <div className="text-[9px] text-amber-200/80 font-normal">Hệ số 150%</div>
+                </th>
+                <th className="p-2.5 border-r border-amber-800 text-right w-28">Phụ cấp ăn ca</th>
+                <th className="p-2.5 border-r border-amber-800 text-right w-24">Tạm ứng</th>
+                <th className="p-2.5 text-right min-w-[130px] bg-amber-800 font-bold">
+                  <div>Thực nhận kỳ này</div>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-[12px]">
+              {modifiedSeasonal.map((w, index) => (
+                <tr key={w.id} className="hover:bg-amber-50/50 transition-colors">
+                  <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
+                    {index + 1}
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-amber-900">
+                    {w.code}
+                  </td>
+                  <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
+                    <div>{w.fullName}</div>
+                    <div className="text-[10px] text-slate-500 font-normal">{w.phone || 'SĐT: Chưa có'}</div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-slate-700">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                      {w.trade}
+                    </span>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{w.skillLevel}</div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-slate-700">
+                    <span className="font-medium text-slate-800">{w.project || 'Toàn dự án'}</span>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
+                    {new Intl.NumberFormat('vi-VN').format(w.dailyRate || 0)} đ
+                  </td>
+                  <td className="p-1.5 border-r border-slate-200 text-center bg-amber-50/40">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStepWorkDays(w.code, -0.5)}
+                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="31"
+                        value={w.actualWorkDays || 0}
+                        onChange={(e) => handleSeasonalWorkDaysChange(w.code, parseFloat(e.target.value) || 0)}
+                        className="w-14 px-1 py-1 border border-amber-400 focus:border-amber-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleStepWorkDays(w.code, 0.5)}
+                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSeasonalWorkDaysChange(w.code, 26)}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer"
+                      >
+                        26c
+                      </button>
+                    </div>
+                  </td>
+                  <td className="p-1.5 border-r border-slate-200 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStepOT(w.code, -1)}
+                        className="w-4 h-5 rounded bg-slate-200 text-xs font-bold"
+                      >
+                        -
+                      </button>
+                      <span className="font-mono font-bold text-amber-900">{w.overtimeHours || 0}h</span>
+                      <button
+                        type="button"
+                        onClick={() => handleStepOT(w.code, 1)}
+                        className="w-4 h-5 rounded bg-amber-200 text-xs font-bold text-amber-900"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
+                    {new Intl.NumberFormat('vi-VN').format(w.mealAllowance || 0)} đ
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
+                    {(w.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(w.advancePayment)} đ` : '0 đ'}
+                  </td>
+                  <td className="p-2 text-right font-mono font-black text-amber-900 bg-amber-50/50">
+                    {new Intl.NumberFormat('vi-VN').format(w.netSalary || 0)} đ
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* BẢNG CHẤM CÔNG NHÂN VIÊN TỔ ĐỘI */}
+        {attendanceGroup === 'TEAM' && (
+          <table className="w-full border-collapse text-left whitespace-nowrap">
+            <thead className="bg-indigo-800 text-white sticky top-0 z-20 text-[11px] select-none">
+              <tr>
+                <th className="p-2.5 border-r border-indigo-900 text-center w-12 font-bold">STT</th>
+                <th className="p-2.5 border-r border-indigo-900 text-center w-20 font-bold">Mã tổ</th>
+                <th className="p-2.5 border-r border-indigo-900 sticky left-0 bg-indigo-800 z-30 min-w-[180px] font-bold">
+                  Tên tổ đội thi công
+                </th>
+                <th className="p-2.5 border-r border-indigo-900 min-w-[140px]">Đội trưởng & SĐT</th>
+                <th className="p-2.5 border-r border-indigo-900 min-w-[150px]">Dự án phụ trách</th>
+                <th className="p-2.5 border-r border-indigo-900 text-center w-20">Quân số</th>
+                <th className="p-2.5 border-r border-indigo-900 text-right w-28">Đơn giá ngày/khoán</th>
+                <th className="p-2.5 border-r border-indigo-900 text-center min-w-[180px] bg-indigo-900">
+                  <div className="font-bold text-amber-200">Công thực tế *</div>
+                  <div className="text-[9px] text-indigo-200 font-normal">Nhập số hoặc bấm +/-</div>
+                </th>
+                <th className="p-2.5 border-r border-indigo-900 text-center min-w-[130px]">
+                  <div>Tăng ca (OT)</div>
+                </th>
+                <th className="p-2.5 border-r border-indigo-900 text-right w-28">Phụ cấp ăn ca</th>
+                <th className="p-2.5 border-r border-indigo-900 text-right w-24">Tạm ứng</th>
+                <th className="p-2.5 text-right min-w-[130px] bg-indigo-900 font-bold">
+                  <div>Thực lĩnh tổ đội</div>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-[12px]">
+              {modifiedTeam.map((t, index) => (
+                <tr key={t.id} className="hover:bg-indigo-50/50 transition-colors">
+                  <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
+                    {index + 1}
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-indigo-900">
+                    {t.code}
+                  </td>
+                  <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
+                    <div>{t.teamName}</div>
+                    <div className="text-[10px] text-slate-500 font-normal">{t.rateType === 'PIECEWORK' ? 'Khoán khối lượng' : 'Lương ngày công'}</div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-slate-700">
+                    <div className="font-medium text-slate-900">{t.leaderName}</div>
+                    <div className="text-[10px] text-slate-500 font-mono">{t.phone}</div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-slate-700">
+                    <span className="font-medium text-slate-800">{t.project}</span>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-slate-700">
+                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 font-black">
+                      {t.workerCount || 1} thợ
+                    </span>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
+                    {new Intl.NumberFormat('vi-VN').format(t.unitRate || 0)} đ
+                  </td>
+                  <td className="p-1.5 border-r border-slate-200 text-center bg-indigo-50/40">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStepWorkDays(t.code, -0.5)}
+                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="31"
+                        value={t.actualWorkDays || 0}
+                        onChange={(e) => handleTeamWorkDaysChange(t.code, parseFloat(e.target.value) || 0)}
+                        className="w-14 px-1 py-1 border border-indigo-400 focus:border-indigo-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleStepWorkDays(t.code, 0.5)}
+                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTeamWorkDaysChange(t.code, 26)}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 border border-indigo-300 cursor-pointer"
+                      >
+                        26c
+                      </button>
+                    </div>
+                  </td>
+                  <td className="p-1.5 border-r border-slate-200 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStepOT(t.code, -1)}
+                        className="w-4 h-5 rounded bg-slate-200 text-xs font-bold"
+                      >
+                        -
+                      </button>
+                      <span className="font-mono font-bold text-indigo-900">{t.overtimeHours || 0}h</span>
+                      <button
+                        type="button"
+                        onClick={() => handleStepOT(t.code, 1)}
+                        className="w-4 h-5 rounded bg-indigo-200 text-xs font-bold text-indigo-900"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
+                    {new Intl.NumberFormat('vi-VN').format(t.mealAllowance || 0)} đ
+                  </td>
+                  <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
+                    {(t.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(t.advancePayment)} đ` : '0 đ'}
+                  </td>
+                  <td className="p-2 text-right font-mono font-black text-indigo-900 bg-indigo-50/50">
+                    {new Intl.NumberFormat('vi-VN').format(t.netSalary || 0)} đ
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Confirmation Modal */}

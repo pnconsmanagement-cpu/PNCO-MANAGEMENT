@@ -27,6 +27,9 @@ interface SidebarProps {
   auditIssuesCount: number;
   seasonalCount: number;
   employeeCount: number;
+  teamCount?: number;
+  projectCount?: number;
+  advanceCount?: number;
   config: CompanyConfig;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
@@ -43,6 +46,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   auditIssuesCount,
   seasonalCount,
   employeeCount,
+  teamCount = 0,
+  projectCount = 0,
+  advanceCount = 0,
   config,
   isOpenMobile = false,
   onCloseMobile,
@@ -61,32 +67,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
     badgeColor?: string;
   }
 
-  // 7 tab theo đúng yêu cầu người dùng:
-  // Phiếu Lương, Tổng Hợp Theo Bộ Phận, Bảng Lương, Chấm Công, Kiểm Tra Dữ Liệu, Danh sách nhân viên, Nhân Lực Thời Vụ
+  // Danh mục 7 mục chính xác theo yêu cầu người dùng Phúc Nguyên:
   const menuItems: NavMenuItem[] = [
     {
+      id: 'EMPLOYEE_LIST',
+      label: '1. Danh Sách Nhân Viên',
+      sublabel: 'Chính thức, Thời vụ & Tổ đội',
+      icon: Users,
+      badge: employeeCount + seasonalCount + teamCount,
+      badgeColor: 'bg-sky-500 text-white font-black',
+    },
+    {
+      id: 'PROJECTS',
+      label: '2. Danh Sách Dự Án',
+      sublabel: 'Công trình, ngân sách & nhân lực',
+      icon: Building2,
+      badge: projectCount,
+      badgeColor: 'bg-emerald-500 text-white font-black',
+    },
+    {
+      id: 'PAYROLL_TABLE',
+      label: '3. Bản Lương Chi Tiết',
+      sublabel: 'Theo Tuần, Tháng, Quý, Năm',
+      icon: Table2,
+    },
+    {
+      id: 'SALARY_ADVANCES',
+      label: '4. Bản Lương Ứng',
+      sublabel: 'Quản lý tạm ứng & cấn trừ',
+      icon: Zap,
+      badge: advanceCount,
+      badgeColor: 'bg-amber-500 text-slate-950 font-black',
+    },
+    {
+      id: 'ATTENDANCE',
+      label: '5. Bản Chấm Công',
+      sublabel: 'Chính thức, Thời vụ, Tổ đội',
+      icon: CalendarCheck,
+    },
+    {
+      id: 'FINANCIAL_REPORT',
+      label: '6. Báo Cáo Tài Chính',
+      sublabel: 'Tổng hợp thời gian & dự án',
+      icon: PieChart,
+    },
+    {
       id: 'PAYSLIP',
-      label: 'Phiếu Lương',
-      sublabel: 'Mẫu 02-LĐTL & Gửi Zalo/In',
+      label: '7. Phiếu Lương In/Gửi',
+      sublabel: 'Mẫu 02-LĐTL & Zalo',
       icon: FileText,
     },
     {
       id: 'DEPARTMENT',
-      label: 'Tổng Hợp Theo Bộ Phận',
-      sublabel: 'Báo cáo chi phí phòng ban',
-      icon: PieChart,
-    },
-    {
-      id: 'PAYROLL_TABLE',
-      label: 'Bảng Lương',
-      sublabel: 'Bảng tính lương chi tiết',
-      icon: Table2,
-    },
-    {
-      id: 'ATTENDANCE',
-      label: 'Chấm Công',
-      sublabel: 'Bảng công & tăng ca',
-      icon: CalendarCheck,
+      label: 'Tổng Hợp Bộ Phận',
+      sublabel: 'Cơ cấu chi phí nội bộ',
+      icon: Layers,
     },
     {
       id: 'DATA_AUDIT',
@@ -95,22 +130,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: ShieldAlert,
       badge: auditIssuesCount,
       badgeColor: 'bg-rose-500 text-white',
-    },
-    {
-      id: 'EMPLOYEE_LIST',
-      label: 'Danh Sách Nhân Viên',
-      sublabel: 'Hồ sơ nhân sự chính thức',
-      icon: Users,
-      badge: employeeCount,
-      badgeColor: 'bg-sky-500/20 text-sky-200 border border-sky-400/30',
-    },
-    {
-      id: 'SEASONAL_WORKERS',
-      label: 'Nhân Lực Thời Vụ',
-      sublabel: 'Lương tuần / công trình',
-      icon: HardHat,
-      badge: seasonalCount,
-      badgeColor: 'bg-amber-500 text-slate-950 font-black',
     },
   ];
 

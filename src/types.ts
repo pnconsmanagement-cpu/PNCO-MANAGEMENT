@@ -242,12 +242,89 @@ export interface CompanyConfig {
   address: string;
   taxCode: string;
   phone: string;
-  period: string; // Kỳ lương (vd: "Kỳ lương tháng 06 năm 2026")
-  periodCode: string; // 06/2026
-  month: number; // 6
+  email?: string;
+  directorName?: string;
+  bankAccount?: string;
+  bankName?: string;
+  period: string; // Kỳ lương (vd: "Kỳ lương tháng 09 năm 2026")
+  periodCode: string; // 09/2026
+  month: number; // 9
   year: number; // 2026
-  paymentDate: string; // Ngày chi trả (vd: "05/07/2026")
+  paymentDate: string; // Ngày chi trả (vd: "05/10/2026")
   standardWorkDays: number; // 26
   formNumber: string; // Mẫu số 02-LĐTL
   zaloOA?: ZaloOAConfig;
 }
+
+// 1. NHÂN VIÊN TỔ ĐỘI (Sheet: team_workers)
+export interface TeamWorker {
+  id: string; // ID
+  code: string; // PNC-TD01, PNC-TD02...
+  teamName: string; // Tên tổ đội: "Tổ Cốp Pha & Bê Tông", "Tổ Hàn Kết Cấu Thép"...
+  leaderName: string; // Trưởng tổ đội / Cai thầu
+  phone: string;
+  idCard?: string;
+  bankAccount: string;
+  bankName: string;
+  project: string; // Dự án đang phụ trách thi công
+  workerCount: number; // Số lượng công nhân trong tổ đội
+  paymentMethod: 'BANK' | 'CASH'; // Chuyển khoản hoặc Tiền mặt
+  rateType: 'DAILY' | 'PIECEWORK'; // Lương theo ngày công nhật hoặc khoán khối lượng
+  unitRate: number; // Đơn giá ngày công (hoặc đơn giá khoán)
+  actualWorkDays: number; // Số ngày công (hoặc khối lượng đã nghiệm thu)
+  overtimeHours: number; // Số giờ tăng ca
+  overtimePay: number; // Tiền tăng ca
+  salaryByDays: number; // Tiền theo công = unitRate * actualWorkDays
+  mealAllowance: number; // Phụ cấp ăn ca
+  otherBonus: number; // Thưởng chuyên cần, vượt tiến độ
+  totalIncome: number; // Tổng thu nhập
+  advancePayment: number; // Tạm ứng
+  totalDeductions: number; // Tổng khấu trừ
+  netSalary: number; // Thực lĩnh
+  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+  notes?: string;
+  periodKey?: string;
+  periodRecords?: { [key: string]: any };
+  monthlyAttendance?: { [key: string]: any };
+  sortOrder?: number;
+}
+
+// 2. DANH SÁCH DỰ ÁN (Sheet: projects)
+export interface Project {
+  id: string;
+  code: string; // DA-PN01, DA-PN02...
+  name: string; // Tên dự án / Công trình
+  location: string; // Địa chỉ công trình
+  investor: string; // Chủ đầu tư
+  contractValue?: number; // Giá trị gói thầu (VNĐ)
+  laborBudget: number; // Dự toán chi phí nhân công (VNĐ)
+  actualLaborCost?: number; // Chi phí nhân công thực tế phát sinh
+  startDate: string; // dd/mm/yyyy
+  endDate: string; // dd/mm/yyyy
+  managerName: string; // Chỉ huy trưởng / Kỹ sư giám sát
+  status: 'IN_PROGRESS' | 'COMPLETED' | 'PENDING' | 'PAUSED'; // Đang thi công, Đã hoàn thành, Sắp khởi công, Tạm dừng
+  description?: string;
+}
+
+// 3. BẢN LƯƠNG ỨNG THEO NHÂN VIÊN (Sheet: salary_advances)
+export interface SalaryAdvance {
+  id: string;
+  advanceCode: string; // TU-2026-001, TU-2026-002...
+  targetType: 'PERMANENT' | 'SEASONAL' | 'TEAM'; // 'PERMANENT' = Chính thức, 'SEASONAL' = Thời vụ, 'TEAM' = Tổ đội
+  workerId: string; // ID của nhân viên / công nhân / tổ đội
+  workerCode: string; // Mã NV (PNC0001, PNC-TV01, PNC-TD01)
+  workerName: string; // Họ và tên
+  departmentOrProject: string; // Phòng ban hoặc Dự án
+  amount: number; // Số tiền xin tạm ứng (VNĐ)
+  requestDate: string; // Ngày lập phiếu tạm ứng (dd/mm/yyyy)
+  paymentDate?: string; // Ngày chi tiền
+  reason: string; // Lý do tạm ứng
+  paymentMethod: 'BANK' | 'CASH'; // Chuyển khoản ngân hàng hoặc Tiền mặt
+  status: 'PENDING' | 'APPROVED' | 'DEDUCTED' | 'REJECTED'; // Chờ duyệt, Đã chi, Đã khấu trừ vào lương, Từ chối
+  approvedBy?: string; // Người duyệt (Giám đốc / Kế toán trưởng)
+  periodKey: string; // Kỳ lương áp dụng (vd: "09/2026" hoặc "2026-09_W1")
+  notes?: string;
+}
+
+export type PayrollPeriodCycle = 'WEEK' | 'MONTH' | 'QUARTER' | 'YEAR';
+
