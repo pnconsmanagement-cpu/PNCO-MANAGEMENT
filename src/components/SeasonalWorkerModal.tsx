@@ -312,6 +312,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     // Chuyển chu kỳ: Nạp bản ghi của kỳ mới (hoặc reset 0 công nếu chưa có)
     const workerWithSavedCurrent = recordWorkerPeriod(form, activePeriod, {
+      dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
       overtimeHours: form.overtimeHours,
       weeklyTimesheet: timesheet,
@@ -333,6 +334,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     // Lưu lại kỳ hiện tại trước khi chuyển sang kỳ mới
     const workerWithSavedCurrent = recordWorkerPeriod(form, activePeriod, {
+      dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
       overtimeHours: form.overtimeHours,
       weeklyTimesheet: timesheet,
@@ -356,6 +358,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setSelectedPeriodId(newPeriod.id);
 
     const workerWithSaved = recordWorkerPeriod(form, activePeriod, {
+      dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
       overtimeHours: form.overtimeHours,
       weeklyTimesheet: timesheet,
@@ -377,6 +380,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setSelectedPeriodId(newPeriod.id);
 
     const workerWithSaved = recordWorkerPeriod(form, activePeriod, {
+      dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
       overtimeHours: form.overtimeHours,
       weeklyTimesheet: timesheet,
@@ -532,8 +536,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     }
     setErrorMessage('');
 
-    // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod
+    // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod kèm đơn giá riêng của kỳ này
     const finalWorker = recordWorkerPeriod(form, activePeriod, {
+      dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
       overtimeHours: form.overtimeHours,
       weeklyTimesheet: timesheet,
@@ -1306,9 +1311,36 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 text-xs pt-1">
               {/* Đơn giá ngày công */}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Đơn giá ngày công (VNĐ/ngày) *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700">
+                    Đơn giá ({activePeriod?.shortLabel || 'Kỳ này'}) *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const curRate = form.dailyRate;
+                      if (!curRate || curRate <= 0) return;
+                      const currentRecords = { ...(form.periodRecords || {}) };
+                      Object.keys(currentRecords).forEach((key) => {
+                        currentRecords[key] = {
+                          ...currentRecords[key],
+                          dailyRate: curRate,
+                          salaryByDays: Math.round(curRate * (currentRecords[key].actualWorkDays || 0)),
+                          overtimePay: Math.round((curRate / 8) * (currentRecords[key].overtimeHours || 0) * 1.5),
+                        };
+                      });
+                      setForm((prev) => ({
+                        ...prev,
+                        dailyRate: curRate,
+                        periodRecords: currentRecords,
+                      }));
+                    }}
+                    className="text-[10px] text-sky-700 hover:text-sky-900 underline font-medium cursor-pointer"
+                    title="Sao chép mức lương này sang tất cả các tuần/kỳ khác của công nhân này"
+                  >
+                    Chép cho mọi tuần
+                  </button>
+                </div>
                 <input
                   type="number"
                   step={10000}
@@ -1318,7 +1350,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-mono font-bold text-sky-900"
                 />
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {[400000, 500000, 550000, 600000, 650000, 900000].map((rate) => (
+                  {[400000, 450000, 480000, 500000, 550000, 600000, 650000, 850000].map((rate) => (
                     <button
                       key={rate}
                       type="button"
@@ -1333,6 +1365,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] text-slate-500 mt-1 italic">
+                  Đơn giá lưu riêng cho {activePeriod?.shortLabel}. Các tuần khác giữ nguyên giá trị riêng.
+                </p>
               </div>
 
               {/* Số ngày công thực tế */}

@@ -404,6 +404,12 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
   const monthKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
 
+  // Đơn giá ngày công độc lập của kỳ này (Tuần 1, Tuần 2, Tuần 3... có thể có mức lương riêng)
+  // Nếu kỳ này đã lưu đơn giá riêng (vd: 450k tuần 1-2, 480k tuần 3) thì luôn giữ nguyên đơn giá đó!
+  const periodDailyRate = (existingRecord && existingRecord.dailyRate !== undefined && existingRecord.dailyRate > 0)
+    ? existingRecord.dailyRate
+    : (worker.dailyRate || 0);
+
   // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
   const monthlyDays = worker.monthlyAttendance?.[monthKey]?.days;
   let hasMonthlyDataForPeriod = false;
@@ -450,6 +456,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
     return recomputeSeasonalWorkerPayroll({
       ...worker,
+      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
@@ -491,6 +498,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     const roundedWorkDays = Math.round(monthlyWorkDays * 10) / 10;
     return recomputeSeasonalWorkerPayroll({
       ...worker,
+      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
@@ -509,6 +517,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const emptySheet = createEmptyTimesheetForPeriod(period);
   return recomputeSeasonalWorkerPayroll({
     ...worker,
+    dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
@@ -525,7 +534,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
 /**
  * Chấm công và record lại số liệu của công nhân cho một chu kỳ cụ thể,
- * đồng thời đồng bộ vào monthlyAttendance để link di động và quản trị viên luôn thống nhất
+ * đồng thời giữ nguyên đơn giá ngày độc lập của kỳ đó trong periodRecords
  */
 export function recordWorkerPeriod(
   worker: SeasonalWorker,
@@ -533,9 +542,20 @@ export function recordWorkerPeriod(
   patch: Partial<SeasonalWorker>
 ): SeasonalWorker {
   const pKey = period.periodKey;
+
+  // Lấy đơn giá ngày của chu kỳ này:
+  // Nếu patch có dailyRate thì ghi nhận đơn giá đó cho riêng kỳ này!
+  // Nếu không, ưu tiên lấy đơn giá đã lưu trong periodRecords của kỳ này, nếu chưa có thì lấy worker.dailyRate.
+  const periodDailyRate = patch.dailyRate !== undefined && patch.dailyRate > 0
+    ? patch.dailyRate
+    : (worker.periodRecords?.[pKey]?.dailyRate !== undefined && worker.periodRecords[pKey].dailyRate! > 0
+        ? worker.periodRecords[pKey].dailyRate!
+        : (worker.dailyRate || 0));
+
   const updated = recomputeSeasonalWorkerPayroll({
     ...worker,
     ...patch,
+    dailyRate: periodDailyRate,
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
@@ -547,6 +567,7 @@ export function recordWorkerPeriod(
     periodLabel: period.label,
     cycleType: period.cycleType,
     isRecorded: true,
+    dailyRate: periodDailyRate, // <-- Giữ nguyên mức lương riêng của tuần / kỳ này!
     actualWorkDays: updated.actualWorkDays,
     salaryByDays: updated.salaryByDays,
     overtimeHours: updated.overtimeHours,
@@ -1050,6 +1071,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     periodLabel: w1Period.label,
     cycleType: '1_WEEK',
     isRecorded: true,
+    dailyRate: w.dailyRate,
     actualWorkDays: w1Days,
     salaryByDays: w1Calc.salaryByDays,
     overtimeHours: w1OT,
@@ -1086,6 +1108,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     periodLabel: w2Period.label,
     cycleType: '1_WEEK',
     isRecorded: true,
+    dailyRate: w.dailyRate,
     actualWorkDays: w2Days,
     salaryByDays: w2Calc.salaryByDays,
     overtimeHours: w2OT,
@@ -1127,6 +1150,7 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     periodLabel: bi1Period.label,
     cycleType: '2_WEEKS',
     isRecorded: true,
+    dailyRate: w.dailyRate,
     actualWorkDays: bi1Days,
     salaryByDays: bi1Calc.salaryByDays,
     overtimeHours: bi1OT,

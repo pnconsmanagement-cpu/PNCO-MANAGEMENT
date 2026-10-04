@@ -164,6 +164,7 @@ export interface SeasonalPeriodRecord {
   periodLabel: string; // vd: "Tuần 1 (01/09 - 07/09)"
   cycleType: SeasonalCycleType;
   isRecorded: boolean; // true nếu đã được chấm và lưu số công
+  dailyRate?: number; // Đơn giá ngày công độc lập của chu kỳ / tuần này (giữ nguyên giá trị riêng từng tuần)
   actualWorkDays: number;
   salaryByDays: number;
   overtimeHours: number;

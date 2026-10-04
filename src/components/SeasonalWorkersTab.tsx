@@ -1239,7 +1239,10 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                 title="Sắp xếp theo Đơn giá ngày"
               >
                 <div className="flex items-center justify-end gap-1">
-                  <span>Đơn giá ngày</span>
+                  <div className="text-right">
+                    <span>Đơn giá ngày</span>
+                    <span className="text-[9px] block text-sky-200 font-normal leading-tight">({currentPeriodOption.shortLabel})</span>
+                  </div>
                   {sortField === 'dailyRate' ? (
                     <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
                   ) : (
@@ -1502,13 +1505,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                           type="number"
                           step={10000}
                           value={w.dailyRate}
+                          title={`Đơn giá ngày riêng của ${currentPeriodOption.shortLabel}. Thay đổi chỉ áp dụng cho tuần này, các tuần khác giữ nguyên mức lương riêng.`}
                           onChange={(e) =>
                             handleQuickUpdate(w, { dailyRate: Number(e.target.value) || 0 })
                           }
                           className="w-24 text-right px-1.5 py-0.5 border border-sky-400 rounded bg-white font-mono text-xs font-bold text-sky-950 focus:ring-1 focus:ring-sky-500"
                         />
                       ) : (
-                        <span>{formatNumberOnly(w.dailyRate)} đ</span>
+                        <span title={`Đơn giá riêng của ${currentPeriodOption.shortLabel}: ${formatNumberOnly(w.dailyRate)} đ (Giữ nguyên độc lập từng tuần)`}>
+                          {formatNumberOnly(w.dailyRate)} đ
+                        </span>
                       )}
                     </td>
 

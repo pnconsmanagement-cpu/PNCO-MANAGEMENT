@@ -289,9 +289,12 @@ export function updateWorkerMonthlyAttendance(
     });
 
     const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
-    const dailyRate = Math.max(0, worker.dailyRate || 0);
-    const salaryByDays = Math.round(dailyRate * roundedPeriodDays);
-    const hourlyRate = dailyRate / 8;
+    const existingPeriodDailyRate = worker.periodRecords?.[period.periodKey]?.dailyRate;
+    const periodDailyRate = (existingPeriodDailyRate !== undefined && existingPeriodDailyRate > 0)
+      ? existingPeriodDailyRate
+      : Math.max(0, worker.dailyRate || 0);
+    const salaryByDays = Math.round(periodDailyRate * roundedPeriodDays);
+    const hourlyRate = periodDailyRate / 8;
     const overtimePay = Math.round(hourlyRate * pOtHours * 1.5);
     const mealAllowance = Math.max(0, worker.mealAllowance || 0);
     const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
@@ -310,6 +313,7 @@ export function updateWorkerMonthlyAttendance(
       periodLabel: period.label,
       cycleType: period.cycleType,
       isRecorded: true,
+      dailyRate: periodDailyRate, // Giữ nguyên mức lương riêng của tuần / kỳ này
       actualWorkDays: roundedPeriodDays,
       salaryByDays,
       overtimeHours: pOtHours,
