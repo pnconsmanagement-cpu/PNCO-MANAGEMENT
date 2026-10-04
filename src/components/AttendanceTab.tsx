@@ -40,27 +40,27 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   }, [employees]);
 
   const handleWorkDaysChange = (code: string, newDays: number) => {
-    setModifiedEmployees((prev) =>
-      prev.map((emp) => {
-        if (emp.code === code) {
-          const updated = { ...emp, actualWorkDays: newDays };
-          return recomputeEmployeePayroll(updated);
-        }
-        return emp;
-      })
-    );
+    const updated = modifiedEmployees.map((emp) => {
+      if (emp.code === code) {
+        const item = { ...emp, actualWorkDays: newDays };
+        return recomputeEmployeePayroll(item);
+      }
+      return emp;
+    });
+    setModifiedEmployees(updated);
+    onBatchUpdate(updated);
   };
 
   const handleOtChange = (code: string, hours: number) => {
-    setModifiedEmployees((prev) =>
-      prev.map((emp) => {
-        if (emp.code === code) {
-          const updated = { ...emp, overtimeHours: hours };
-          return recomputeEmployeePayroll(updated);
-        }
-        return emp;
-      })
-    );
+    const updated = modifiedEmployees.map((emp) => {
+      if (emp.code === code) {
+        const item = { ...emp, overtimeHours: hours };
+        return recomputeEmployeePayroll(item);
+      }
+      return emp;
+    });
+    setModifiedEmployees(updated);
+    onBatchUpdate(updated);
   };
 
   const handleFillFullWorkDays = () => {
@@ -280,12 +280,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                     min={0}
                     max={31}
                     step={0.5}
-                    placeholder="—"
-                    value={emp.actualWorkDays === 0 ? '' : emp.actualWorkDays}
-                    onChange={(e) =>
-                      handleWorkDaysChange(emp.code, e.target.value === '' ? 0 : parseFloat(e.target.value))
-                    }
-                    className="w-20 px-2 py-1 border border-slate-300 rounded text-center font-bold text-slate-800 bg-white focus:outline-sky-600 focus:bg-sky-50/30 placeholder:text-slate-300 placeholder:font-normal"
+                    placeholder="0"
+                    value={emp.actualWorkDays !== undefined ? emp.actualWorkDays : ''}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const val = raw === '' ? 0 : parseFloat(raw);
+                      handleWorkDaysChange(emp.code, isNaN(val) ? 0 : val);
+                    }}
+                    onBlur={() => onBatchUpdate(modifiedEmployees)}
+                    className="w-20 px-2 py-1 border border-slate-300 rounded text-center font-bold text-slate-800 bg-white focus:outline-sky-600 focus:bg-sky-50/30 placeholder:text-slate-300"
                   />
                 </td>
                 <td className="p-1.5 border-r border-slate-200 text-center">
@@ -294,12 +297,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                     min={0}
                     max={200}
                     step={0.5}
-                    placeholder="—"
-                    value={emp.overtimeHours === 0 ? '' : emp.overtimeHours}
-                    onChange={(e) =>
-                      handleOtChange(emp.code, e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)
-                    }
-                    className="w-20 px-2 py-1 border border-slate-300 rounded text-center font-semibold text-slate-800 bg-white focus:outline-sky-600 focus:bg-sky-50/30 placeholder:text-slate-300 placeholder:font-normal"
+                    placeholder="0"
+                    value={emp.overtimeHours !== undefined ? emp.overtimeHours : ''}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const val = raw === '' ? 0 : parseFloat(raw);
+                      handleOtChange(emp.code, isNaN(val) ? 0 : val);
+                    }}
+                    onBlur={() => onBatchUpdate(modifiedEmployees)}
+                    className="w-20 px-2 py-1 border border-slate-300 rounded text-center font-semibold text-slate-800 bg-white focus:outline-sky-600 focus:bg-sky-50/30 placeholder:text-slate-300"
                   />
                 </td>
                 <td

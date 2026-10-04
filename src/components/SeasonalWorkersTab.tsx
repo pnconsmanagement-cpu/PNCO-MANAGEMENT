@@ -1498,79 +1498,67 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       <div className="text-slate-400">{w.idCard || '—'}</div>
                     </td>
 
-                    {/* Đơn giá ngày (Hỗ trợ sửa nhanh trực tiếp) */}
+                    {/* Đơn giá ngày (Chỉnh sửa trực tiếp theo từng tuần, độc lập 100%) */}
                     <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-sky-900 bg-slate-50/50">
-                      {isQuickEditMode ? (
+                      <div className="flex items-center justify-end gap-1">
                         <input
                           type="number"
                           step={10000}
-                          value={w.dailyRate}
-                          title={`Đơn giá ngày riêng của ${currentPeriodOption.shortLabel}. Thay đổi chỉ áp dụng cho tuần này, các tuần khác giữ nguyên mức lương riêng.`}
-                          onChange={(e) =>
-                            handleQuickUpdate(w, { dailyRate: Number(e.target.value) || 0 })
-                          }
-                          className="w-24 text-right px-1.5 py-0.5 border border-sky-400 rounded bg-white font-mono text-xs font-bold text-sky-950 focus:ring-1 focus:ring-sky-500"
+                          min={0}
+                          value={w.dailyRate !== undefined ? w.dailyRate : 0}
+                          title={`Đơn giá ngày riêng của ${currentPeriodOption.shortLabel}. Khi đổi mức lương tuần này, các tuần khác (Tuần 1, Tuần 2...) giữ nguyên độc lập.`}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                            handleQuickUpdate(w, { dailyRate: isNaN(val) ? 0 : Math.max(0, val) });
+                          }}
+                          className="w-24 text-right px-1.5 py-0.5 border border-sky-300 hover:border-sky-500 focus:border-sky-600 rounded bg-white font-mono text-xs font-bold text-sky-950 focus:ring-1 focus:ring-sky-500 shadow-2xs"
                         />
-                      ) : (
-                        <span title={`Đơn giá riêng của ${currentPeriodOption.shortLabel}: ${formatNumberOnly(w.dailyRate)} đ (Giữ nguyên độc lập từng tuần)`}>
-                          {formatNumberOnly(w.dailyRate)} đ
-                        </span>
-                      )}
+                        <span className="text-[10.5px] text-slate-400 font-normal">đ</span>
+                      </div>
                     </td>
 
-                    {/* Số ngày công (Hỗ trợ stepper + sửa nhanh) */}
+                    {/* Số ngày công (Hỗ trợ nhập trực tiếp + stepper -/+) */}
                     <td className="p-2 border-r border-slate-200 text-center font-mono font-black text-slate-900 bg-slate-50/50">
                       <div className="flex items-center justify-center gap-1">
                         <button
                           type="button"
                           onClick={() => handleQuickAdjustDays(w, -0.5)}
-                          className="no-print w-4 h-4 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold flex items-center justify-center cursor-pointer"
+                          className="no-print w-4.5 h-4.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center justify-center cursor-pointer active:scale-95 transition"
                           title="Giảm 0.5 công"
                         >
                           -
                         </button>
 
-                        {isQuickEditMode ? (
-                          <input
-                            type="number"
-                            step={0.5}
-                            min={0}
-                            max={31}
-                            value={w.actualWorkDays}
-                            onChange={(e) =>
-                              handleQuickUpdate(w, { actualWorkDays: Number(e.target.value) || 0 })
-                            }
-                            className="w-12 text-center px-1 py-0.5 border border-sky-400 rounded bg-white font-mono text-xs font-black text-slate-950"
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingWorker(w);
-                              setIsFormOpen(true);
-                            }}
-                            className="min-w-[32px] text-sky-950 hover:text-sky-600 hover:underline cursor-pointer font-black"
-                            title="Bấm để xem & chấm công 7 ngày trong tuần"
-                          >
-                            {w.actualWorkDays}
-                          </button>
-                        )}
+                        <input
+                          type="number"
+                          step={0.5}
+                          min={0}
+                          max={31}
+                          value={w.actualWorkDays !== undefined ? w.actualWorkDays : 0}
+                          title={`Nhập số ngày công làm việc của ${currentPeriodOption.shortLabel}`}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                            handleQuickUpdate(w, { actualWorkDays: isNaN(val) ? 0 : Math.max(0, val) });
+                          }}
+                          className="w-13 text-center px-1 py-0.5 border border-sky-300 hover:border-sky-500 focus:border-sky-600 rounded bg-white font-mono text-xs font-black text-slate-950 focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                        />
 
                         <button
                           type="button"
                           onClick={() => handleQuickAdjustDays(w, 0.5)}
-                          className="no-print w-4 h-4 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold flex items-center justify-center cursor-pointer"
+                          className="no-print w-4.5 h-4.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center justify-center cursor-pointer active:scale-95 transition"
                           title="Tăng 0.5 công"
                         >
                           +
                         </button>
                       </div>
                       <div
-                        className="no-print text-[9px] text-sky-700 font-semibold cursor-pointer hover:underline"
+                        className="no-print text-[9px] text-sky-700 font-semibold cursor-pointer hover:underline mt-0.5"
                         onClick={() => {
                           setEditingWorker(w);
                           setIsFormOpen(true);
                         }}
+                        title="Bấm để xem & chấm chi tiết 7 ngày trong tuần"
                       >
                         {w.currentWeekLabel
                           ? w.currentWeekLabel.split(' ')[0] + ' ' + w.currentWeekLabel.split(' ')[1]
@@ -1583,22 +1571,23 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       {formatNumberOnly(w.salaryByDays)}
                     </td>
 
-                    {/* Giờ OT (Hỗ trợ sửa nhanh) */}
+                    {/* Giờ OT (Nhập trực tiếp) */}
                     <td className="p-2 border-r border-slate-200 text-center font-mono font-medium text-slate-700">
-                      {isQuickEditMode ? (
+                      <div className="flex items-center justify-center gap-0.5">
                         <input
                           type="number"
                           step={1}
                           min={0}
-                          value={w.overtimeHours}
-                          onChange={(e) =>
-                            handleQuickUpdate(w, { overtimeHours: Number(e.target.value) || 0 })
-                          }
-                          className="w-12 text-center px-1 py-0.5 border border-sky-400 rounded bg-white font-mono text-xs font-semibold"
+                          value={w.overtimeHours !== undefined ? w.overtimeHours : 0}
+                          title={`Nhập giờ làm thêm OT của ${currentPeriodOption.shortLabel}`}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                            handleQuickUpdate(w, { overtimeHours: isNaN(val) ? 0 : Math.max(0, val) });
+                          }}
+                          className="w-11 text-center px-1 py-0.5 border border-slate-200 hover:border-sky-400 focus:border-sky-500 rounded bg-white font-mono text-xs font-semibold text-amber-900"
                         />
-                      ) : (
-                        <span>{w.overtimeHours > 0 ? `${w.overtimeHours}h` : '—'}</span>
-                      )}
+                        <span className="text-[10px] text-slate-400">h</span>
+                      </div>
                     </td>
 
                     {/* Tiền OT */}

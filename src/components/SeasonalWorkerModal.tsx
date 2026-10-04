@@ -536,12 +536,21 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     }
     setErrorMessage('');
 
+    const targetDays = form.actualWorkDays !== undefined ? Math.max(0, form.actualWorkDays) : 0;
+    const targetOT = form.overtimeHours !== undefined ? Math.max(0, form.overtimeHours) : 0;
+
+    let finalTimesheet = timesheet;
+    const timesheetSum = timesheet?.reduce((s, d) => s + (d.workUnits || 0), 0) || 0;
+    if (!finalTimesheet || finalTimesheet.length === 0 || Math.abs(timesheetSum - targetDays) > 0.01) {
+      finalTimesheet = createTimesheetForPeriod(activePeriod, targetDays, targetOT);
+    }
+
     // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod kèm đơn giá riêng của kỳ này
     const finalWorker = recordWorkerPeriod(form, activePeriod, {
       dailyRate: form.dailyRate,
-      actualWorkDays: form.actualWorkDays,
-      overtimeHours: form.overtimeHours,
-      weeklyTimesheet: timesheet,
+      actualWorkDays: targetDays,
+      overtimeHours: targetOT,
+      weeklyTimesheet: finalTimesheet,
       mealAllowance: form.mealAllowance,
       travelSafetyAllowance: form.travelSafetyAllowance,
       otherBonus: form.otherBonus,
@@ -1380,13 +1389,23 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   step={0.5}
                   min={0}
                   max={31}
-                  value={form.actualWorkDays}
-                  onChange={(e) => updateField('actualWorkDays', parseFloat(e.target.value) || 0)}
+                  value={form.actualWorkDays !== undefined ? form.actualWorkDays : 0}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const val = raw === '' ? 0 : parseFloat(raw);
+                    const validDays = isNaN(val) ? 0 : Math.max(0, val);
+                    const newTimesheet = createTimesheetForPeriod(activePeriod, validDays, form.overtimeHours || 0);
+                    setTimesheet(newTimesheet);
+                    setForm((prev) => {
+                      const updated = { ...prev, actualWorkDays: validDays, weeklyTimesheet: newTimesheet };
+                      return recomputeSeasonalWorkerPayroll(updated);
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-mono font-bold text-slate-900 bg-white"
                 />
                 <div className="text-[10px] text-slate-500 mt-1">
                   {attendanceMode === 'WEEKLY_SHEET'
-                    ? '✓ Đồng bộ trực tiếp từ 7 thẻ chấm công ở trên'
+                    ? '✓ Đồng bộ trực tiếp với các thẻ chấm công ngày ở trên'
                     : 'Nhập tay số ngày công thực tế'}
                 </div>
               </div>
@@ -1400,8 +1419,18 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   type="number"
                   step={1}
                   min={0}
-                  value={form.overtimeHours}
-                  onChange={(e) => updateField('overtimeHours', parseFloat(e.target.value) || 0)}
+                  value={form.overtimeHours !== undefined ? form.overtimeHours : 0}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const val = raw === '' ? 0 : parseFloat(raw);
+                    const validOT = isNaN(val) ? 0 : Math.max(0, val);
+                    const newTimesheet = createTimesheetForPeriod(activePeriod, form.actualWorkDays || 0, validOT);
+                    setTimesheet(newTimesheet);
+                    setForm((prev) => {
+                      const updated = { ...prev, overtimeHours: validOT, weeklyTimesheet: newTimesheet };
+                      return recomputeSeasonalWorkerPayroll(updated);
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-mono font-bold text-amber-800"
                 />
                 <div className="text-[10px] text-slate-500 mt-1">

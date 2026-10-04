@@ -289,7 +289,12 @@ export function updateWorkerMonthlyAttendance(
     });
 
     const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
-    const existingPeriodDailyRate = worker.periodRecords?.[period.periodKey]?.dailyRate;
+    const existingRec = worker.periodRecords?.[period.periodKey];
+    const existingPeriodDailyRate = existingRec?.dailyRate ?? (
+      existingRec && existingRec.actualWorkDays > 0 && existingRec.salaryByDays > 0
+        ? Math.round(existingRec.salaryByDays / existingRec.actualWorkDays)
+        : undefined
+    );
     const periodDailyRate = (existingPeriodDailyRate !== undefined && existingPeriodDailyRate > 0)
       ? existingPeriodDailyRate
       : Math.max(0, worker.dailyRate || 0);

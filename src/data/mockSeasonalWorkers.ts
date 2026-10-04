@@ -405,9 +405,17 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const monthKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
 
   // Đơn giá ngày công độc lập của kỳ này (Tuần 1, Tuần 2, Tuần 3... có thể có mức lương riêng)
-  // Nếu kỳ này đã lưu đơn giá riêng (vd: 450k tuần 1-2, 480k tuần 3) thì luôn giữ nguyên đơn giá đó!
-  const periodDailyRate = (existingRecord && existingRecord.dailyRate !== undefined && existingRecord.dailyRate > 0)
-    ? existingRecord.dailyRate
+  // Ưu tiên:
+  // 1. existingRecord.dailyRate (nếu đã lưu riêng cho kỳ này, vd: 450k tuần 1-2, 480k tuần 3)
+  // 2. Tính từ existingRecord.salaryByDays / existingRecord.actualWorkDays nếu có
+  // 3. worker.dailyRate
+  const existingDailyRate = existingRecord?.dailyRate ?? (
+    existingRecord && existingRecord.actualWorkDays > 0 && existingRecord.salaryByDays > 0
+      ? Math.round(existingRecord.salaryByDays / existingRecord.actualWorkDays)
+      : undefined
+  );
+  const periodDailyRate = (existingDailyRate !== undefined && existingDailyRate > 0)
+    ? existingDailyRate
     : (worker.dailyRate || 0);
 
   // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
@@ -427,8 +435,8 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     });
   }
 
-  // 1. Nếu đã có bản ghi chu kỳ và bản ghi đó có công > 0 hoặc đã ghi nhận
-  if (existingRecord && (existingRecord.actualWorkDays > 0 || !hasMonthlyDataForPeriod)) {
+  // 1. Nếu đã có bản ghi chu kỳ và bản ghi đó đã ghi nhận (hoặc có công > 0)
+  if (existingRecord && (existingRecord.isRecorded || existingRecord.actualWorkDays > 0 || !hasMonthlyDataForPeriod)) {
     // Chuẩn hóa weeklyTimesheet đảm bảo thứ và ngày luôn khớp 100% với lịch thực tế
     let normalizedTimesheet: WeeklyDayAttendance[];
     if (existingRecord.weeklyTimesheet && existingRecord.weeklyTimesheet.length > 0) {
@@ -456,7 +464,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
     return recomputeSeasonalWorkerPayroll({
       ...worker,
-      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
+      dailyRate: periodDailyRate, // <-- Luôn giữ nguyên đơn giá độc lập của kỳ này
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
@@ -545,17 +553,37 @@ export function recordWorkerPeriod(
 
   // Lấy đơn giá ngày của chu kỳ này:
   // Nếu patch có dailyRate thì ghi nhận đơn giá đó cho riêng kỳ này!
-  // Nếu không, ưu tiên lấy đơn giá đã lưu trong periodRecords của kỳ này, nếu chưa có thì lấy worker.dailyRate.
-  const periodDailyRate = patch.dailyRate !== undefined && patch.dailyRate > 0
+  // Nếu không, ưu tiên lấy đơn giá đã lưu trong periodRecords của kỳ này, nếu chưa có thì tính từ salaryByDays/actualWorkDays hoặc lấy worker.dailyRate.
+  const existingPeriodRate = worker.periodRecords?.[pKey]?.dailyRate ?? (
+    worker.periodRecords?.[pKey] && worker.periodRecords[pKey].actualWorkDays > 0 && worker.periodRecords[pKey].salaryByDays > 0
+      ? Math.round(worker.periodRecords[pKey].salaryByDays / worker.periodRecords[pKey].actualWorkDays)
+      : undefined
+  );
+
+  const periodDailyRate = (patch.dailyRate !== undefined && patch.dailyRate > 0)
     ? patch.dailyRate
-    : (worker.periodRecords?.[pKey]?.dailyRate !== undefined && worker.periodRecords[pKey].dailyRate! > 0
-        ? worker.periodRecords[pKey].dailyRate!
+    : (existingPeriodRate !== undefined && existingPeriodRate > 0
+        ? existingPeriodRate
         : (worker.dailyRate || 0));
+
+  // Xác định số ngày công và giờ OT mục tiêu
+  const targetDays = patch.actualWorkDays !== undefined ? Math.max(0, patch.actualWorkDays) : Math.max(0, worker.actualWorkDays || 0);
+  const targetOT = patch.overtimeHours !== undefined ? Math.max(0, patch.overtimeHours) : Math.max(0, worker.overtimeHours || 0);
+
+  // Tự động đồng bộ và sinh weeklyTimesheet tương ứng để số ngày công luôn được ghi nhận vào lịch tháng
+  let effectiveTimesheet = patch.weeklyTimesheet || worker.weeklyTimesheet;
+  const currentTimesheetWorkUnits = effectiveTimesheet?.reduce((sum, d) => sum + (d.workUnits || 0), 0) || 0;
+  if (!effectiveTimesheet || effectiveTimesheet.length === 0 || Math.abs(currentTimesheetWorkUnits - targetDays) > 0.01) {
+    effectiveTimesheet = createTimesheetForPeriod(period, targetDays, targetOT);
+  }
 
   const updated = recomputeSeasonalWorkerPayroll({
     ...worker,
     ...patch,
     dailyRate: periodDailyRate,
+    actualWorkDays: targetDays,
+    overtimeHours: targetOT,
+    weeklyTimesheet: effectiveTimesheet,
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
@@ -581,18 +609,36 @@ export function recordWorkerPeriod(
     advancePayment: updated.advancePayment,
     totalDeductions: updated.totalDeductions,
     netSalary: updated.netSalary,
-    weeklyTimesheet: updated.weeklyTimesheet,
+    weeklyTimesheet: effectiveTimesheet,
     notes: updated.notes,
   };
 
   const periodRecords = {
     ...(worker.periodRecords || {}),
-    [pKey]: periodRecord,
   };
+
+  // QUAN TRỌNG: Bảo vệ và giữ nguyên mức lương riêng của TẤT CẢ các kỳ khác!
+  // Đảm bảo các kỳ hiện có (Tuần 1, Tuần 2...) không bị thiếu dailyRate dẫn đến bị nhảy theo Tuần 3
+  Object.keys(periodRecords).forEach((key) => {
+    if (key !== pKey) {
+      const rec = periodRecords[key];
+      if (rec && (rec.dailyRate === undefined || rec.dailyRate === 0)) {
+        const derivedRate = rec.actualWorkDays > 0 && rec.salaryByDays > 0
+          ? Math.round(rec.salaryByDays / rec.actualWorkDays)
+          : (worker.dailyRate || 0);
+        periodRecords[key] = {
+          ...rec,
+          dailyRate: derivedRate,
+        };
+      }
+    }
+  });
+
+  periodRecords[pKey] = periodRecord;
 
   // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này
   let monthlyAttendance = worker.monthlyAttendance ? { ...worker.monthlyAttendance } : {};
-  if (updated.weeklyTimesheet && updated.weeklyTimesheet.length > 0) {
+  if (effectiveTimesheet && effectiveTimesheet.length > 0) {
     const pYear = period.year || 2026;
     const pMonth = period.month || 9;
     const mStr = String(pMonth).padStart(2, '0');
@@ -607,7 +653,7 @@ export function recordWorkerPeriod(
     };
     const updatedDays = { ...(curMonthRecord.days || {}) };
 
-    updated.weeklyTimesheet.forEach((dayItem) => {
+    effectiveTimesheet.forEach((dayItem) => {
       if (dayItem.dateLabel) {
         const dayNum = parseInt(dayItem.dateLabel.split('/')[0], 10);
         if (!isNaN(dayNum)) {

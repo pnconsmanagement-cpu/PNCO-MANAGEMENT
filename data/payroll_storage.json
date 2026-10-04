@@ -1,5 +1,5 @@
 {
-  "lastUpdated": 1790589764748,
+  "lastUpdated": 1791088213787,
   "config": {
     "name": "CÔNG TY TNHH XÂY DỰNG- CƠ ĐIỆN PHÚC NGUYÊN",
     "address": "226/22/18 Đường Số 8, KP3, Linh Xuân, Tp. Hồ Chí Minh",
@@ -1020,19 +1020,19 @@
       "paymentMethod": "BANK",
       "joinDate": "02/08/2026",
       "dailyRate": 650000,
-      "actualWorkDays": 1,
-      "salaryByDays": 3250000,
-      "overtimeHours": 2,
-      "overtimePay": 0,
+      "actualWorkDays": 3,
+      "salaryByDays": 1950000,
+      "overtimeHours": 5,
+      "overtimePay": 609375,
       "mealAllowance": 150000,
       "travelSafetyAllowance": 100000,
       "otherBonus": 0,
-      "totalIncome": 3500000,
+      "totalIncome": 2809375,
       "hasTaxCommitment": true,
       "personalIncomeTax": 0,
       "advancePayment": 800000,
       "totalDeductions": 800000,
-      "netSalary": 2700000,
+      "netSalary": 2009375,
       "status": "ACTIVE",
       "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm",
       "payrollCycleType": "1_WEEK",
@@ -1112,37 +1112,38 @@
           "periodLabel": "Tuần 1 (31/08 - 06/09)",
           "cycleType": "1_WEEK",
           "isRecorded": true,
-          "actualWorkDays": 5.5,
-          "salaryByDays": 3575000,
-          "overtimeHours": 0,
-          "overtimePay": 0,
-          "mealAllowance": 165000,
+          "dailyRate": 650000,
+          "actualWorkDays": 3,
+          "salaryByDays": 1950000,
+          "overtimeHours": 5,
+          "overtimePay": 609375,
+          "mealAllowance": 150000,
           "travelSafetyAllowance": 100000,
           "otherBonus": 0,
-          "totalIncome": 3840000,
+          "totalIncome": 2809375,
           "hasTaxCommitment": true,
           "personalIncomeTax": 0,
-          "advancePayment": 1000000,
-          "totalDeductions": 1000000,
-          "netSalary": 2840000,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 2009375,
           "weeklyTimesheet": [
             {
               "dayOfWeek": "T2",
               "dayName": "Thứ Hai",
               "dateLabel": "31/08",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T3",
               "dayName": "Thứ Ba",
               "dateLabel": "01/09",
               "workUnits": 1,
-              "otHours": 0,
+              "otHours": 2,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T4",
@@ -1151,34 +1152,34 @@
               "workUnits": 1,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T5",
               "dayName": "Thứ Năm",
               "dateLabel": "03/09",
               "workUnits": 1,
-              "otHours": 0,
+              "otHours": 3,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T6",
               "dayName": "Thứ Sáu",
               "dateLabel": "04/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T7",
               "dayName": "Thứ Bảy",
               "dateLabel": "05/09",
-              "workUnits": 0.5,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "CN",
@@ -1190,71 +1191,72 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
           "periodLabel": "Tuần 2 (07/09 - 13/09)",
           "cycleType": "1_WEEK",
           "isRecorded": true,
-          "actualWorkDays": 5,
-          "salaryByDays": 3250000,
+          "dailyRate": 650000,
+          "actualWorkDays": 0,
+          "salaryByDays": 0,
           "overtimeHours": 0,
           "overtimePay": 0,
           "mealAllowance": 150000,
           "travelSafetyAllowance": 100000,
           "otherBonus": 0,
-          "totalIncome": 3500000,
+          "totalIncome": 250000,
           "hasTaxCommitment": true,
           "personalIncomeTax": 0,
           "advancePayment": 800000,
           "totalDeductions": 800000,
-          "netSalary": 2700000,
+          "netSalary": 0,
           "weeklyTimesheet": [
             {
               "dayOfWeek": "T2",
               "dayName": "Thứ Hai",
               "dateLabel": "07/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T3",
               "dayName": "Thứ Ba",
               "dateLabel": "08/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T4",
               "dayName": "Thứ Tư",
               "dateLabel": "09/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T5",
               "dayName": "Thứ Năm",
               "dateLabel": "10/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T6",
               "dayName": "Thứ Sáu",
               "dateLabel": "11/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T7",
@@ -1275,134 +1277,135 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
           "periodLabel": "Đợt 1 (01/09 - 15/09)",
           "cycleType": "2_WEEKS",
           "isRecorded": true,
-          "actualWorkDays": 12,
-          "salaryByDays": 7800000,
-          "overtimeHours": 8,
-          "overtimePay": 975000,
-          "mealAllowance": 360000,
-          "travelSafetyAllowance": 200000,
+          "dailyRate": 650000,
+          "actualWorkDays": 3,
+          "salaryByDays": 1950000,
+          "overtimeHours": 5,
+          "overtimePay": 609375,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
           "otherBonus": 0,
-          "totalIncome": 9335000,
+          "totalIncome": 2809375,
           "hasTaxCommitment": true,
           "personalIncomeTax": 0,
-          "advancePayment": 1500000,
-          "totalDeductions": 1500000,
-          "netSalary": 7835000,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 2009375,
           "weeklyTimesheet": [
             {
               "dayOfWeek": "T3",
               "dayName": "Thứ Ba",
               "dateLabel": "01/09",
               "workUnits": 1,
-              "otHours": 4,
+              "otHours": 2,
               "shiftType": "DAY",
-              "note": "Thi công + 4h OT"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T4",
               "dayName": "Thứ Tư",
               "dateLabel": "02/09",
               "workUnits": 1,
-              "otHours": 4,
+              "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công + 4h OT"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T5",
               "dayName": "Thứ Năm",
               "dateLabel": "03/09",
               "workUnits": 1,
-              "otHours": 0,
+              "otHours": 3,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
             },
             {
               "dayOfWeek": "T6",
               "dayName": "Thứ Sáu",
               "dateLabel": "04/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T7",
               "dayName": "Thứ Bảy",
               "dateLabel": "05/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "CN",
               "dayName": "Chủ Nhật",
               "dateLabel": "06/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Làm ca Chủ Nhật"
+              "note": "Nghỉ Chủ Nhật"
             },
             {
               "dayOfWeek": "T2",
               "dayName": "Thứ Hai",
               "dateLabel": "07/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T3",
               "dayName": "Thứ Ba",
               "dateLabel": "08/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T4",
               "dayName": "Thứ Tư",
               "dateLabel": "09/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T5",
               "dayName": "Thứ Năm",
               "dateLabel": "10/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T6",
               "dayName": "Thứ Sáu",
               "dateLabel": "11/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "T7",
               "dayName": "Thứ Bảy",
               "dateLabel": "12/09",
-              "workUnits": 1,
+              "workUnits": 0,
               "otHours": 0,
               "shiftType": "DAY",
-              "note": "Thi công bình thường"
+              "note": "Nghỉ ca"
             },
             {
               "dayOfWeek": "CN",
@@ -1432,7 +1435,716 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
+        },
+        "2026-09_W3": {
+          "periodKey": "2026-09_W3",
+          "periodLabel": "Tuần 3 (14/09 - 20/09)",
+          "cycleType": "1_WEEK",
+          "isRecorded": true,
+          "dailyRate": 650000,
+          "actualWorkDays": 0,
+          "salaryByDays": 0,
+          "overtimeHours": 0,
+          "overtimePay": 0,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
+          "otherBonus": 0,
+          "totalIncome": 250000,
+          "hasTaxCommitment": true,
+          "personalIncomeTax": 0,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 0,
+          "weeklyTimesheet": [
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "14/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "15/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "16/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "17/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "18/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "19/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "20/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            }
+          ],
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
+        },
+        "2026-09_W4": {
+          "periodKey": "2026-09_W4",
+          "periodLabel": "Tuần 4 (21/09 - 27/09)",
+          "cycleType": "1_WEEK",
+          "isRecorded": true,
+          "dailyRate": 650000,
+          "actualWorkDays": 0,
+          "salaryByDays": 0,
+          "overtimeHours": 0,
+          "overtimePay": 0,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
+          "otherBonus": 0,
+          "totalIncome": 250000,
+          "hasTaxCommitment": true,
+          "personalIncomeTax": 0,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 0,
+          "weeklyTimesheet": [
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "21/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "22/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "23/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "24/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "25/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "26/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "27/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            }
+          ],
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
+        },
+        "2026-09_W5": {
+          "periodKey": "2026-09_W5",
+          "periodLabel": "Tuần 5 (28/09 - 04/10)",
+          "cycleType": "1_WEEK",
+          "isRecorded": true,
+          "dailyRate": 650000,
+          "actualWorkDays": 3,
+          "salaryByDays": 1950000,
+          "overtimeHours": 5,
+          "overtimePay": 609375,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
+          "otherBonus": 0,
+          "totalIncome": 2809375,
+          "hasTaxCommitment": true,
+          "personalIncomeTax": 0,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 2009375,
+          "weeklyTimesheet": [
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "28/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "29/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "30/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "01/10",
+              "workUnits": 1,
+              "otHours": 2,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "02/10",
+              "workUnits": 1,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "03/10",
+              "workUnits": 1,
+              "otHours": 3,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "04/10",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            }
+          ],
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
+        },
+        "2026-09_BI2": {
+          "periodKey": "2026-09_BI2",
+          "periodLabel": "Đợt 2 (16/09 - 30/09)",
+          "cycleType": "2_WEEKS",
+          "isRecorded": true,
+          "dailyRate": 650000,
+          "actualWorkDays": 0,
+          "salaryByDays": 0,
+          "overtimeHours": 0,
+          "overtimePay": 0,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
+          "otherBonus": 0,
+          "totalIncome": 250000,
+          "hasTaxCommitment": true,
+          "personalIncomeTax": 0,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 0,
+          "weeklyTimesheet": [
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "16/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "17/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "18/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "19/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "20/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "21/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "22/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "23/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "24/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "25/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "26/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "27/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "28/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "29/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "30/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            }
+          ],
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
+        },
+        "2026-09_MONTH": {
+          "periodKey": "2026-09_MONTH",
+          "periodLabel": "Cả tháng 09/2026 (01/09 - 30/09)",
+          "cycleType": "1_MONTH",
+          "isRecorded": true,
+          "dailyRate": 650000,
+          "actualWorkDays": 3,
+          "salaryByDays": 1950000,
+          "overtimeHours": 5,
+          "overtimePay": 609375,
+          "mealAllowance": 150000,
+          "travelSafetyAllowance": 100000,
+          "otherBonus": 0,
+          "totalIncome": 2809375,
+          "hasTaxCommitment": true,
+          "personalIncomeTax": 0,
+          "advancePayment": 800000,
+          "totalDeductions": 800000,
+          "netSalary": 2009375,
+          "weeklyTimesheet": [
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "01/09",
+              "workUnits": 1,
+              "otHours": 2,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "02/09",
+              "workUnits": 1,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "03/09",
+              "workUnits": 1,
+              "otHours": 3,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "04/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "05/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "06/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "07/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "08/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "09/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "10/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "11/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "12/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "13/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "14/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "15/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "16/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "17/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "18/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "19/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "20/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "21/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "22/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "23/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T5",
+              "dayName": "Thứ Năm",
+              "dateLabel": "24/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T6",
+              "dayName": "Thứ Sáu",
+              "dateLabel": "25/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T7",
+              "dayName": "Thứ Bảy",
+              "dateLabel": "26/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "CN",
+              "dayName": "Chủ Nhật",
+              "dateLabel": "27/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ Chủ Nhật"
+            },
+            {
+              "dayOfWeek": "T2",
+              "dayName": "Thứ Hai",
+              "dateLabel": "28/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T3",
+              "dayName": "Thứ Ba",
+              "dateLabel": "29/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            },
+            {
+              "dayOfWeek": "T4",
+              "dayName": "Thứ Tư",
+              "dateLabel": "30/09",
+              "workUnits": 0,
+              "otHours": 0,
+              "shiftType": "DAY",
+              "note": "Nghỉ ca"
+            }
+          ],
+          "notes": "Thợ hàn chính phụ trách đường ống áp lực Chiller tầng hầm"
         }
       },
       "monthlyAttendance": {
@@ -1440,17 +2152,47 @@
           "monthKey": "2026-09",
           "month": 9,
           "year": 2026,
-          "totalWorkDays": 1,
-          "totalOtHours": 2,
+          "totalWorkDays": 3,
+          "totalOtHours": 5,
           "days": {
             "1": {
               "day": 1,
+              "dateStr": "01/09/2026",
               "workUnits": 1,
+              "statusType": "FULL",
+              "location": "Dự án Vinhomes Grand Park",
               "otHours": 2,
-              "statusType": "FULL"
+              "otMultiplier": 1.5,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park",
+              "updatedAt": "2026-10-04T04:16:29.315Z"
+            },
+            "2": {
+              "day": 2,
+              "dateStr": "02/09/2026",
+              "workUnits": 1,
+              "statusType": "FULL",
+              "location": "Dự án Vinhomes Grand Park",
+              "otHours": 0,
+              "otMultiplier": 1.5,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park",
+              "updatedAt": "2026-10-04T04:16:35.491Z"
+            },
+            "3": {
+              "day": 3,
+              "dateStr": "03/09/2026",
+              "workUnits": 1,
+              "statusType": "FULL",
+              "location": "Dự án Vinhomes Grand Park",
+              "otHours": 3,
+              "otMultiplier": 1.5,
+              "shiftType": "DAY",
+              "note": "Thi công tại Dự án Vinhomes Grand Park",
+              "updatedAt": "2026-10-04T04:16:47.580Z"
             }
           },
-          "lastSubmittedAt": "2026-09-28T10:02:44.748Z",
+          "lastSubmittedAt": "2026-10-04T04:16:47.580Z",
           "submittedBy": "WORKER"
         }
       }
@@ -1641,7 +2383,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 600000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -1726,7 +2469,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 600000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -1883,7 +2627,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 600000
         }
       }
     },
@@ -2073,7 +2818,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 580000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -2158,7 +2904,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 580000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -2315,7 +3062,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 580000
         }
       }
     },
@@ -2505,7 +3253,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 550000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -2590,7 +3339,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 550000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -2747,7 +3497,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 550000
         }
       }
     },
@@ -2937,7 +3688,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 560000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -3022,7 +3774,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 560000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -3179,7 +3932,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 560000
         }
       }
     },
@@ -3369,7 +4123,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 520000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -3454,7 +4209,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 520000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -3611,7 +4367,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 520000
         }
       }
     },
@@ -3801,7 +4558,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 620000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -3886,7 +4644,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 620000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -4043,7 +4802,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 620000
         }
       }
     },
@@ -4233,7 +4993,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 400000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -4318,7 +5079,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 400000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -4475,7 +5237,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 400000
         }
       }
     },
@@ -4665,7 +5428,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 530000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -4750,7 +5514,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 530000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -4907,7 +5672,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 530000
         }
       }
     },
@@ -5097,7 +5863,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 500000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -5182,7 +5949,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 500000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -5339,7 +6107,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 500000
         }
       }
     },
@@ -5529,7 +6298,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 520000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -5614,7 +6384,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 520000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -5771,7 +6542,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 520000
         }
       }
     },
@@ -5961,7 +6733,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đã hoàn thành thi công Tuần 1"
+          "notes": "Đã hoàn thành thi công Tuần 1",
+          "dailyRate": 380000
         },
         "2026-09_W2": {
           "periodKey": "2026-09_W2",
@@ -6046,7 +6819,8 @@
               "note": "Nghỉ Chủ Nhật"
             }
           ],
-          "notes": "Đang thi công Tuần 2"
+          "notes": "Đang thi công Tuần 2",
+          "dailyRate": 380000
         },
         "2026-09_BI1": {
           "periodKey": "2026-09_BI1",
@@ -6203,7 +6977,8 @@
               "note": "Nghỉ ca"
             }
           ],
-          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9"
+          "notes": "Kỳ lương đợt 1 nửa đầu tháng 9",
+          "dailyRate": 380000
         }
       }
     }

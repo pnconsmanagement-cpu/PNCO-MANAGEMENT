@@ -132,7 +132,18 @@ app.post('/api/attendance/mark', (req, res) => {
       (w: any) => (worker.code && w.code === worker.code) || (worker.id && String(w.id) === String(worker.id))
     );
     if (idx >= 0) {
-      workers[idx] = { ...workers[idx], ...worker };
+      workers[idx] = {
+        ...workers[idx],
+        ...worker,
+        periodRecords: {
+          ...(workers[idx].periodRecords || {}),
+          ...(worker.periodRecords || {}),
+        },
+        monthlyAttendance: {
+          ...(workers[idx].monthlyAttendance || {}),
+          ...(worker.monthlyAttendance || {}),
+        },
+      };
     } else {
       workers.push(worker);
     }
@@ -198,7 +209,18 @@ app.post('/api/seasonal-workers/update', (req, res) => {
   );
 
   if (idx >= 0) {
-    workers[idx] = { ...workers[idx], ...worker };
+    workers[idx] = {
+      ...workers[idx],
+      ...worker,
+      periodRecords: {
+        ...(workers[idx].periodRecords || {}),
+        ...(worker.periodRecords || {}),
+      },
+      monthlyAttendance: {
+        ...(workers[idx].monthlyAttendance || {}),
+        ...(worker.monthlyAttendance || {}),
+      },
+    };
   } else {
     workers.push(worker);
   }
