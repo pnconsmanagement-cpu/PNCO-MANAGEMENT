@@ -204,9 +204,15 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     });
   });
 
+  // Bộ đệm nhập số ngày công và giờ OT để gõ mượt mà, không bị snap về 0 khi xóa
+  const [rawWorkDays, setRawWorkDays] = useState<string | null>(null);
+  const [rawOT, setRawOT] = useState<string | null>(null);
+
   // Khi modal mở hoặc worker thay đổi, đồng bộ lại state
   useEffect(() => {
     if (isOpen) {
+      setRawWorkDays(null);
+      setRawOT(null);
       const activeCycle = initialPeriod?.cycleType || worker?.payrollCycleType || cycleType || '1_WEEK';
       setCycleType(activeCycle);
 
@@ -1385,21 +1391,39 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   Số ngày công thực tế (công) *
                 </label>
                 <input
-                  type="number"
-                  step={0.5}
-                  min={0}
-                  max={31}
-                  value={form.actualWorkDays !== undefined ? form.actualWorkDays : 0}
+                  type="text"
+                  inputMode="decimal"
+                  value={rawWorkDays !== null ? rawWorkDays : (form.actualWorkDays !== undefined ? String(form.actualWorkDays) : '0')}
                   onChange={(e) => {
                     const raw = e.target.value;
-                    const val = raw === '' ? 0 : parseFloat(raw);
-                    const validDays = isNaN(val) ? 0 : Math.max(0, val);
-                    const newTimesheet = createTimesheetForPeriod(activePeriod, validDays, form.overtimeHours || 0);
-                    setTimesheet(newTimesheet);
-                    setForm((prev) => {
-                      const updated = { ...prev, actualWorkDays: validDays, weeklyTimesheet: newTimesheet };
-                      return recomputeSeasonalWorkerPayroll(updated);
-                    });
+                    if (/^[0-9]*\.?[0-9]*$/.test(raw)) {
+                      setRawWorkDays(raw);
+                      if (raw !== '' && !raw.endsWith('.')) {
+                        const parsed = parseFloat(raw);
+                        if (!isNaN(parsed) && parsed >= 0) {
+                          const validDays = Math.min(31, parsed);
+                          const newTimesheet = createTimesheetForPeriod(activePeriod, validDays, form.overtimeHours || 0);
+                          setTimesheet(newTimesheet);
+                          setForm((prev) => {
+                            const updated = { ...prev, actualWorkDays: validDays, weeklyTimesheet: newTimesheet };
+                            return recomputeSeasonalWorkerPayroll(updated);
+                          });
+                        }
+                      }
+                    }
+                  }}
+                  onBlur={() => {
+                    if (rawWorkDays !== null) {
+                      const parsed = parseFloat(rawWorkDays);
+                      const validDays = isNaN(parsed) ? 0 : Math.min(31, Math.max(0, parsed));
+                      const newTimesheet = createTimesheetForPeriod(activePeriod, validDays, form.overtimeHours || 0);
+                      setTimesheet(newTimesheet);
+                      setForm((prev) => {
+                        const updated = { ...prev, actualWorkDays: validDays, weeklyTimesheet: newTimesheet };
+                        return recomputeSeasonalWorkerPayroll(updated);
+                      });
+                      setRawWorkDays(null);
+                    }
                   }}
                   className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-mono font-bold text-slate-900 bg-white"
                 />
@@ -1416,20 +1440,39 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   Tổng giờ tăng ca OT (giờ)
                 </label>
                 <input
-                  type="number"
-                  step={1}
-                  min={0}
-                  value={form.overtimeHours !== undefined ? form.overtimeHours : 0}
+                  type="text"
+                  inputMode="decimal"
+                  value={rawOT !== null ? rawOT : (form.overtimeHours !== undefined ? String(form.overtimeHours) : '0')}
                   onChange={(e) => {
                     const raw = e.target.value;
-                    const val = raw === '' ? 0 : parseFloat(raw);
-                    const validOT = isNaN(val) ? 0 : Math.max(0, val);
-                    const newTimesheet = createTimesheetForPeriod(activePeriod, form.actualWorkDays || 0, validOT);
-                    setTimesheet(newTimesheet);
-                    setForm((prev) => {
-                      const updated = { ...prev, overtimeHours: validOT, weeklyTimesheet: newTimesheet };
-                      return recomputeSeasonalWorkerPayroll(updated);
-                    });
+                    if (/^[0-9]*\.?[0-9]*$/.test(raw)) {
+                      setRawOT(raw);
+                      if (raw !== '' && !raw.endsWith('.')) {
+                        const parsed = parseFloat(raw);
+                        if (!isNaN(parsed) && parsed >= 0) {
+                          const validOT = Math.min(200, parsed);
+                          const newTimesheet = createTimesheetForPeriod(activePeriod, form.actualWorkDays || 0, validOT);
+                          setTimesheet(newTimesheet);
+                          setForm((prev) => {
+                            const updated = { ...prev, overtimeHours: validOT, weeklyTimesheet: newTimesheet };
+                            return recomputeSeasonalWorkerPayroll(updated);
+                          });
+                        }
+                      }
+                    }
+                  }}
+                  onBlur={() => {
+                    if (rawOT !== null) {
+                      const parsed = parseFloat(rawOT);
+                      const validOT = isNaN(parsed) ? 0 : Math.min(200, Math.max(0, parsed));
+                      const newTimesheet = createTimesheetForPeriod(activePeriod, form.actualWorkDays || 0, validOT);
+                      setTimesheet(newTimesheet);
+                      setForm((prev) => {
+                        const updated = { ...prev, overtimeHours: validOT, weeklyTimesheet: newTimesheet };
+                        return recomputeSeasonalWorkerPayroll(updated);
+                      });
+                      setRawOT(null);
+                    }
                   }}
                   className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-mono font-bold text-amber-800"
                 />

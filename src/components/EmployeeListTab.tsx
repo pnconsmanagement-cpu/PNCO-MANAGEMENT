@@ -453,10 +453,10 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
               type="button"
               onClick={onGoToSeasonalWorkers}
               className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap"
-              title="Chuyển sang Quản lý Công nhân kỹ thuật & Nhân lực thời vụ công trình"
+              title="Chuyển sang Tab 2. Quản lý Công nhân kỹ thuật & Nhân lực thời vụ công trình"
             >
               <HardHat className="w-4 h-4 text-amber-600" />
-              <span>Nhân lực thời vụ (Công nhân kỹ thuật)</span>
+              <span>Chuyển sang 2. Nhân Lực Thời Vụ →</span>
             </button>
           )}
 

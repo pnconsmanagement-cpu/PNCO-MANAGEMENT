@@ -39,6 +39,7 @@ import {
   ListOrdered,
   Smartphone,
   QrCode,
+  Users,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption } from '../types';
@@ -77,6 +78,7 @@ interface SeasonalWorkersTabProps {
   onResetWorkers: () => void;
   onReorderWorkers?: (workers: SeasonalWorker[]) => void;
   onOpenMobileView?: (workerCode?: string) => void;
+  onGoToPermanentEmployees?: () => void;
 }
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
@@ -91,6 +93,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   onResetWorkers,
   onReorderWorkers,
   onOpenMobileView,
+  onGoToPermanentEmployees,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState('ALL');
@@ -225,6 +228,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     }, 3500);
     return () => clearTimeout(timer);
   }, [toastMessage]);
+
+  // Bộ đệm gõ phím số ngày công để không bị giật hoặc snap về 0 khi xóa
+  const [rowDaysBuffer, setRowDaysBuffer] = useState<Record<string, string>>({});
 
   // CÔNG NHÂN TẠI KỲ HIỆN TẠI:
   // Nếu kỳ này chưa chấm, actualWorkDays = 0, OT = 0, không tự động mang số ngày công của tuần trước sang!
@@ -583,6 +589,19 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
         {/* Thanh tác vụ chính */}
         <div className="flex flex-wrap items-center gap-2">
+          {onGoToPermanentEmployees && (
+            <button
+              type="button"
+              id="btn-goto-permanent-employees"
+              onClick={onGoToPermanentEmployees}
+              className="px-3.5 py-2 bg-sky-900/80 hover:bg-sky-800 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer border border-sky-400/50"
+              title="Quay lại Tab 1. Danh sách nhân viên thường trực chính thức"
+            >
+              <Users className="w-4 h-4 text-sky-300" />
+              <span>← Về 1. Nhân Viên Thường Trực</span>
+            </button>
+          )}
+
           {/* Nút Tạo link chấm công điện thoại */}
           <button
             type="button"
@@ -1530,15 +1549,32 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                         </button>
 
                         <input
-                          type="number"
-                          step={0.5}
-                          min={0}
-                          max={31}
-                          value={w.actualWorkDays !== undefined ? w.actualWorkDays : 0}
+                          type="text"
+                          inputMode="decimal"
+                          value={rowDaysBuffer[w.id] !== undefined ? rowDaysBuffer[w.id] : (w.actualWorkDays !== undefined ? String(w.actualWorkDays) : '0')}
                           title={`Nhập số ngày công làm việc của ${currentPeriodOption.shortLabel}`}
                           onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                            handleQuickUpdate(w, { actualWorkDays: isNaN(val) ? 0 : Math.max(0, val) });
+                            const raw = e.target.value;
+                            if (/^[0-9]*\.?[0-9]*$/.test(raw)) {
+                              setRowDaysBuffer((prev) => ({ ...prev, [w.id]: raw }));
+                              if (raw !== '' && !raw.endsWith('.')) {
+                                const parsed = parseFloat(raw);
+                                if (!isNaN(parsed) && parsed >= 0) {
+                                  handleQuickUpdate(w, { actualWorkDays: Math.min(31, parsed) });
+                                }
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            if (rowDaysBuffer[w.id] !== undefined) {
+                              const parsed = parseFloat(rowDaysBuffer[w.id]);
+                              handleQuickUpdate(w, { actualWorkDays: isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed)) });
+                              setRowDaysBuffer((prev) => {
+                                const next = { ...prev };
+                                delete next[w.id];
+                                return next;
+                              });
+                            }
                           }}
                           className="w-13 text-center px-1 py-0.5 border border-sky-300 hover:border-sky-500 focus:border-sky-600 rounded bg-white font-mono text-xs font-black text-slate-950 focus:ring-1 focus:ring-sky-500 shadow-2xs"
                         />

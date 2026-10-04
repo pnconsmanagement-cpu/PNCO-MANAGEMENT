@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Users, HardHat } from 'lucide-react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { MetricCards } from './components/MetricCards';
@@ -29,6 +30,7 @@ import {
   deleteBatchSeasonalWorkersFromSupabase,
   clearAllSeasonalWorkersFromSupabase,
   syncSingleEmployeeToSupabase,
+  syncEmployeesToSupabase,
   deleteEmployeeFromSupabase,
   subscribeToSupabaseRealtime,
   autoApplyUrlConfig,
@@ -178,6 +180,19 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<TabType>('PAYSLIP');
+  const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL'>('PERMANENT');
+
+  const handleSelectTab = (tab: TabType) => {
+    if (tab === 'SEASONAL_WORKERS') {
+      setActiveTab('EMPLOYEE_LIST');
+      setEmployeeSubTab('SEASONAL');
+    } else if (tab === 'EMPLOYEE_LIST') {
+      setActiveTab('EMPLOYEE_LIST');
+      setEmployeeSubTab('PERMANENT');
+    } else {
+      setActiveTab(tab);
+    }
+  };
   const [isSidebarMobileOpen, setIsSidebarMobileOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isBankExportOpen, setIsBankExportOpen] = useState(false);
@@ -709,6 +724,19 @@ export default function App() {
 
   const handleBatchUpdate = (updatedList: Employee[]) => {
     setEmployees(updatedList);
+    // Lưu ngay vào kỳ tháng hiện tại để khi chuyển tháng hoặc tải lại không bị mất công đã nhập
+    const mStr = (config.month || 9) < 10 ? `0${config.month || 9}` : `${config.month || 9}`;
+    const currentMonthKey = `payroll_month_${config.year || 2026}_${mStr}`;
+    try {
+      localStorage.setItem(currentMonthKey, JSON.stringify(updatedList));
+      localStorage.setItem('payroll_employees', JSON.stringify(updatedList));
+    } catch (e) {
+      console.warn('LocalStorage save error:', e);
+    }
+    saveAllToServer(config, updatedList, seasonalWorkers);
+    if (isSupabaseConfigured()) {
+      syncEmployeesToSupabase(updatedList, config.periodCode).then(() => notifyCrossTab());
+    }
   };
 
   const handleResetDefault = () => {
@@ -770,8 +798,8 @@ export default function App() {
       <div className="flex flex-1 min-h-[calc(100vh-60px)] relative">
         {/* Left Sidebar Navigation */}
         <Sidebar
-          activeTab={activeTab}
-          onSelectTab={setActiveTab}
+          activeTab={activeTab === 'EMPLOYEE_LIST' ? (employeeSubTab === 'SEASONAL' ? 'SEASONAL_WORKERS' : 'EMPLOYEE_LIST') : activeTab}
+          onSelectTab={handleSelectTab}
           auditIssuesCount={auditCount}
           seasonalCount={seasonalWorkers.length}
           employeeCount={employees.length}
@@ -840,18 +868,117 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'EMPLOYEE_LIST' && (
-            <EmployeeListTab
-              employees={employees}
-              config={config}
-              onUpdateEmployee={handleUpdateEmployee}
-              onAddEmployee={handleAddEmployee}
-              onDeleteEmployee={handleDeleteEmployee}
-              onBatchUpdate={handleBatchUpdate}
-              onGoToAttendance={() => setActiveTab('ATTENDANCE')}
-              onGoToSeasonalWorkers={() => setActiveTab('SEASONAL_WORKERS')}
-              onResetDefault={handleResetDefault}
-            />
+          {/* Hub Danh Sách Nhân Viên: Gồm 2 tab con (1. Nhân Viên Thường Trực & 2. Nhân Lực Thời Vụ) */}
+          {(activeTab === 'EMPLOYEE_LIST' || activeTab === 'SEASONAL_WORKERS') && (
+            <div className="flex flex-col gap-3">
+              {/* Thanh chuyển đổi 2 Tab Nhân viên theo đúng yêu cầu người dùng */}
+              <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-3 select-none">
+                <div className="flex items-center gap-2">
+                  {/* Tab 1: Nhân Viên Thường Trực */}
+                  <button
+                    type="button"
+                    id="subtab-permanent-employees"
+                    onClick={() => {
+                      setEmployeeSubTab('PERMANENT');
+                      setActiveTab('EMPLOYEE_LIST');
+                    }}
+                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
+                      (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')
+                        ? 'bg-[#0f3d64] text-white shadow-md ring-2 ring-[#0f3d64]/20 font-black'
+                        : 'bg-slate-50 text-slate-700 hover:text-[#0f3d64] hover:bg-sky-50 border border-slate-200'
+                    }`}
+                  >
+                    <Users className={`w-4 h-4 ${(activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT') ? 'text-sky-300' : 'text-slate-500'}`} />
+                    <span>1. Nhân Viên Thường Trực</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                      (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {employees.length}
+                    </span>
+                  </button>
+
+                  {/* Tab 2: Nhân Lực Thời Vụ */}
+                  <button
+                    type="button"
+                    id="subtab-seasonal-workers"
+                    onClick={() => {
+                      setEmployeeSubTab('SEASONAL');
+                      setActiveTab('EMPLOYEE_LIST');
+                    }}
+                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
+                      activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL'
+                        ? 'bg-amber-600 text-white shadow-md ring-2 ring-amber-600/20 font-black'
+                        : 'bg-slate-50 text-slate-700 hover:text-amber-800 hover:bg-amber-50 border border-slate-200'
+                    }`}
+                  >
+                    <HardHat className={`w-4 h-4 ${activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
+                    <span>2. Nhân Lực Thời Vụ</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                      activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL'
+                        ? 'bg-slate-900 text-amber-300'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {seasonalWorkers.length}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500 pr-2">
+                  {activeTab !== 'SEASONAL_WORKERS' && employeeSubTab === 'PERMANENT' ? (
+                    <span className="flex items-center gap-1.5 text-sky-900 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      Quản lý {employees.length} nhân sự thường trực (HĐLĐ, phòng ban, lương tháng & đánh giá hàng năm)
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-amber-900 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      Quản lý {seasonalWorkers.length} công nhân kỹ thuật & thợ khoán (lương tuần, chấm công công trình)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Nội dung Tab tương ứng */}
+              {activeTab !== 'SEASONAL_WORKERS' && employeeSubTab === 'PERMANENT' ? (
+                <EmployeeListTab
+                  employees={employees}
+                  config={config}
+                  onUpdateEmployee={handleUpdateEmployee}
+                  onAddEmployee={handleAddEmployee}
+                  onDeleteEmployee={handleDeleteEmployee}
+                  onBatchUpdate={handleBatchUpdate}
+                  onGoToAttendance={() => setActiveTab('ATTENDANCE')}
+                  onGoToSeasonalWorkers={() => {
+                    setEmployeeSubTab('SEASONAL');
+                    setActiveTab('EMPLOYEE_LIST');
+                  }}
+                  onResetDefault={handleResetDefault}
+                />
+              ) : (
+                <SeasonalWorkersTab
+                  workers={seasonalWorkers}
+                  config={config}
+                  onChangeMonthYear={handleChangeMonthYear}
+                  onUpdateWorker={handleUpdateSeasonalWorker}
+                  onAddWorker={handleAddSeasonalWorker}
+                  onDeleteWorker={handleDeleteSeasonalWorker}
+                  onDeleteBatchWorkers={handleDeleteBatchSeasonalWorkers}
+                  onClearAllWorkers={handleClearAllSeasonalWorkers}
+                  onResetWorkers={handleResetSeasonalWorkers}
+                  onReorderWorkers={handleReorderSeasonalWorkers}
+                  onOpenMobileView={(workerCode) => {
+                    setActiveMobileWorkerCode(workerCode);
+                    setIsMobileAttendanceView(true);
+                  }}
+                  onGoToPermanentEmployees={() => {
+                    setEmployeeSubTab('PERMANENT');
+                    setActiveTab('EMPLOYEE_LIST');
+                  }}
+                />
+              )}
+            </div>
           )}
 
           {activeTab === 'ATTENDANCE' && (
@@ -860,7 +987,15 @@ export default function App() {
               config={config}
               onChangeMonthYear={handleChangeMonthYear}
               onBatchUpdate={handleBatchUpdate}
-              onGoToEmployeeList={() => setActiveTab('EMPLOYEE_LIST')}
+              onGoToEmployeeList={() => {
+                setActiveTab('EMPLOYEE_LIST');
+                setEmployeeSubTab('PERMANENT');
+              }}
+              onGoToSeasonalAttendance={() => {
+                setActiveTab('EMPLOYEE_LIST');
+                setEmployeeSubTab('SEASONAL');
+              }}
+              seasonalCount={seasonalWorkers.length}
             />
           )}
 
@@ -868,25 +1003,6 @@ export default function App() {
             <DataAuditTab
               employees={employees}
               onSelectEmployeeForPayslip={handleAuditSelectEmployee}
-            />
-          )}
-
-          {activeTab === 'SEASONAL_WORKERS' && (
-            <SeasonalWorkersTab
-              workers={seasonalWorkers}
-              config={config}
-              onChangeMonthYear={handleChangeMonthYear}
-              onUpdateWorker={handleUpdateSeasonalWorker}
-              onAddWorker={handleAddSeasonalWorker}
-              onDeleteWorker={handleDeleteSeasonalWorker}
-              onDeleteBatchWorkers={handleDeleteBatchSeasonalWorkers}
-              onClearAllWorkers={handleClearAllSeasonalWorkers}
-              onResetWorkers={handleResetSeasonalWorkers}
-              onReorderWorkers={handleReorderSeasonalWorkers}
-              onOpenMobileView={(workerCode) => {
-                setActiveMobileWorkerCode(workerCode);
-                setIsMobileAttendanceView(true);
-              }}
             />
           )}
             </div>
