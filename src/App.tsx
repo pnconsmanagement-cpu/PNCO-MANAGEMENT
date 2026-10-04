@@ -945,6 +945,7 @@ export default function App() {
                 <EmployeeListTab
                   employees={employees}
                   config={config}
+                  onChangeMonthYear={handleChangeMonthYear}
                   onUpdateEmployee={handleUpdateEmployee}
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
