@@ -1292,7 +1292,17 @@ export default function App() {
         config={config}
         employees={employees}
         seasonalWorkers={seasonalWorkers}
-        onDataLoadedFromCloud={({ config: newCfg, employees: newEmps, seasonalWorkers: newSeas }) => {
+        teamWorkers={teamWorkers}
+        projects={projects}
+        salaryAdvances={salaryAdvances}
+        onDataLoadedFromCloud={({
+          config: newCfg,
+          employees: newEmps,
+          seasonalWorkers: newSeas,
+          teamWorkers: newTeams,
+          projects: newProjs,
+          salaryAdvances: newAdvs,
+        }) => {
           if (newCfg) {
             setConfig(newCfg);
             localStorage.setItem('payroll_company_config', JSON.stringify(newCfg));
@@ -1304,6 +1314,18 @@ export default function App() {
           if (newSeas && newSeas.length > 0) {
             setSeasonalWorkers(newSeas);
             localStorage.setItem('payroll_seasonal_workers', JSON.stringify(newSeas));
+          }
+          if (newTeams && newTeams.length > 0) {
+            setTeamWorkers(newTeams);
+            localStorage.setItem('payroll_team_workers', JSON.stringify(newTeams));
+          }
+          if (newProjs && newProjs.length > 0) {
+            setProjects(newProjs);
+            localStorage.setItem('payroll_projects', JSON.stringify(newProjs));
+          }
+          if (newAdvs && newAdvs.length > 0) {
+            setSalaryAdvances(newAdvs);
+            localStorage.setItem('payroll_salary_advances', JSON.stringify(newAdvs));
           }
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());

@@ -1,5 +1,14 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, Project, SalaryAdvance } from '../types';
+import {
+  CompanyConfig,
+  Employee,
+  SeasonalWorker,
+  TeamWorker,
+  Project,
+  SalaryAdvance,
+  PayrollRecord,
+  AttendanceRecord,
+} from '../types';
 
 const env = (import.meta as any).env || {};
 
@@ -157,10 +166,11 @@ export interface ConnectionHealth {
     company_config: TableCheckStatus;
     employees: TableCheckStatus;
     seasonal_workers: TableCheckStatus;
-    team_workers?: TableCheckStatus;
-    projects?: TableCheckStatus;
-    salary_advances?: TableCheckStatus;
-    attendance_records?: TableCheckStatus;
+    team_workers: TableCheckStatus;
+    projects: TableCheckStatus;
+    payroll_records: TableCheckStatus;
+    salary_advances: TableCheckStatus;
+    attendance_records: TableCheckStatus;
   };
   missingTables: string[];
 }
@@ -185,7 +195,9 @@ export const checkSupabaseConnection = async (
       seasonal_workers: { exists: false, count: 0 },
       team_workers: { exists: false, count: 0 },
       projects: { exists: false, count: 0 },
+      payroll_records: { exists: false, count: 0 },
       salary_advances: { exists: false, count: 0 },
+      attendance_records: { exists: false, count: 0 },
     },
     missingTables: [],
   };
@@ -221,13 +233,15 @@ export const checkSupabaseConnection = async (
   };
 
   try {
-    const [cfgCheck, empCheck, seaCheck, teamCheck, projCheck, advCheck] = await Promise.all([
+    const [cfgCheck, empCheck, seaCheck, teamCheck, projCheck, payCheck, advCheck, attCheck] = await Promise.all([
       checkTable('company_config'),
       checkTable('employees'),
       checkTable('seasonal_workers'),
       checkTable('team_workers'),
       checkTable('projects'),
+      checkTable('payroll_records'),
       checkTable('salary_advances'),
+      checkTable('attendance_records'),
     ]);
 
     const missing: string[] = [];
@@ -236,15 +250,17 @@ export const checkSupabaseConnection = async (
     if (!seaCheck.exists) missing.push('seasonal_workers');
     if (!teamCheck.exists) missing.push('team_workers');
     if (!projCheck.exists) missing.push('projects');
+    if (!payCheck.exists) missing.push('payroll_records');
     if (!advCheck.exists) missing.push('salary_advances');
+    if (!attCheck.exists) missing.push('attendance_records');
 
     const coreExist = cfgCheck.exists && empCheck.exists && seaCheck.exists;
 
     let msg = '';
     if (missing.length === 0) {
-      msg = `Kết nối Supabase xuất sắc! Toàn bộ 6 bảng dữ liệu đã sẵn sàng: Cấu hình, NV Chính thức (${empCheck.count}), Thời vụ (${seaCheck.count}), Tổ đội (${teamCheck.count}), Dự án (${projCheck.count}), Tạm ứng (${advCheck.count}).`;
+      msg = `Kết nối Supabase xuất sắc! Toàn bộ 8 bảng dữ liệu đã sẵn sàng: Cấu hình, NV Chính thức (${empCheck.count}), Thời vụ (${seaCheck.count}), Tổ đội (${teamCheck.count}), Dự án (${projCheck.count}), Bảng lương (${payCheck.count}), Tạm ứng (${advCheck.count}), Chấm công (${attCheck.count}).`;
     } else if (coreExist) {
-      msg = `Đã kết nối Supabase thành công. Một số bảng phụ [${missing.join(', ')}] chưa được tạo, bạn có thể chạy file supabase_schema.sql trong SQL Editor.`;
+      msg = `Đã kết nối Supabase thành công. Một số bảng [${missing.join(', ')}] chưa được tạo, bạn có thể chạy file supabase_schema.sql trong SQL Editor.`;
     } else {
       msg = `Đã kết nối Supabase nhưng thiếu bảng chính: [${missing.join(', ')}]. Hãy chạy file supabase_schema.sql trong SQL Editor.`;
     }
@@ -259,7 +275,9 @@ export const checkSupabaseConnection = async (
         seasonal_workers: seaCheck,
         team_workers: teamCheck,
         projects: projCheck,
+        payroll_records: payCheck,
         salary_advances: advCheck,
+        attendance_records: attCheck,
       },
       missingTables: missing,
     };
@@ -591,7 +609,9 @@ export interface FullSyncResult {
   seasonalWorkers: { ok: boolean; count: number; message: string; error?: string };
   teamWorkers?: { ok: boolean; count: number; message: string; error?: string };
   projects?: { ok: boolean; count: number; message: string; error?: string };
+  payrollRecords?: { ok: boolean; count: number; message: string; error?: string };
   salaryAdvances?: { ok: boolean; count: number; message: string; error?: string };
+  attendanceRecords?: { ok: boolean; count: number; message: string; error?: string };
 }
 
 /**
@@ -873,7 +893,188 @@ export const fetchProjectsFromSupabase = loadProjectsFromSupabase;
 export const fetchSalaryAdvancesFromSupabase = loadSalaryAdvancesFromSupabase;
 
 /**
- * Thực hiện đồng bộ toàn bộ (Cấu hình + 3 nhóm nhân viên + Dự án + Tạm ứng) một cách an toàn và chi tiết
+ * Đồng bộ danh sách Bản Lương Đa Chu Kỳ lên Supabase (Sheet: payroll_records - Tuần, Tháng, Quý, Năm)
+ */
+export const syncPayrollRecordsToSupabase = async (
+  records: PayrollRecord[]
+): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
+  if (records.length === 0) return { success: true, count: 0, message: 'Danh sách bảng lương rỗng.' };
+
+  try {
+    const payload = records.map((r) => ({
+      id: String(r.id),
+      period_type: String(r.periodType || 'MONTH'),
+      period_code: String(r.periodCode || '09/2026'),
+      worker_type: String(r.workerType || 'PERMANENT'),
+      worker_id: String(r.workerId),
+      worker_code: String(r.workerCode),
+      worker_name: String(r.workerName),
+      department_or_project: String(r.departmentOrProject || ''),
+      standard_work_days: Number(r.standardWorkDays || 26),
+      actual_work_days: Number(r.actualWorkDays || 0),
+      base_salary_or_rate: Number(r.baseSalaryOrRate || 0),
+      salary_by_days: Number(r.salaryByDays || 0),
+      overtime_hours: Number(r.overtimeHours || 0),
+      overtime_pay: Number(r.overtimePay || 0),
+      allowances: Number(r.allowances || 0),
+      bonuses: Number(r.bonuses || 0),
+      total_income: Number(r.totalIncome || 0),
+      insurance_deduction: Number(r.insuranceDeduction || 0),
+      tax_deduction: Number(r.taxDeduction || 0),
+      advance_payment: Number(r.advancePayment || 0),
+      total_deductions: Number(r.totalDeductions || 0),
+      net_salary: Number(r.netSalary || 0),
+      payment_method: String(r.paymentMethod || 'BANK'),
+      bank_account: String(r.bankAccount || ''),
+      bank_name: String(r.bankName || ''),
+      payment_status: String(r.paymentStatus || 'PENDING'),
+      notes: String(r.notes || ''),
+      payroll_data: r,
+      updated_at: new Date().toISOString(),
+    }));
+
+    const { error } = await client.from('payroll_records').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('Sync payroll_records failed:', error);
+      return { success: false, count: 0, message: error.message, error: error.message };
+    }
+    return { success: true, count: payload.length, message: `Đã lưu ${payload.length} dòng bảng lương lên Supabase.` };
+  } catch (e: any) {
+    return { success: false, count: 0, message: e.message || String(e), error: e.message };
+  }
+};
+
+/**
+ * Tải danh sách Bản Lương từ Supabase (Sheet: payroll_records)
+ */
+export const loadPayrollRecordsFromSupabase = async (
+  periodCode?: string
+): Promise<PayrollRecord[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client.from('payroll_records').select('*');
+    if (periodCode) {
+      query = query.eq('period_code', periodCode);
+    }
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) return null;
+
+    return data.map((d: any) => ({
+      id: d.id,
+      periodType: d.period_type || 'MONTH',
+      periodCode: d.period_code,
+      workerType: d.worker_type || 'PERMANENT',
+      workerId: d.worker_id,
+      workerCode: d.worker_code,
+      workerName: d.worker_name,
+      departmentOrProject: d.department_or_project || '',
+      standardWorkDays: Number(d.standard_work_days || 26),
+      actualWorkDays: Number(d.actual_work_days || 0),
+      baseSalaryOrRate: Number(d.base_salary_or_rate || 0),
+      salaryByDays: Number(d.salary_by_days || 0),
+      overtimeHours: Number(d.overtime_hours || 0),
+      overtimePay: Number(d.overtime_pay || 0),
+      allowances: Number(d.allowances || 0),
+      bonuses: Number(d.bonuses || 0),
+      totalIncome: Number(d.total_income || 0),
+      insuranceDeduction: Number(d.insurance_deduction || 0),
+      taxDeduction: Number(d.tax_deduction || 0),
+      advancePayment: Number(d.advance_payment || 0),
+      totalDeductions: Number(d.total_deductions || 0),
+      netSalary: Number(d.net_salary || 0),
+      paymentMethod: d.payment_method || 'BANK',
+      bankAccount: d.bank_account || '',
+      bankName: d.bank_name || '',
+      paymentStatus: d.payment_status || 'PENDING',
+      notes: d.notes || '',
+      payrollData: d.payroll_data,
+    }));
+  } catch {
+    return null;
+  }
+};
+export const fetchPayrollRecordsFromSupabase = loadPayrollRecordsFromSupabase;
+
+/**
+ * Đồng bộ danh sách Bản Chấm Công lên Supabase (Sheet: attendance_records)
+ */
+export const syncAttendanceRecordsToSupabase = async (
+  records: AttendanceRecord[]
+): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
+  if (records.length === 0) return { success: true, count: 0, message: 'Danh sách chấm công rỗng.' };
+
+  try {
+    const payload = records.map((r) => ({
+      id: String(r.id),
+      worker_type: String(r.workerType || 'PERMANENT'),
+      worker_code: String(r.workerCode),
+      worker_name: String(r.workerName),
+      project_code: String(r.projectCode || ''),
+      month: Number(r.month),
+      year: Number(r.year),
+      period_key: String(r.periodKey || `${r.month < 10 ? '0' + r.month : r.month}/${r.year}`),
+      total_work_days: Number(r.totalWorkDays || 0),
+      total_ot_hours: Number(r.totalOtHours || 0),
+      attendance_data: r.attendanceData || {},
+      updated_at: new Date().toISOString(),
+    }));
+
+    const { error } = await client.from('attendance_records').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('Sync attendance_records failed:', error);
+      return { success: false, count: 0, message: error.message, error: error.message };
+    }
+    return { success: true, count: payload.length, message: `Đã lưu ${payload.length} bản ghi chấm công lên Supabase.` };
+  } catch (e: any) {
+    return { success: false, count: 0, message: e.message || String(e), error: e.message };
+  }
+};
+
+/**
+ * Tải danh sách Bản Chấm Công từ Supabase (Sheet: attendance_records)
+ */
+export const loadAttendanceRecordsFromSupabase = async (
+  month?: number,
+  year?: number
+): Promise<AttendanceRecord[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client.from('attendance_records').select('*');
+    if (month && year) {
+      query = query.eq('month', month).eq('year', year);
+    }
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) return null;
+
+    return data.map((d: any) => ({
+      id: d.id,
+      workerType: d.worker_type || 'PERMANENT',
+      workerCode: d.worker_code,
+      workerName: d.worker_name,
+      projectCode: d.project_code || '',
+      month: Number(d.month),
+      year: Number(d.year),
+      periodKey: d.period_key,
+      totalWorkDays: Number(d.total_work_days || 0),
+      totalOtHours: Number(d.total_ot_hours || 0),
+      attendanceData: d.attendance_data,
+    }));
+  } catch {
+    return null;
+  }
+};
+export const fetchAttendanceRecordsFromSupabase = loadAttendanceRecordsFromSupabase;
+
+/**
+ * Thực hiện đồng bộ toàn bộ (Cấu hình + 3 nhóm nhân viên + Dự án + Tạm ứng + Bảng lương + Chấm công) một cách an toàn và chi tiết
  */
 export const syncAllDataToSupabase = async (
   config: CompanyConfig,
@@ -881,7 +1082,9 @@ export const syncAllDataToSupabase = async (
   seasonalWorkers: SeasonalWorker[],
   teamWorkers?: TeamWorker[],
   projects?: Project[],
-  salaryAdvances?: SalaryAdvance[]
+  salaryAdvances?: SalaryAdvance[],
+  payrollRecords?: PayrollRecord[],
+  attendanceRecords?: AttendanceRecord[]
 ): Promise<FullSyncResult> => {
   const cfgRes = await syncCompanyConfigToSupabase(config);
   const empRes = await syncEmployeesToSupabase(employees, config.periodCode);
@@ -902,6 +1105,16 @@ export const syncAllDataToSupabase = async (
     advRes = await syncSalaryAdvancesToSupabase(salaryAdvances, config.periodCode);
   }
 
+  let payRes = { success: true, count: 0, message: '' };
+  if (payrollRecords && payrollRecords.length > 0) {
+    payRes = await syncPayrollRecordsToSupabase(payrollRecords);
+  }
+
+  let attRes = { success: true, count: 0, message: '' };
+  if (attendanceRecords && attendanceRecords.length > 0) {
+    attRes = await syncAttendanceRecordsToSupabase(attendanceRecords);
+  }
+
   const allSuccess = cfgRes.success && empRes.success && seaRes.success;
 
   if (allSuccess) {
@@ -916,7 +1129,9 @@ export const syncAllDataToSupabase = async (
     seasonalWorkers: { ok: seaRes.success, count: seaRes.count, message: seaRes.message, error: seaRes.error },
     teamWorkers: { ok: teamRes.success, count: teamRes.count, message: teamRes.message },
     projects: { ok: projRes.success, count: projRes.count, message: projRes.message },
+    payrollRecords: { ok: payRes.success, count: payRes.count, message: payRes.message },
     salaryAdvances: { ok: advRes.success, count: advRes.count, message: advRes.message },
+    attendanceRecords: { ok: attRes.success, count: attRes.count, message: attRes.message },
   };
 };
 

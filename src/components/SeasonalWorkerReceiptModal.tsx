@@ -296,44 +296,117 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
             </div>
           </div>
 
-          {/* Bảng chấm công chi tiết theo chu kỳ (1 tuần hoặc 2 tuần) */}
-          {worker.weeklyTimesheet && worker.weeklyTimesheet.length > 0 && (
-            <div className="mb-3.5 bg-slate-50 border border-slate-200 rounded p-2.5 text-xs">
-              <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1.5 mb-2">
-                <span className="uppercase text-[11px] tracking-wide text-[#0f3d64]">
-                  Bảng chấm công chi tiết trong kỳ ({activePeriodText})
-                </span>
-                <span className="font-mono text-slate-600 text-[11px]">
-                  Tổng: <strong className="text-[#0f3d64]">{worker.actualWorkDays} công</strong> — Tăng ca:{' '}
-                  <strong className="text-amber-700">{worker.overtimeHours} giờ OT</strong>
-                </span>
-              </div>
-              <div
-                className={`grid gap-1 text-center ${
-                  worker.weeklyTimesheet.length > 7 ? 'grid-cols-5 sm:grid-cols-8' : 'grid-cols-7'
-                }`}
-              >
-                {worker.weeklyTimesheet.map((day, dIdx) => (
-                  <div key={`${day.dayOfWeek}_${dIdx}`} className="border border-slate-200 bg-white rounded p-1">
-                    <div
-                      className={`font-semibold text-[11px] ${
-                        day.dayOfWeek === 'CN' ? 'text-rose-600' : 'text-slate-800'
-                      }`}
-                    >
-                      {day.dayName || day.dayOfWeek}
-                    </div>
-                    <div className="text-[10px] text-slate-500 font-mono">{day.dateLabel || ''}</div>
-                    <div className="font-bold text-xs font-mono text-[#0f3d64] mt-0.5">
-                      {day.workUnits} công
-                    </div>
-                    <div className="text-[10px] text-amber-700 font-mono font-medium">
-                      {day.otHours > 0 ? `+${day.otHours}h` : '—'}
-                    </div>
+          {/* Bảng chấm công chi tiết theo chu kỳ (1 tuần, 2 tuần hoặc cả tháng) */}
+          {worker.weeklyTimesheet && worker.weeklyTimesheet.length > 0 && (() => {
+            const list = worker.weeklyTimesheet;
+            const isLongCycle = list.length > 16;
+
+            if (!isLongCycle) {
+              return (
+                <div className="mb-3.5 bg-slate-50 border border-slate-200 rounded p-2.5 text-xs">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1.5 mb-2">
+                    <span className="uppercase text-[11px] tracking-wide text-[#0f3d64]">
+                      Bảng chấm công chi tiết trong kỳ ({activePeriodText})
+                    </span>
+                    <span className="font-mono text-slate-600 text-[11px]">
+                      Tổng: <strong className="text-[#0f3d64]">{worker.actualWorkDays} công</strong> — Tăng ca:{' '}
+                      <strong className="text-amber-700">{worker.overtimeHours} giờ OT</strong>
+                    </span>
                   </div>
-                ))}
+                  <div className={`grid gap-1 text-center ${list.length > 7 ? 'grid-cols-7 sm:grid-cols-14' : 'grid-cols-7'}`}>
+                    {list.map((day, dIdx) => (
+                      <div key={`${day.dayOfWeek}_${dIdx}`} className="border border-slate-200 bg-white rounded p-1">
+                        <div className={`font-semibold text-[11px] ${day.dayOfWeek === 'CN' ? 'text-rose-600 font-bold' : 'text-slate-800'}`}>
+                          {day.dayOfWeek === 'CN' ? 'Chủ Nhật' : (day.dayName || day.dayOfWeek)}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">{day.dateLabel || ''}</div>
+                        <div className="font-bold text-xs font-mono text-[#0f3d64] mt-0.5">
+                          {day.workUnits} công
+                        </div>
+                        <div className="text-[10px] text-amber-700 font-mono font-medium">
+                          {day.otHours > 0 ? `+${day.otHours}h` : '—'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            const chunk1 = list.slice(0, 15);
+            const chunk2 = list.slice(15);
+            const c1Days = Math.round(chunk1.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+            const c1OT = chunk1.reduce((s, d) => s + (Number(d.otHours) || 0), 0);
+            const c2Days = Math.round(chunk2.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+            const c2OT = chunk2.reduce((s, d) => s + (Number(d.otHours) || 0), 0);
+
+            const renderGridRow = (chunk: typeof list, phaseLabel: string, cDays: number, cOT: number) => (
+              <div className="mb-2">
+                <div className="flex items-center justify-between bg-slate-100/90 border border-slate-300 border-b-0 px-2.5 py-1 text-[11px] font-semibold rounded-t">
+                  <span className="text-[#0f3d64] font-bold">{phaseLabel}</span>
+                  <span className="text-slate-700">
+                    Cộng: <strong className="text-[#0f3d64]">{cDays} công</strong> — Tăng ca: <strong className="text-amber-700">{cOT} giờ OT</strong>
+                  </span>
+                </div>
+                <div className="border border-slate-300 bg-white rounded-b overflow-hidden">
+                  <table className="w-full text-center border-collapse table-fixed text-[11px]">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        {chunk.map((day, idx) => (
+                          <th key={idx} className="p-1 border-r last:border-r-0 border-slate-200 font-bold">
+                            <div className={`${day.dayOfWeek === 'CN' ? 'text-rose-600' : 'text-slate-800'} text-[10px]`}>
+                              {day.dayOfWeek === 'CN' ? 'CN' : (day.dayName || day.dayOfWeek)}
+                            </div>
+                            <div className="text-[9.5px] text-slate-500 font-mono font-normal">{day.dateLabel}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {chunk.map((day, idx) => (
+                          <td key={idx} className="p-1 border-r last:border-r-0 border-slate-200">
+                            <div className={`font-bold font-mono text-[10.5px] ${day.workUnits > 0 ? 'text-[#0f3d64]' : 'text-slate-400'}`}>
+                              {day.workUnits} công
+                            </div>
+                            <div className={`text-[9.5px] font-mono font-medium ${day.otHours > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                              {day.otHours > 0 ? `+${day.otHours}h` : '—'}
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+
+            return (
+              <div className="mb-3.5 bg-slate-50 border border-slate-200 rounded p-2.5 text-xs">
+                <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1.5 mb-2">
+                  <span className="uppercase text-[11px] tracking-wide text-[#0f3d64]">
+                    Bảng chấm công chi tiết trong kỳ ({activePeriodText})
+                  </span>
+                  <span className="font-mono text-slate-600 text-[11px]">
+                    Tổng cả tháng: <strong className="text-[#0f3d64]">{worker.actualWorkDays} công</strong> — Tăng ca:{' '}
+                    <strong className="text-amber-700">{worker.overtimeHours} giờ OT</strong>
+                  </span>
+                </div>
+                {renderGridRow(
+                  chunk1,
+                  `✦ Đợt 1 (Nửa đầu tháng: Từ ngày ${chunk1[0]?.dateLabel} đến ${chunk1[chunk1.length - 1]?.dateLabel}):`,
+                  c1Days,
+                  c1OT
+                )}
+                {renderGridRow(
+                  chunk2,
+                  `✦ Đợt 2 (Nửa cuối tháng: Từ ngày ${chunk2[0]?.dateLabel} đến ${chunk2[chunk2.length - 1]?.dateLabel}):`,
+                  c2Days,
+                  c2OT
+                )}
+              </div>
+            );
+          })()}
 
           {/* Details Table */}
           <div className="border border-slate-300 rounded overflow-hidden mb-3">

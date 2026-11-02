@@ -163,7 +163,41 @@ CREATE TABLE IF NOT EXISTS public.projects (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 6. BẢNG BẢN LƯƠNG ỨNG / TẠM ỨNG LƯƠNG (Sheet: salary_advances)
+-- 6. BẢNG BẢN LƯƠNG ĐA CHU KỲ (Sheet: payroll_records - Tuần, Tháng, Quý, Năm)
+CREATE TABLE IF NOT EXISTS public.payroll_records (
+  id TEXT PRIMARY KEY,
+  period_type TEXT NOT NULL DEFAULT 'MONTH', -- 'WEEK', 'MONTH', 'QUARTER', 'YEAR'
+  period_code TEXT NOT NULL, -- 'Tuần 1 - 09/2026', '09/2026', 'Quý 3/2026', 'Năm 2026'
+  worker_type TEXT NOT NULL DEFAULT 'PERMANENT', -- 'PERMANENT', 'SEASONAL', 'TEAM'
+  worker_id TEXT NOT NULL,
+  worker_code TEXT NOT NULL,
+  worker_name TEXT NOT NULL,
+  department_or_project TEXT,
+  standard_work_days NUMERIC DEFAULT 26,
+  actual_work_days NUMERIC DEFAULT 0,
+  base_salary_or_rate NUMERIC DEFAULT 0,
+  salary_by_days NUMERIC DEFAULT 0,
+  overtime_hours NUMERIC DEFAULT 0,
+  overtime_pay NUMERIC DEFAULT 0,
+  allowances NUMERIC DEFAULT 0,
+  bonuses NUMERIC DEFAULT 0,
+  total_income NUMERIC DEFAULT 0,
+  insurance_deduction NUMERIC DEFAULT 0,
+  tax_deduction NUMERIC DEFAULT 0,
+  advance_payment NUMERIC DEFAULT 0,
+  total_deductions NUMERIC DEFAULT 0,
+  net_salary NUMERIC DEFAULT 0,
+  payment_method TEXT DEFAULT 'BANK',
+  bank_account TEXT,
+  bank_name TEXT,
+  payment_status TEXT DEFAULT 'PENDING',
+  notes TEXT,
+  payroll_data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 7. BẢNG BẢN LƯƠNG ỨNG / TẠM ỨNG LƯƠNG (Sheet: salary_advances)
 CREATE TABLE IF NOT EXISTS public.salary_advances (
   id TEXT PRIMARY KEY,
   advance_code TEXT NOT NULL UNIQUE,
@@ -185,7 +219,7 @@ CREATE TABLE IF NOT EXISTS public.salary_advances (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 7. BẢNG BẢN CHẤM CÔNG CHI TIẾT (Sheet: attendance_records)
+-- 8. BẢNG BẢN CHẤM CÔNG CHI TIẾT (Sheet: attendance_records)
 CREATE TABLE IF NOT EXISTS public.attendance_records (
   id TEXT PRIMARY KEY,
   worker_type TEXT NOT NULL DEFAULT 'PERMANENT', -- 'PERMANENT', 'SEASONAL', 'TEAM'
@@ -212,6 +246,8 @@ CREATE INDEX IF NOT EXISTS idx_team_code ON public.team_workers(code);
 CREATE INDEX IF NOT EXISTS idx_team_project ON public.team_workers(project);
 CREATE INDEX IF NOT EXISTS idx_projects_code ON public.projects(code);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects(status);
+CREATE INDEX IF NOT EXISTS idx_payroll_records_period ON public.payroll_records(period_code, period_type);
+CREATE INDEX IF NOT EXISTS idx_payroll_records_worker ON public.payroll_records(worker_code, worker_type);
 CREATE INDEX IF NOT EXISTS idx_advances_worker ON public.salary_advances(worker_code);
 CREATE INDEX IF NOT EXISTS idx_advances_period ON public.salary_advances(period_key);
 CREATE INDEX IF NOT EXISTS idx_attendance_worker ON public.attendance_records(worker_code, month, year);
@@ -222,6 +258,7 @@ ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seasonal_workers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.team_workers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payroll_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.salary_advances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
 
@@ -230,7 +267,7 @@ DO $$
 DECLARE
   tbl text;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['company_config', 'employees', 'seasonal_workers', 'team_workers', 'projects', 'salary_advances', 'attendance_records'])
+  FOR tbl IN SELECT unnest(ARRAY['company_config', 'employees', 'seasonal_workers', 'team_workers', 'projects', 'payroll_records', 'salary_advances', 'attendance_records'])
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS "Public access to %I" ON public.%I;', tbl, tbl);
     EXECUTE format('CREATE POLICY "Public access to %I" ON public.%I FOR ALL TO anon USING (true) WITH CHECK (true);', tbl, tbl);

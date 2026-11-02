@@ -1,5 +1,6 @@
-import { SeasonalWorker, CompanyConfig } from '../types';
+import { SeasonalWorker, CompanyConfig, WeeklyDayAttendance } from '../types';
 import { formatNumberOnly, numberToVietnameseWords } from './numberToVietnameseWords';
+import { getDayOfWeekInfo } from '../data/mockSeasonalWorkers';
 
 /**
  * Sinh mã HTML hoàn chỉnh chuẩn in A4 cho Phiếu thanh toán thợ thời vụ (Mẫu 03-LĐTL)
@@ -21,43 +22,121 @@ export function generateSeasonalWorkerReceiptHTML(
       ? `https://img.vietqr.io/image/${encodeURIComponent(worker.bankName)}-${encodeURIComponent(worker.bankAccount)}-compact.png?amount=${worker.netSalary}&addInfo=${encodeURIComponent(`Thanh toan luong ${worker.code} ${config.periodCode || ''}`)}&accountName=${encodeURIComponent(worker.fullName)}`
       : null;
 
-  // Xây dựng bảng chấm công tuần / đợt chi tiết (nếu có)
-  let timesheetHtml = '';
-  if (worker.weeklyTimesheet && worker.weeklyTimesheet.length > 0) {
-    const daysTh = worker.weeklyTimesheet
-      .map(
-        (d) => `
-        <th style="padding: 5px 3px; text-align: center; border: 1px solid #1e293b; background-color: #f1f5f9; font-size: 8.5pt; font-weight: bold;">
-          <div style="color: ${d.dayOfWeek === 'CN' ? '#b91c1c' : '#0f172a'};">${d.dayName || d.dayOfWeek}</div>
-          <div style="color: #475569; font-size: 7.5pt; font-weight: 600;">${d.dateLabel || ''}</div>
-        </th>`
-      )
-      .join('');
+  // Lấy hoặc tự động khởi tạo danh sách chấm công các ngày trong kỳ
+  let timesheetList: WeeklyDayAttendance[] = worker.weeklyTimesheet || [];
+  if (timesheetList.length === 0 && worker.monthlyAttendance) {
+    const yr = worker.attendanceYear || config.year || 2026;
+    const mo = worker.attendanceMonth || config.month || 10;
+    const mStr = String(mo).padStart(2, '0');
+    const monthKey = `${yr}-${mStr}`;
+    const monthRecord = worker.monthlyAttendance[monthKey] || Object.values(worker.monthlyAttendance)[0];
+    if (monthRecord && monthRecord.days) {
+      const daysInMo = new Date(yr, mo, 0).getDate();
+      const autoList: WeeklyDayAttendance[] = [];
+      for (let d = 1; d <= daysInMo; d++) {
+        const dStr = String(d).padStart(2, '0');
+        const dateLabel = `${dStr}/${mStr}`;
+        const dInfo = getDayOfWeekInfo(dateLabel, yr, mo);
+        const detail = monthRecord.days[d];
+        autoList.push({
+          dayOfWeek: dInfo.dayOfWeek,
+          dayName: dInfo.dayName,
+          dateLabel,
+          workUnits: detail ? Number(detail.workUnits || 0) : 0,
+          otHours: detail ? Number(detail.otHours || 0) : 0,
+          shiftType: detail?.shiftType || 'DAY',
+        });
+      }
+      timesheetList = autoList;
+    }
+  }
 
-    const daysTd = worker.weeklyTimesheet
-      .map(
-        (d) => `
-        <td style="padding: 6px 3px; text-align: center; border: 1px solid #1e293b; font-size: 8.5pt; background-color: #ffffff;">
-          <div style="font-weight: 800; color: #0f3d64;">${d.workUnits} công</div>
-          <div style="font-size: 7.5pt; font-weight: 700; color: #9a3412;">${d.otHours > 0 ? `+${d.otHours}h OT` : '—'}</div>
-        </td>`
-      )
-      .join('');
+  // Xây dựng bảng chấm công tuần / đợt chi tiết
+  // Khi nhân sự tính lương tháng (28 - 31 ngày), chia thành 2 đợt (Nửa đầu tháng: ngày 1-15, Nửa cuối tháng: ngày 16-hết tháng)
+  // để khi in ra PDF trình bày rõ ràng, xuống dòng thoáng mắt, không bị co dúm hay tràn lề phải
+  let timesheetHtml = '';
+  if (timesheetList && timesheetList.length > 0) {
+    const isLongCycle = timesheetList.length > 16;
+
+    const renderChunkTable = (
+      chunk: WeeklyDayAttendance[],
+      phaseLabel?: string,
+      phaseStats?: string
+    ) => {
+      const daysTh = chunk
+        .map(
+          (d) => `
+          <th style="padding: 4px 2px; text-align: center; border: 1px solid #1e293b; background-color: #f1f5f9; font-size: 7.5pt; font-weight: bold; width: ${(100 / chunk.length).toFixed(2)}%;">
+            <div style="color: ${d.dayOfWeek === 'CN' ? '#b91c1c' : '#0f172a'}; font-weight: 800; white-space: nowrap;">${d.dayOfWeek === 'CN' ? 'Chủ Nhật' : (d.dayName || d.dayOfWeek)}</div>
+            <div style="color: #475569; font-size: 7pt; font-weight: 600; white-space: nowrap;">${d.dateLabel || ''}</div>
+          </th>`
+        )
+        .join('');
+
+      const daysTd = chunk
+        .map(
+          (d) => `
+          <td style="padding: 5px 2px; text-align: center; border: 1px solid #1e293b; font-size: 7.5pt; background-color: #ffffff;">
+            <div style="font-weight: 800; color: ${d.workUnits > 0 ? '#0f3d64' : '#94a3b8'}; white-space: nowrap;">${d.workUnits} công</div>
+            <div style="font-size: 7pt; font-weight: 700; color: ${d.otHours > 0 ? '#c2410c' : '#94a3b8'}; white-space: nowrap;">${d.otHours > 0 ? `+${d.otHours}h OT` : '—'}</div>
+          </td>`
+        )
+        .join('');
+
+      return `
+        <div style="margin-bottom: 5px;">
+          ${
+            phaseLabel
+              ? `
+          <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8fafc; border: 1px solid #1e293b; border-bottom: none; padding: 2.5px 8px;">
+            <span style="font-size: 8pt; font-weight: 800; color: #0f3d64;">${phaseLabel}</span>
+            <span style="font-size: 7.5pt; font-weight: 700; color: #0f172a;">${phaseStats}</span>
+          </div>`
+              : ''
+          }
+          <table style="width: 100%; border-collapse: collapse; margin: 0; border: 1px solid #1e293b; table-layout: fixed;">
+            <thead><tr>${daysTh}</tr></thead>
+            <tbody><tr>${daysTd}</tr></tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    let tablesHtml = '';
+    if (isLongCycle) {
+      // Tách 2 đợt: Nửa đầu tháng (01 - 15) và Nửa cuối tháng (16 - hết tháng)
+      const chunk1 = timesheetList.slice(0, 15);
+      const chunk2 = timesheetList.slice(15);
+
+      const c1Days = Math.round(chunk1.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+      const c1OT = chunk1.reduce((s, d) => s + (Number(d.otHours) || 0), 0);
+      const c2Days = Math.round(chunk2.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+      const c2OT = chunk2.reduce((s, d) => s + (Number(d.otHours) || 0), 0);
+
+      const c1Label = `✦ Đợt 1 (Nửa đầu tháng: Từ ngày ${chunk1[0]?.dateLabel} đến ${chunk1[chunk1.length - 1]?.dateLabel}):`;
+      const c1Stats = `Cộng đợt 1: <strong style="color: #0f3d64;">${c1Days} công</strong> — Tăng ca: <strong style="color: #c2410c;">${c1OT} giờ OT</strong>`;
+      const c2Label = `✦ Đợt 2 (Nửa cuối tháng: Từ ngày ${chunk2[0]?.dateLabel} đến ${chunk2[chunk2.length - 1]?.dateLabel}):`;
+      const c2Stats = `Cộng đợt 2: <strong style="color: #0f3d64;">${c2Days} công</strong> — Tăng ca: <strong style="color: #c2410c;">${c2OT} giờ OT</strong>`;
+
+      tablesHtml = `
+        ${renderChunkTable(chunk1, c1Label, c1Stats)}
+        ${renderChunkTable(chunk2, c2Label, c2Stats)}
+      `;
+    } else {
+      tablesHtml = renderChunkTable(timesheetList);
+    }
 
     timesheetHtml = `
-      <div style="margin: 10px 0 12px 0;">
+      <div style="margin: 8px 0 10px 0;">
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #0f3d64; padding-bottom: 3px; margin-bottom: 4px;">
-          <span style="font-weight: 800; font-size: 9pt; color: #0f3d64; text-transform: uppercase;">
+          <span style="font-weight: 800; font-size: 8.5pt; color: #0f3d64; text-transform: uppercase;">
             BẢNG CHẤM CÔNG CHI TIẾT TRONG KỲ (${periodText})
           </span>
-          <span style="font-size: 8.5pt; color: #0f172a; font-weight: bold;">
+          <span style="font-size: 8pt; color: #0f172a; font-weight: bold;">
             Tổng: <strong style="color: #0f3d64;">${worker.actualWorkDays} công</strong> — Tăng ca: <strong style="color: #c2410c;">${worker.overtimeHours} giờ OT</strong>
           </span>
         </div>
-        <table style="width: 100%; border-collapse: collapse; margin: 0; border: 1px solid #1e293b;">
-          <thead><tr>${daysTh}</tr></thead>
-          <tbody><tr>${daysTd}</tr></tbody>
-        </table>
+        ${tablesHtml}
       </div>
     `;
   }

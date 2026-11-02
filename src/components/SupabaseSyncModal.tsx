@@ -38,7 +38,16 @@ import {
   ConnectionHealth,
   FullSyncResult,
 } from '../services/supabaseService';
-import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, Project, SalaryAdvance } from '../types';
+import {
+  CompanyConfig,
+  Employee,
+  SeasonalWorker,
+  TeamWorker,
+  Project,
+  SalaryAdvance,
+  PayrollRecord,
+  AttendanceRecord,
+} from '../types';
 
 interface SupabaseSyncModalProps {
   isOpen: boolean;
@@ -188,18 +197,141 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     setIsSyncing(true);
     setSaveSuccessMsg(null);
     try {
+      // Tạo danh sách bản ghi bảng lương đồng bộ lên payroll_records
+      const payrollPayload: PayrollRecord[] = [
+        ...employees.map((e) => ({
+          id: `PR-EMP-${config.periodCode.replace('/', '_')}-${e.code}`,
+          periodType: 'MONTH' as const,
+          periodCode: config.periodCode,
+          workerType: 'PERMANENT' as const,
+          workerId: e.id,
+          workerCode: e.code,
+          workerName: e.fullName,
+          departmentOrProject: e.department,
+          standardWorkDays: e.standardWorkDays || 26,
+          actualWorkDays: e.actualWorkDays || 0,
+          baseSalaryOrRate: e.baseSalary || 0,
+          salaryByDays: e.salaryByActualDays || 0,
+          overtimeHours: e.overtimeHours || 0,
+          overtimePay: e.overtimePay || 0,
+          allowances: (e.responsibilityAllowance || 0) + (e.projectAllowance || 0) + (e.mealAllowance || 0) + (e.phoneTravelAllowance || 0),
+          bonuses: e.kpiBonus || 0,
+          totalIncome: e.totalIncome || 0,
+          insuranceDeduction: e.totalInsurance || 0,
+          taxDeduction: e.personalIncomeTax || 0,
+          advancePayment: e.advancePayment || 0,
+          totalDeductions: e.totalDeductions || 0,
+          netSalary: e.netSalary || 0,
+          bankAccount: e.bankAccount,
+          bankName: e.bankName,
+        })),
+        ...seasonalWorkers.map((w) => ({
+          id: `PR-SEA-${config.periodCode.replace('/', '_')}-${w.code}`,
+          periodType: 'MONTH' as const,
+          periodCode: config.periodCode,
+          workerType: 'SEASONAL' as const,
+          workerId: w.id,
+          workerCode: w.code,
+          workerName: w.fullName,
+          departmentOrProject: w.project || w.trade,
+          standardWorkDays: 26,
+          actualWorkDays: w.actualWorkDays || 0,
+          baseSalaryOrRate: w.dailyRate || 0,
+          salaryByDays: w.salaryByDays || 0,
+          overtimeHours: w.overtimeHours || 0,
+          overtimePay: w.overtimePay || 0,
+          allowances: (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0),
+          bonuses: w.otherBonus || 0,
+          totalIncome: w.totalIncome || 0,
+          taxDeduction: w.personalIncomeTax || 0,
+          advancePayment: w.advancePayment || 0,
+          totalDeductions: w.totalDeductions || 0,
+          netSalary: w.netSalary || 0,
+          bankAccount: w.bankAccount,
+          bankName: w.bankName,
+        })),
+        ...teamWorkers.map((t) => ({
+          id: `PR-TEAM-${config.periodCode.replace('/', '_')}-${t.code}`,
+          periodType: 'MONTH' as const,
+          periodCode: config.periodCode,
+          workerType: 'TEAM' as const,
+          workerId: t.id,
+          workerCode: t.code,
+          workerName: t.teamName,
+          departmentOrProject: t.project || 'Công trình',
+          actualWorkDays: t.actualWorkDays || 0,
+          baseSalaryOrRate: t.unitRate || 0,
+          salaryByDays: t.salaryByDays || 0,
+          overtimeHours: t.overtimeHours || 0,
+          overtimePay: t.overtimePay || 0,
+          allowances: t.mealAllowance || 0,
+          bonuses: t.otherBonus || 0,
+          totalIncome: t.totalIncome || 0,
+          advancePayment: t.advancePayment || 0,
+          totalDeductions: t.totalDeductions || 0,
+          netSalary: t.netSalary || 0,
+          bankAccount: t.bankAccount,
+          bankName: t.bankName,
+        })),
+      ];
+
+      // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records
+      const attendancePayload: AttendanceRecord[] = [
+        ...employees.map((e) => ({
+          id: `ATT-EMP-${config.year}-${config.month}-${e.code}`,
+          workerType: 'PERMANENT' as const,
+          workerCode: e.code,
+          workerName: e.fullName,
+          projectCode: e.department,
+          month: config.month || 9,
+          year: config.year || 2026,
+          periodKey: config.periodCode,
+          totalWorkDays: e.actualWorkDays || 0,
+          totalOtHours: e.overtimeHours || 0,
+          attendanceData: e.monthlyAttendance || {},
+        })),
+        ...seasonalWorkers.map((w) => ({
+          id: `ATT-SEA-${config.year}-${config.month}-${w.code}`,
+          workerType: 'SEASONAL' as const,
+          workerCode: w.code,
+          workerName: w.fullName,
+          projectCode: w.project,
+          month: config.month || 9,
+          year: config.year || 2026,
+          periodKey: config.periodCode,
+          totalWorkDays: w.actualWorkDays || 0,
+          totalOtHours: w.overtimeHours || 0,
+          attendanceData: w.dailyAttendance || {},
+        })),
+        ...teamWorkers.map((t) => ({
+          id: `ATT-TEAM-${config.year}-${config.month}-${t.code}`,
+          workerType: 'TEAM' as const,
+          workerCode: t.code,
+          workerName: t.teamName,
+          projectCode: t.project,
+          month: config.month || 9,
+          year: config.year || 2026,
+          periodKey: config.periodCode,
+          totalWorkDays: t.actualWorkDays || 0,
+          totalOtHours: t.overtimeHours || 0,
+          attendanceData: t.monthlyAttendance || {},
+        })),
+      ];
+
       const report = await syncAllDataToSupabase(
         config,
         employees,
         seasonalWorkers,
         teamWorkers,
         projects,
-        salaryAdvances
+        salaryAdvances,
+        payrollPayload,
+        attendancePayload
       );
       setSyncReport(report);
       setLastSynced(getLastSyncedTime());
 
-      // Cập nhật lại số đếm trong health
+      // Cập nhật lại số đếm trong health cho cả 8 bảng
       if (healthResult) {
         setHealthResult({
           ...healthResult,
@@ -209,7 +341,9 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             seasonal_workers: { exists: true, count: seasonalWorkers.length },
             team_workers: { exists: true, count: teamWorkers.length },
             projects: { exists: true, count: projects.length },
+            payroll_records: { exists: true, count: payrollPayload.length },
             salary_advances: { exists: true, count: salaryAdvances.length },
+            attendance_records: { exists: true, count: attendancePayload.length },
           },
         });
       }
@@ -276,35 +410,46 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
   const copySqlSchema = () => {
     const sqlContent = `-- ========================================================================
--- PNCONS M&E - SUPABASE SCHEMA CHO QUẢN LÝ LƯƠNG & CHẤM CÔNG
--- Chạy đoạn mã này trong SQL Editor của Supabase để tạo đủ 3 bảng & phân quyền
+-- CÔNG TY TNHH XÂY DỰNG - CƠ ĐIỆN PHÚC NGUYÊN (PNCONS)
+-- HỆ THỐNG SUPABASE SCHEMA TOÀN DIỆN CHO 8 BẢNG / SHEETS RIÊNG BIỆT
+-- 1. company_config   : Cấu hình thông tin công ty Phúc Nguyên
+-- 2. employees        : Danh sách nhân viên chính thức
+-- 3. seasonal_workers : Danh sách nhân lực thời vụ
+-- 4. team_workers     : Danh sách nhân viên tổ đội
+-- 5. projects         : Danh sách dự án & công trình
+-- 6. payroll_records  : Bản lương đa chu kỳ (Tuần, Tháng, Quý, Năm)
+-- 7. salary_advances  : Bản lương ứng theo nhân viên
+-- 8. attendance_records: Bản chấm công chi tiết 3 khối nhân sự
 -- ========================================================================
 
--- 1. Bảng Cấu hình Công ty
+-- 1. BẢNG THÔNG TIN CÔNG TY PHÚC NGUYÊN
 CREATE TABLE IF NOT EXISTS public.company_config (
   id TEXT PRIMARY KEY DEFAULT 'default',
-  name TEXT NOT NULL DEFAULT 'CÔNG TY TNHH XÂY DỰNG - CƠ ĐIỆN PHÚC NGUYÊN',
-  address TEXT,
-  tax_code TEXT,
-  phone TEXT,
-  email TEXT,
-  website TEXT,
-  period TEXT,
-  period_code TEXT,
-  payment_date TEXT,
+  name TEXT NOT NULL DEFAULT 'CÔNG TY TNHH XÂY DỰNG- CƠ ĐIỆN PHÚC NGUYÊN',
+  address TEXT DEFAULT '226/22/18 Đường Số 8, KP3, Linh Xuân, Tp. Hồ Chí Minh',
+  tax_code TEXT DEFAULT '0315486790',
+  phone TEXT DEFAULT '(028) 3896 1234',
+  email TEXT DEFAULT 'pncons.management@gmail.com',
+  director_name TEXT DEFAULT 'Nguyễn Văn Phúc',
+  bank_account TEXT DEFAULT '1903456789012',
+  bank_name TEXT DEFAULT 'Techcombank - CN Linh Trung',
+  period TEXT DEFAULT 'Kỳ lương tháng 09 năm 2026',
+  period_code TEXT DEFAULT '09/2026',
+  payment_date TEXT DEFAULT '05/10/2026',
   standard_work_days NUMERIC DEFAULT 26,
+  form_number TEXT DEFAULT 'Mẫu số: 02-LĐTL',
   zalo_oa JSONB DEFAULT '{}'::jsonb,
   config_json JSONB DEFAULT '{}'::jsonb,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 2. Bảng Nhân viên chính thức
+-- 2. BẢNG NHÂN VIÊN CHÍNH THỨC
 CREATE TABLE IF NOT EXISTS public.employees (
   id TEXT PRIMARY KEY,
-  code TEXT NOT NULL,
+  code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
+  title TEXT,
   department TEXT,
-  position TEXT,
   phone TEXT,
   email TEXT,
   tax_code TEXT,
@@ -313,69 +458,214 @@ CREATE TABLE IF NOT EXISTS public.employees (
   bank_name TEXT,
   join_date TEXT,
   status TEXT DEFAULT 'ACTIVE',
+  contract_type TEXT,
+  salary_type TEXT DEFAULT 'MONTHLY',
   base_salary NUMERIC DEFAULT 0,
   insurance_salary NUMERIC DEFAULT 0,
   standard_work_days NUMERIC DEFAULT 26,
   actual_work_days NUMERIC DEFAULT 0,
   overtime_hours NUMERIC DEFAULT 0,
+  overtime_pay NUMERIC DEFAULT 0,
+  responsibility_allowance NUMERIC DEFAULT 0,
+  project_allowance NUMERIC DEFAULT 0,
+  meal_allowance NUMERIC DEFAULT 0,
+  phone_travel_allowance NUMERIC DEFAULT 0,
+  kpi_bonus NUMERIC DEFAULT 0,
+  total_income NUMERIC DEFAULT 0,
   advance_payment NUMERIC DEFAULT 0,
+  total_insurance NUMERIC DEFAULT 0,
+  union_fee NUMERIC DEFAULT 0,
   net_salary NUMERIC DEFAULT 0,
   period_code TEXT DEFAULT '09/2026',
+  sort_order INTEGER DEFAULT 0,
   employee_data JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 3. Bảng Công nhân thời vụ công trình
+-- 3. BẢNG NHÂN LỰC THỜI VỤ
 CREATE TABLE IF NOT EXISTS public.seasonal_workers (
   id TEXT PRIMARY KEY,
-  code TEXT NOT NULL,
+  code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   trade TEXT,
   skill_level TEXT,
   project TEXT,
-  team TEXT,
+  team_name TEXT,
   phone TEXT,
   id_card TEXT,
   bank_account TEXT,
   bank_name TEXT,
+  payment_method TEXT DEFAULT 'BANK',
   daily_rate NUMERIC DEFAULT 0,
   actual_work_days NUMERIC DEFAULT 0,
   overtime_hours NUMERIC DEFAULT 0,
+  overtime_pay NUMERIC DEFAULT 0,
+  meal_allowance NUMERIC DEFAULT 0,
+  travel_safety_allowance NUMERIC DEFAULT 0,
+  other_bonus NUMERIC DEFAULT 0,
+  total_income NUMERIC DEFAULT 0,
   advance_payment NUMERIC DEFAULT 0,
-  has_tax_commitment BOOLEAN DEFAULT TRUE,
-  payment_method TEXT DEFAULT 'BANK',
-  payroll_cycle_type TEXT DEFAULT '1_WEEK',
-  status TEXT DEFAULT 'ACTIVE',
+  personal_income_tax NUMERIC DEFAULT 0,
+  total_deductions NUMERIC DEFAULT 0,
   net_salary NUMERIC DEFAULT 0,
+  status TEXT DEFAULT 'ACTIVE',
+  payroll_cycle_type TEXT DEFAULT '1_WEEK',
   period_code TEXT DEFAULT '09/2026',
+  sort_order INTEGER DEFAULT 0,
   worker_data JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- Bật Row Level Security (RLS) & Cho phép truy cập dữ liệu qua Anon Key
+-- 4. BẢNG NHÂN VIÊN TỔ ĐỘI
+CREATE TABLE IF NOT EXISTS public.team_workers (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  team_name TEXT NOT NULL,
+  leader_name TEXT NOT NULL,
+  phone TEXT,
+  id_card TEXT,
+  bank_account TEXT,
+  bank_name TEXT,
+  project TEXT,
+  worker_count INTEGER DEFAULT 1,
+  payment_method TEXT DEFAULT 'BANK',
+  rate_type TEXT DEFAULT 'DAILY',
+  unit_rate NUMERIC DEFAULT 0,
+  actual_work_days NUMERIC DEFAULT 0,
+  overtime_hours NUMERIC DEFAULT 0,
+  overtime_pay NUMERIC DEFAULT 0,
+  salary_by_days NUMERIC DEFAULT 0,
+  meal_allowance NUMERIC DEFAULT 0,
+  other_bonus NUMERIC DEFAULT 0,
+  total_income NUMERIC DEFAULT 0,
+  advance_payment NUMERIC DEFAULT 0,
+  total_deductions NUMERIC DEFAULT 0,
+  net_salary NUMERIC DEFAULT 0,
+  status TEXT DEFAULT 'ACTIVE',
+  period_key TEXT DEFAULT '09/2026',
+  notes TEXT,
+  sort_order INTEGER DEFAULT 0,
+  team_data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 5. BẢNG DANH SÁCH DỰ ÁN
+CREATE TABLE IF NOT EXISTS public.projects (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  location TEXT,
+  investor TEXT,
+  contract_value NUMERIC DEFAULT 0,
+  labor_budget NUMERIC DEFAULT 0,
+  actual_labor_cost NUMERIC DEFAULT 0,
+  start_date TEXT,
+  end_date TEXT,
+  manager_name TEXT,
+  status TEXT DEFAULT 'IN_PROGRESS',
+  description TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 6. BẢNG BẢN LƯƠNG ĐA CHU KỲ (Tuần, Tháng, Quý, Năm)
+CREATE TABLE IF NOT EXISTS public.payroll_records (
+  id TEXT PRIMARY KEY,
+  period_type TEXT NOT NULL DEFAULT 'MONTH',
+  period_code TEXT NOT NULL,
+  worker_type TEXT NOT NULL DEFAULT 'PERMANENT',
+  worker_id TEXT NOT NULL,
+  worker_code TEXT NOT NULL,
+  worker_name TEXT NOT NULL,
+  department_or_project TEXT,
+  standard_work_days NUMERIC DEFAULT 26,
+  actual_work_days NUMERIC DEFAULT 0,
+  base_salary_or_rate NUMERIC DEFAULT 0,
+  salary_by_days NUMERIC DEFAULT 0,
+  overtime_hours NUMERIC DEFAULT 0,
+  overtime_pay NUMERIC DEFAULT 0,
+  allowances NUMERIC DEFAULT 0,
+  bonuses NUMERIC DEFAULT 0,
+  total_income NUMERIC DEFAULT 0,
+  insurance_deduction NUMERIC DEFAULT 0,
+  tax_deduction NUMERIC DEFAULT 0,
+  advance_payment NUMERIC DEFAULT 0,
+  total_deductions NUMERIC DEFAULT 0,
+  net_salary NUMERIC DEFAULT 0,
+  payment_method TEXT DEFAULT 'BANK',
+  bank_account TEXT,
+  bank_name TEXT,
+  payment_status TEXT DEFAULT 'PENDING',
+  notes TEXT,
+  payroll_data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 7. BẢNG BẢN LƯƠNG ỨNG / TẠM ỨNG
+CREATE TABLE IF NOT EXISTS public.salary_advances (
+  id TEXT PRIMARY KEY,
+  advance_code TEXT NOT NULL UNIQUE,
+  target_type TEXT NOT NULL DEFAULT 'PERMANENT',
+  worker_id TEXT NOT NULL,
+  worker_code TEXT NOT NULL,
+  worker_name TEXT NOT NULL,
+  department_or_project TEXT,
+  amount NUMERIC DEFAULT 0,
+  request_date TEXT NOT NULL,
+  payment_date TEXT,
+  reason TEXT,
+  payment_method TEXT DEFAULT 'BANK',
+  status TEXT DEFAULT 'APPROVED',
+  approved_by TEXT,
+  period_key TEXT NOT NULL DEFAULT '09/2026',
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 8. BẢNG BẢN CHẤM CÔNG CHI TIẾT
+CREATE TABLE IF NOT EXISTS public.attendance_records (
+  id TEXT PRIMARY KEY,
+  worker_type TEXT NOT NULL DEFAULT 'PERMANENT',
+  worker_code TEXT NOT NULL,
+  worker_name TEXT,
+  project_code TEXT,
+  month INTEGER NOT NULL,
+  year INTEGER NOT NULL,
+  period_key TEXT,
+  total_work_days NUMERIC DEFAULT 0,
+  total_ot_hours NUMERIC DEFAULT 0,
+  attendance_data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT unique_worker_month_year UNIQUE (worker_code, month, year, period_key)
+);
+
+-- KÍCH HOẠT ROW LEVEL SECURITY (RLS) VÀ CHÍNH SÁCH TRUY CẬP
 ALTER TABLE public.company_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seasonal_workers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.team_workers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payroll_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.salary_advances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public access to company_config" ON public.company_config;
-CREATE POLICY "Public access to company_config" ON public.company_config FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Public access to employees" ON public.employees;
-CREATE POLICY "Public access to employees" ON public.employees FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Public access to seasonal_workers" ON public.seasonal_workers;
-CREATE POLICY "Public access to seasonal_workers" ON public.seasonal_workers FOR ALL USING (true) WITH CHECK (true);
-
--- BẬT SUPABASE REALTIME ĐỒNG BỘ TỨC THÌ ĐA MÁY TÍNH & ĐA TRÌNH DUYỆT
-ALTER TABLE public.company_config REPLICA IDENTITY FULL;
-ALTER TABLE public.employees REPLICA IDENTITY FULL;
-ALTER TABLE public.seasonal_workers REPLICA IDENTITY FULL;
-
-ALTER PUBLICATION supabase_realtime ADD TABLE public.company_config;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.employees;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['company_config', 'employees', 'seasonal_workers', 'team_workers', 'projects', 'payroll_records', 'salary_advances', 'attendance_records'])
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Public access to %I" ON public.%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Public access to %I" ON public.%I FOR ALL TO anon USING (true) WITH CHECK (true);', tbl, tbl);
+  END LOOP;
+END
+$$;`;
 
     navigator.clipboard.writeText(sqlContent);
     setCopiedSql(true);
@@ -554,14 +844,14 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
               <div className="flex items-center justify-between">
                 <span className="font-bold text-xs uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                   <Server className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Trạng thái 3 bảng dữ liệu trên Supabase:</span>
+                  <span>Trạng thái 8 bảng dữ liệu trên Supabase Cloud:</span>
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  {healthResult.connected ? '✅ Cả 3 bảng đều đã sẵn sàng' : '⚠️ Thiếu bảng'}
+                <span className="text-[11px] font-bold text-slate-600">
+                  {healthResult.connected ? '✅ Đã kết nối Supabase Cloud' : '⚠️ Cần kiểm tra'}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                 {/* 1. company_config */}
                 <div
                   className={`p-2.5 rounded-lg border text-xs ${
@@ -571,17 +861,18 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
                   }`}
                 >
                   <div className="flex items-center justify-between font-bold">
-                    <span>1. company_config</span>
+                    <span className="truncate">1. company_config</span>
                     {healthResult.tables.company_config.exists ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     ) : (
-                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                     )}
                   </div>
-                  <div className="text-[11px] mt-1 text-slate-600">
+                  <div className="text-[10px] text-slate-500 font-medium">Cấu hình Cty Phúc Nguyên</div>
+                  <div className="text-[11px] mt-1 font-semibold">
                     {healthResult.tables.company_config.exists
                       ? `Đang có: ${healthResult.tables.company_config.count} bản ghi`
-                      : 'Chưa có bảng! Cần chạy SQL'}
+                      : 'Chưa có bảng'}
                   </div>
                 </div>
 
@@ -594,17 +885,18 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
                   }`}
                 >
                   <div className="flex items-center justify-between font-bold">
-                    <span>2. employees</span>
+                    <span className="truncate">2. employees</span>
                     {healthResult.tables.employees.exists ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     ) : (
-                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                     )}
                   </div>
-                  <div className="text-[11px] mt-1 text-slate-600">
+                  <div className="text-[10px] text-slate-500 font-medium">Nhân viên chính thức</div>
+                  <div className="text-[11px] mt-1 font-semibold">
                     {healthResult.tables.employees.exists
                       ? `Đang có: ${healthResult.tables.employees.count} nhân viên`
-                      : 'Chưa có bảng! Cần chạy SQL'}
+                      : 'Chưa có bảng'}
                   </div>
                 </div>
 
@@ -617,17 +909,138 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
                   }`}
                 >
                   <div className="flex items-center justify-between font-bold">
-                    <span>3. seasonal_workers</span>
+                    <span className="truncate">3. seasonal_workers</span>
                     {healthResult.tables.seasonal_workers.exists ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     ) : (
-                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                     )}
                   </div>
-                  <div className="text-[11px] mt-1 text-slate-600">
+                  <div className="text-[10px] text-slate-500 font-medium">Nhân lực thời vụ</div>
+                  <div className="text-[11px] mt-1 font-semibold">
                     {healthResult.tables.seasonal_workers.exists
                       ? `Đang có: ${healthResult.tables.seasonal_workers.count} thợ`
-                      : 'Chưa có bảng! Cần chạy SQL'}
+                      : 'Chưa có bảng'}
+                  </div>
+                </div>
+
+                {/* 4. team_workers */}
+                <div
+                  className={`p-2.5 rounded-lg border text-xs ${
+                    healthResult.tables.team_workers.exists
+                      ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="truncate">4. team_workers</span>
+                    {healthResult.tables.team_workers.exists ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium">Nhân viên tổ đội</div>
+                  <div className="text-[11px] mt-1 font-semibold">
+                    {healthResult.tables.team_workers.exists
+                      ? `Đang có: ${healthResult.tables.team_workers.count} tổ đội`
+                      : 'Chưa có bảng'}
+                  </div>
+                </div>
+
+                {/* 5. projects */}
+                <div
+                  className={`p-2.5 rounded-lg border text-xs ${
+                    healthResult.tables.projects.exists
+                      ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="truncate">5. projects</span>
+                    {healthResult.tables.projects.exists ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium">Danh sách dự án</div>
+                  <div className="text-[11px] mt-1 font-semibold">
+                    {healthResult.tables.projects.exists
+                      ? `Đang có: ${healthResult.tables.projects.count} dự án`
+                      : 'Chưa có bảng'}
+                  </div>
+                </div>
+
+                {/* 6. payroll_records */}
+                <div
+                  className={`p-2.5 rounded-lg border text-xs ${
+                    healthResult.tables.payroll_records.exists
+                      ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="truncate">6. payroll_records</span>
+                    {healthResult.tables.payroll_records.exists ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium">Bảng lương đa chu kỳ</div>
+                  <div className="text-[11px] mt-1 font-semibold">
+                    {healthResult.tables.payroll_records.exists
+                      ? `Đang có: ${healthResult.tables.payroll_records.count} dòng lương`
+                      : 'Chưa có bảng'}
+                  </div>
+                </div>
+
+                {/* 7. salary_advances */}
+                <div
+                  className={`p-2.5 rounded-lg border text-xs ${
+                    healthResult.tables.salary_advances.exists
+                      ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="truncate">7. salary_advances</span>
+                    {healthResult.tables.salary_advances.exists ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium">Bản lương tạm ứng</div>
+                  <div className="text-[11px] mt-1 font-semibold">
+                    {healthResult.tables.salary_advances.exists
+                      ? `Đang có: ${healthResult.tables.salary_advances.count} phiếu ứng`
+                      : 'Chưa có bảng'}
+                  </div>
+                </div>
+
+                {/* 8. attendance_records */}
+                <div
+                  className={`p-2.5 rounded-lg border text-xs ${
+                    healthResult.tables.attendance_records.exists
+                      ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="truncate">8. attendance_records</span>
+                    {healthResult.tables.attendance_records.exists ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium">Bản chấm công chi tiết</div>
+                  <div className="text-[11px] mt-1 font-semibold">
+                    {healthResult.tables.attendance_records.exists
+                      ? `Đang có: ${healthResult.tables.attendance_records.count} bản chấm công`
+                      : 'Chưa có bảng'}
                   </div>
                 </div>
               </div>
@@ -664,7 +1077,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
               >
                 <UploadCloud className="w-4 h-4" />
                 <span>
-                  Đẩy dữ liệu hiện tại lên Supabase ({employees.length} NV + {seasonalWorkers.length} Thợ)
+                  Đẩy dữ liệu hiện tại lên Supabase (Toàn bộ 8 bảng: NV, Thời vụ, Tổ đội, Dự án, Lương, Tạm ứng, Chấm công)
                 </span>
               </button>
 
@@ -685,17 +1098,40 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.seasonal_workers;`;
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>Kết quả đồng bộ lúc {syncReport.timestamp}:</span>
                 </div>
-                <ul className="space-y-1 text-slate-700 pl-5 list-disc text-[11px]">
-                  <li>
-                    Cấu hình công ty: <strong>{syncReport.companyConfig.ok ? '✅ Thành công' : `❌ ${syncReport.companyConfig.error}`}</strong>
-                  </li>
-                  <li>
-                    Nhân viên chính thức: <strong>{syncReport.employees.ok ? `✅ Thành công (${syncReport.employees.count}/${employees.length} bản ghi)` : `❌ ${syncReport.employees.error}`}</strong>
-                  </li>
-                  <li>
-                    Công nhân thời vụ: <strong>{syncReport.seasonalWorkers.ok ? `✅ Thành công (${syncReport.seasonalWorkers.count}/${seasonalWorkers.length} bản ghi)` : `❌ ${syncReport.seasonalWorkers.error}`}</strong>
-                  </li>
-                </ul>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-slate-700 text-[11px] pt-1">
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>1. Thông tin Cty Phúc Nguyên:</span>
+                    <strong>{syncReport.companyConfig.ok ? '✅ Thành công' : `❌ ${syncReport.companyConfig.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>2. Nhân viên chính thức:</span>
+                    <strong>{syncReport.employees.ok ? `✅ Thành công (${syncReport.employees.count} NV)` : `❌ ${syncReport.employees.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>3. Nhân lực thời vụ:</span>
+                    <strong>{syncReport.seasonalWorkers.ok ? `✅ Thành công (${syncReport.seasonalWorkers.count} thợ)` : `❌ ${syncReport.seasonalWorkers.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>4. Nhân viên tổ đội:</span>
+                    <strong>{syncReport.teamWorkers?.ok ? `✅ Thành công (${syncReport.teamWorkers.count} tổ)` : `❌ ${syncReport.teamWorkers?.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>5. Danh sách dự án:</span>
+                    <strong>{syncReport.projects?.ok ? `✅ Thành công (${syncReport.projects.count} DA)` : `❌ ${syncReport.projects?.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>6. Bản lương 4 chu kỳ:</span>
+                    <strong>{syncReport.payrollRecords?.ok ? `✅ Thành công (${syncReport.payrollRecords.count} dòng)` : `❌ ${syncReport.payrollRecords?.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>7. Bản lương tạm ứng:</span>
+                    <strong>{syncReport.salaryAdvances?.ok ? `✅ Thành công (${syncReport.salaryAdvances.count} phiếu)` : `❌ ${syncReport.salaryAdvances?.error}`}</strong>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 py-0.5">
+                    <span>8. Bản chấm công chi tiết:</span>
+                    <strong>{syncReport.attendanceRecords?.ok ? `✅ Thành công (${syncReport.attendanceRecords.count} bảng)` : `❌ ${syncReport.attendanceRecords?.error}`}</strong>
+                  </div>
+                </div>
               </div>
             )}
 

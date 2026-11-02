@@ -208,7 +208,7 @@ export interface ContractAddendum {
   notifiedEmail?: string; // Email người nhận
 }
 
-export interface AttendanceRecord {
+export interface SimpleAttendanceRecord {
   employeeCode: string;
   days: { [day: number]: string }; // 'X' (cả ngày), '1/2' (nửa ngày), 'P' (phép), 'O' (ốm), 'K' (không lương), 'L' (nghỉ lễ)
   otHours: { [day: number]: number };
@@ -327,4 +327,53 @@ export interface SalaryAdvance {
 }
 
 export type PayrollPeriodCycle = 'WEEK' | 'MONTH' | 'QUARTER' | 'YEAR';
+
+// 4. BẢN LƯƠNG ĐA CHU KỲ (Sheet: payroll_records)
+export interface PayrollRecord {
+  id: string;
+  periodType: 'WEEK' | 'MONTH' | 'QUARTER' | 'YEAR'; // Tuần, Tháng, Quý, Năm
+  periodCode: string; // vd: "Tuần 1 - 09/2026", "09/2026", "Quý 3/2026", "Năm 2026"
+  workerType: 'PERMANENT' | 'SEASONAL' | 'TEAM'; // Chính thức, Thời vụ, Tổ đội
+  workerId: string;
+  workerCode: string;
+  workerName: string;
+  departmentOrProject: string;
+  standardWorkDays?: number;
+  actualWorkDays: number;
+  baseSalaryOrRate: number;
+  salaryByDays: number;
+  overtimeHours?: number;
+  overtimePay?: number;
+  allowances: number;
+  bonuses?: number;
+  totalIncome: number;
+  insuranceDeduction?: number;
+  taxDeduction?: number;
+  advancePayment?: number;
+  totalDeductions: number;
+  netSalary: number;
+  paymentMethod?: string;
+  bankAccount?: string;
+  bankName?: string;
+  paymentStatus?: 'PENDING' | 'PAID';
+  notes?: string;
+  payrollData?: any;
+  updatedAt?: string;
+}
+
+// 5. BẢN CHẤM CÔNG CHI TIẾT (Sheet: attendance_records)
+export interface AttendanceRecord {
+  id: string;
+  workerType: 'PERMANENT' | 'SEASONAL' | 'TEAM';
+  workerCode: string;
+  workerName: string;
+  projectCode?: string;
+  month: number;
+  year: number;
+  periodKey?: string;
+  totalWorkDays: number;
+  totalOtHours: number;
+  attendanceData: any; // Mảng 31 ngày hoặc chi tiết chấm công
+  updatedAt?: string;
+}
 

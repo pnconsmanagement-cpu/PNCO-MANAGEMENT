@@ -5,7 +5,7 @@
 
 ---
 
-## PHẦN 1: CẤU HÌNH CƠ SỞ DỮ LIỆU SUPABASE (7 BẢNG / SHEETS RIÊNG BIỆT)
+## PHẦN 1: CẤU HÌNH CƠ SỞ DỮ LIỆU SUPABASE (8 BẢNG / SHEETS RIÊNG BIỆT)
 
 ### Bước 1: Tạo Project trên Supabase
 1. Truy cập [https://supabase.com](https://supabase.com) và đăng nhập (hoặc đăng ký miễn phí bằng GitHub/Google).
@@ -18,19 +18,20 @@
 
 ---
 
-### Bước 2: Tạo tự động 7 Bảng (Sheets) bằng SQL Schema
+### Bước 2: Tạo tự động 8 Bảng (Sheets) bằng SQL Schema
 1. Trong menu bên trái của Supabase Dashboard, chọn biểu tượng **SQL Editor** (icon `>_`).
 2. Nhấn **New query**.
 3. Mở file `supabase_schema.sql` có sẵn trong mã nguồn dự án, copy toàn bộ nội dung và dán vào ô soạn thảo SQL của Supabase.
 4. Nhấn nút **RUN** (màu xanh lá cây) ở góc dưới bên phải.
-5. Khi thấy thông báo `Success. No rows returned`, 7 bảng dữ liệu riêng biệt đã được khởi tạo:
-   - 🏢 `company_config`: Thông tin công ty Phúc Nguyên, kỳ lương, ngày công chuẩn, mẫu 02-LĐTL.
-   - 👥 `employees`: Danh sách nhân viên chính thức (Văn phòng, Kỹ sư chỉ huy, Ban giám đốc).
-   - 👷 `seasonal_workers`: Danh sách nhân lực thời vụ, thợ khoán công trình (lương tuần, chấm công ngày).
+5. Khi thấy thông báo `Success. No rows returned`, toàn bộ 8 bảng dữ liệu riêng biệt đã được khởi tạo:
+   - 🏢 `company_config`: Thông tin công ty Phúc Nguyên, kỳ lương, ngày công chuẩn 26 ngày, mẫu 02-LĐTL, Zalo OA.
+   - 👥 `employees`: Danh sách nhân viên chính thức (Văn phòng, Kỹ sư chỉ huy, Ban giám đốc, chia 26 ngày).
+   - 👷 `seasonal_workers`: Danh sách nhân lực thời vụ, thợ kỹ thuật công trình (lương tuần, chấm công ngày).
    - 🏗️ `team_workers`: Danh sách nhân viên tổ đội thi công (cai thầu, quân số, đơn giá khoán/ngày).
    - 📌 `projects`: Danh sách dự án & công trình (ngân sách nhân công, tiến độ, chi phí thực tế).
-   - 💳 `salary_advances`: Bản lương ứng / phiếu tạm ứng tiền lương từng nhân viên.
-   - 📅 `attendance_records`: Bản chấm công chi tiết 31 ngày trong tháng cho cả 3 nhóm nhân sự.
+   - 📊 `payroll_records`: 4 Bản lương ghi nhận chi tiết theo tuần, theo tháng, theo quý, theo năm cho từng nhân viên.
+   - 💳 `salary_advances`: Bản lương ứng / phiếu tạm ứng tiền lương theo từng nhân viên.
+   - 📅 `attendance_records`: Bản chấm công chi tiết 31 ngày cho cả nhân viên chính thức, thời vụ và tổ đội.
 
 ---
 
