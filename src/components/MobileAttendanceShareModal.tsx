@@ -109,21 +109,51 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
 
   if (!isOpen) return null;
 
-  const handleCopyLink = () => {
-    if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
+  const copyToClipboardSafe = async (text: string): Promise<boolean> => {
+    if (navigator?.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fallback below
+      }
+    }
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      textArea.setAttribute('readonly', '');
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      return successful;
+    } catch (err) {
+      console.warn('Fallback copy failed:', err);
+      return false;
+    }
   };
 
-  const handleCopyZaloMessage = () => {
+  const handleCopyLink = async () => {
+    if (!shareUrl) return;
+    const ok = await copyToClipboardSafe(shareUrl);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  const handleCopyZaloMessage = async () => {
     if (!activeWorker) return;
     const msg = generateZaloShareMessage(activeWorker, currentMonth, currentYear, shareUrl);
-    navigator.clipboard.writeText(msg).then(() => {
+    const ok = await copyToClipboardSafe(msg);
+    if (ok) {
       setCopiedMsg(true);
       setTimeout(() => setCopiedMsg(false), 2500);
-    });
+    }
   };
 
   const handleDownloadQr = () => {
@@ -467,7 +497,7 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <a
-                      href={localTestUrl || shareUrl}
+                      href={shareUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full px-3 py-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs text-center cursor-pointer"

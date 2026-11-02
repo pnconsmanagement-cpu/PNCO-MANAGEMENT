@@ -373,17 +373,17 @@ export function updateWorkerMonthlyAttendance(
   return updatedWorker;
 }
 
-// URL Web App Public chính thức của ứng dụng cho công nhân và chia sẻ ngoài
+// URL Web App Public chính thức của ứng dụng cho công nhân và chia sẻ ngoài (ais-pre không yêu cầu đăng nhập Google)
 const envAppUrl = (import.meta as any).env?.VITE_APP_URL || '';
 export const SHARED_PUBLIC_APP_URL =
   envAppUrl && envAppUrl.startsWith('http')
-    ? envAppUrl.replace(/\/$/, '')
-    : 'https://ais-dev-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
+    ? envAppUrl.replace(/\/$/, '').replace('ais-dev-', 'ais-pre-')
+    : 'https://ais-pre-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app';
 export const PUBLIC_APP_URL = SHARED_PUBLIC_APP_URL;
 
 /**
  * Lấy URL gốc công khai của Web App để chia sẻ cho công nhân / thợ trên điện thoại
- * Đảm bảo liên kết luôn mở được trực tiếp, không bị lỗi 404
+ * Đảm bảo liên kết luôn mở được trực tiếp, không bị lỗi 404 và không bắt đăng nhập Google
  */
 export function getPublicBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -393,7 +393,7 @@ export function getPublicBaseUrl(): string {
       if (custom && custom.includes('aistudio.google.com')) {
         localStorage.removeItem('payroll_public_app_url');
       } else if (custom && custom.startsWith('http') && !custom.includes('aistudio.google.com')) {
-        return custom.replace(/\/$/, '');
+        return custom.replace(/\/$/, '').replace('ais-dev-', 'ais-pre-');
       }
     } catch {}
 
@@ -401,7 +401,8 @@ export function getPublicBaseUrl(): string {
 
     // 2. Nếu đang mở trực tiếp trên app (*.run.app)
     if (origin.includes('.run.app') && !origin.includes('aistudio.google.com')) {
-      return origin;
+      // BẮT BUỘC thay ais-dev- bằng ais-pre- để điện thoại của thợ mở trực tiếp không bị Google chặn đăng nhập
+      return origin.replace('ais-dev-', 'ais-pre-');
     }
 
     // 3. Nếu đang mở trên localhost: dùng chính origin để test trực tiếp
@@ -411,7 +412,7 @@ export function getPublicBaseUrl(): string {
 
     // 4. Nếu đang trong AI Studio (aistudio.google.com), iframe:
     if (envAppUrl && envAppUrl.startsWith('http') && !envAppUrl.includes('aistudio.google.com')) {
-      return envAppUrl.replace(/\/$/, '');
+      return envAppUrl.replace(/\/$/, '').replace('ais-dev-', 'ais-pre-');
     }
 
     return SHARED_PUBLIC_APP_URL;
@@ -432,7 +433,11 @@ export function generateShareableAttendanceUrl(
     forceOrigin?: string;
   }
 ): string {
-  const baseUrl = options?.forceOrigin || getPublicBaseUrl();
+  let baseUrl = options?.forceOrigin || getPublicBaseUrl();
+  // Bảo đảm không bao giờ xuất hiện domain dev trong link chia sẻ công nhân
+  if (!options?.forceOrigin && baseUrl.includes('ais-dev-')) {
+    baseUrl = baseUrl.replace('ais-dev-', 'ais-pre-');
+  }
 
   const params = new URLSearchParams();
   params.set('view', 'chamcong');

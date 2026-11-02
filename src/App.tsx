@@ -58,33 +58,54 @@ import {
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
 
-// Hàm nhận diện chế độ xem Chấm Công Di Động (chỉ khi có tham số URL chỉ định rõ ràng)
+// Hàm nhận diện chế độ xem Chấm Công Di Động (chỉ khi có tham số URL chỉ định rõ ràng hoặc mở từ link riêng)
 function checkShouldShowAttendanceView(): { shouldShow: boolean; workerCode?: string } {
   if (typeof window === 'undefined') return { shouldShow: false };
+
+  // Nếu người dùng đã chủ động bấm nút "Thoát về trang quản trị" trong phiên này:
+  if (sessionStorage.getItem('pncons_admin_auth') === 'true') {
+    const rawSearch = window.location.search;
+    const rawHash = window.location.hash.toLowerCase();
+    // Chỉ kích hoạt lại nếu trên URL có tham số view=chamcong mới hoặc worker mới
+    if (!rawSearch.includes('chamcong') && !rawHash.includes('chamcong') && !rawSearch.includes('worker=')) {
+      return { shouldShow: false };
+    }
+  }
 
   const search = window.location.search;
   const hash = window.location.hash.toLowerCase();
   const searchParams = new URLSearchParams(search);
 
-  // Lấy workerCode từ search params hoặc hash nếu có
+  // Lấy workerCode từ search params, hash, hoặc sessionStorage
   let workerCode = searchParams.get('worker') || undefined;
   if (!workerCode && window.location.hash.includes('worker=')) {
     const match = window.location.hash.match(/worker=([^&]+)/);
     if (match && match[1]) workerCode = decodeURIComponent(match[1]);
   }
+  if (!workerCode) {
+    const cachedCode = sessionStorage.getItem('pncons_mobile_worker_code');
+    if (cachedCode) workerCode = cachedCode;
+  }
 
-  // CHỈ chuyển sang chế độ Chấm Công Di Động khi người dùng chủ động mở link chia sẻ có tham số:
-  // Ví dụ: ?view=chamcong, ?mode=attendance, ?mode=mobile_attendance, ?chamcong=1 hoặc #view=chamcong
+  // Chuyển sang chế độ Chấm Công Di Động khi mở link chia sẻ:
+  // Hỗ trợ cả query params (?view=chamcong, ?worker=...) và hash (#chamcong&worker=...)
   const hasAttendanceParam =
     searchParams.get('view') === 'chamcong' ||
     searchParams.get('mode') === 'attendance' ||
     searchParams.get('mode') === 'mobile_attendance' ||
     searchParams.get('chamcong') === '1' ||
+    hash.includes('chamcong') ||
     hash.includes('view=chamcong') ||
     hash.includes('mode=attendance') ||
-    hash.includes('chamcong=1');
+    hash.includes('chamcong=1') ||
+    Boolean(searchParams.get('worker')) ||
+    sessionStorage.getItem('pncons_in_mobile_mode') === 'true';
 
   if (hasAttendanceParam) {
+    if (workerCode) {
+      sessionStorage.setItem('pncons_mobile_worker_code', workerCode);
+    }
+    sessionStorage.setItem('pncons_in_mobile_mode', 'true');
     return { shouldShow: true, workerCode };
   }
 
@@ -884,6 +905,8 @@ export default function App() {
         onUpdateWorker={handleUpdateSeasonalWorker}
         onExitMobileView={() => {
           sessionStorage.setItem('pncons_admin_auth', 'true');
+          sessionStorage.removeItem('pncons_in_mobile_mode');
+          sessionStorage.removeItem('pncons_mobile_worker_code');
           setIsMobileAttendanceView(false);
           try {
             const cleanUrl = window.location.pathname;

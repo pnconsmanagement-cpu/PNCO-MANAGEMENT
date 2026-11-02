@@ -39,9 +39,35 @@ export const autoApplyUrlConfig = (): boolean => {
       const cleanKey = key.trim();
       setSupabaseConfig(cleanUrl, cleanKey);
       
-      // Dọn dẹp URL trên thanh địa chỉ mà không reload trang
-      const cleanHref = window.location.pathname;
-      window.history.replaceState(null, '', cleanHref);
+      // Dọn dẹp sb_url, sb_key trên thanh địa chỉ mà không làm mất tham số view=chamcong, worker=...
+      try {
+        const curSearch = new URLSearchParams(window.location.search);
+        curSearch.delete('sb_url');
+        curSearch.delete('supabase_url');
+        curSearch.delete('sb_key');
+        curSearch.delete('supabase_key');
+        const newSearchStr = curSearch.toString() ? `?${curSearch.toString()}` : '';
+
+        // Dọn dẹp sb_url, sb_key trong hash nhưng giữ lại phần định tuyến chấm công (như #chamcong&worker=...)
+        let newHashStr = '';
+        if (window.location.hash) {
+          const rawHash = window.location.hash.replace(/^#/, '');
+          const hashParts = rawHash.split('&').filter((part) => {
+            return (
+              !part.startsWith('sb_url=') &&
+              !part.startsWith('supabase_url=') &&
+              !part.startsWith('sb_key=') &&
+              !part.startsWith('supabase_key=')
+            );
+          });
+          if (hashParts.length > 0) {
+            newHashStr = `#${hashParts.join('&')}`;
+          }
+        }
+
+        const cleanHref = `${window.location.pathname}${newSearchStr}${newHashStr}`;
+        window.history.replaceState(null, '', cleanHref);
+      } catch {}
       return true;
     }
   } catch (e) {
