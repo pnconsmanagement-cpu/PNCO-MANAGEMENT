@@ -25,6 +25,7 @@ import {
   generateZaloShareMessage,
 } from '../utils/seasonalAttendanceHelper';
 import { isSupabaseConfigured } from '../services/supabaseService';
+import { saveAllToServer } from '../services/backendSyncService';
 
 interface MobileAttendanceShareModalProps {
   isOpen: boolean;
@@ -61,10 +62,19 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
     }
   }, [selectedWorkerId]);
 
+  // Tự động đồng bộ toàn bộ công nhân lên máy chủ khi mở modal chia sẻ
+  useEffect(() => {
+    if (isOpen && workers && workers.length > 0) {
+      saveAllToServer(config, [], workers);
+    }
+  }, [isOpen, workers, config]);
+
   const activeWorker = workers.find((w) => String(w.id) === String(currentWorkerId)) || workers[0];
 
-  const currentMonth = config.month || 9;
-  const currentYear = config.year || 2026;
+  // Luôn ưu tiên tháng và năm hiện hành thực tế (ví dụ: Tháng 11 / 2026)
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1; // 11
+  const currentYear = now.getFullYear();   // 2026
 
   const [showCustomUrl, setShowCustomUrl] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState(() => {
@@ -75,10 +85,10 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
     }
   });
 
-  // Sinh đường dẫn URL chia sẻ công khai
+  // Sinh đường dẫn URL chia sẻ công khai: Truyền toàn bộ object activeWorker để nhúng tên, mã, vị trí vào URL
   const shareUrl = React.useMemo(() => {
-    const workerCode = shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined;
-    return generateShareableAttendanceUrl(workerCode, {
+    const targetWorker = shareMode === 'SPECIFIC' && activeWorker ? activeWorker : undefined;
+    return generateShareableAttendanceUrl(targetWorker, {
       month: currentMonth,
       year: currentYear,
       includeConfig: true,
@@ -88,9 +98,9 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
 
   // URL kiểm tra trực tiếp trên trình duyệt hiện tại (nếu đang ở localhost hoặc dev)
   const localTestUrl = React.useMemo(() => {
-    const workerCode = shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined;
+    const targetWorker = shareMode === 'SPECIFIC' && activeWorker ? activeWorker : undefined;
     const curOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    return generateShareableAttendanceUrl(workerCode, {
+    return generateShareableAttendanceUrl(targetWorker, {
       month: currentMonth,
       year: currentYear,
       includeConfig: true,

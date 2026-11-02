@@ -422,11 +422,13 @@ export function getPublicBaseUrl(): string {
 
 /**
  * Sinh đường dẫn Link web app chấm công riêng trên điện thoại
+ * Tự động nhúng thông tin nhân sự (mã, họ tên, vị trí) và tháng hiện hành thực tế
  * Tự động nhúng cấu hình Supabase Cloud (nếu có) để máy điện thoại của thợ tự kết nối đồng bộ Realtime về máy chủ!
  */
 export function generateShareableAttendanceUrl(
-  workerCode?: string,
+  workerCodeOrWorker?: string | SeasonalWorker,
   options?: {
+    worker?: SeasonalWorker;
     month?: number;
     year?: number;
     includeConfig?: boolean;
@@ -439,21 +441,53 @@ export function generateShareableAttendanceUrl(
     baseUrl = baseUrl.replace('ais-dev-', 'ais-pre-');
   }
 
+  const workerObj =
+    typeof workerCodeOrWorker === 'object' && workerCodeOrWorker !== null
+      ? workerCodeOrWorker
+      : options?.worker;
+  const workerCode =
+    typeof workerCodeOrWorker === 'string'
+      ? workerCodeOrWorker
+      : workerObj?.code;
+
+  // Luôn ưu tiên tháng và năm hiện hành thực tế (thời gian thực theo lịch, ví dụ Tháng 11/2026)
+  const now = new Date();
+  const targetMonth = options?.month ?? (now.getMonth() + 1);
+  const targetYear = options?.year ?? now.getFullYear();
+
   const params = new URLSearchParams();
   params.set('view', 'chamcong');
 
   if (workerCode) {
     params.set('worker', workerCode);
   }
-  if (options?.month) {
-    params.set('m', String(options.month));
+  if (workerObj?.fullName) {
+    params.set('name', workerObj.fullName);
   }
-  if (options?.year) {
-    params.set('y', String(options.year));
+  if (workerObj?.trade) {
+    params.set('trade', workerObj.trade);
+  }
+  if (workerObj?.project) {
+    params.set('project', workerObj.project);
+  }
+  if (workerObj?.teamName) {
+    params.set('team', workerObj.teamName);
   }
 
-  // Đính kèm cả hash #chamcong để bất kỳ trình duyệt di động nào bị redirect 302 vẫn giữ nguyên 100% trang chấm công
+  params.set('m', String(targetMonth));
+  params.set('y', String(targetYear));
+
+  // Đính kèm hash #chamcong để bất kỳ trình duyệt di động nào bị redirect vẫn giữ nguyên 100% trang chấm công và tên thợ
   let hashPart = `chamcong${workerCode ? `&worker=${encodeURIComponent(workerCode)}` : ''}`;
+  if (workerObj?.fullName) {
+    hashPart += `&name=${encodeURIComponent(workerObj.fullName)}`;
+  }
+  if (workerObj?.trade) {
+    hashPart += `&trade=${encodeURIComponent(workerObj.trade)}`;
+  }
+  if (workerObj?.project) {
+    hashPart += `&project=${encodeURIComponent(workerObj.project)}`;
+  }
 
   // Tự động đính kèm cấu hình Supabase nếu có
   if (options?.includeConfig !== false && isSupabaseConfigured()) {

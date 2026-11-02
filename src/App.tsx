@@ -897,14 +897,20 @@ export default function App() {
 
   // Khi người dùng hoặc thợ mở link Web App Chấm Công Di Động riêng trên điện thoại
   if (isMobileAttendanceView) {
+    const isAdminPreview =
+      typeof window !== 'undefined' &&
+      sessionStorage.getItem('pncons_is_admin_preview') === 'true';
+
     return (
       <MobileAttendanceApp
         workers={seasonalWorkers}
         config={config}
         initialWorkerCode={activeMobileWorkerCode}
+        isAdminPreview={isAdminPreview}
         onUpdateWorker={handleUpdateSeasonalWorker}
         onExitMobileView={() => {
           sessionStorage.setItem('pncons_admin_auth', 'true');
+          sessionStorage.removeItem('pncons_is_admin_preview');
           sessionStorage.removeItem('pncons_in_mobile_mode');
           sessionStorage.removeItem('pncons_mobile_worker_code');
           setIsMobileAttendanceView(false);
@@ -1191,6 +1197,7 @@ export default function App() {
                   onResetWorkers={handleResetSeasonalWorkers}
                   onReorderWorkers={handleReorderSeasonalWorkers}
                   onOpenMobileView={(workerCode) => {
+                    sessionStorage.setItem('pncons_is_admin_preview', 'true');
                     setActiveMobileWorkerCode(workerCode);
                     setIsMobileAttendanceView(true);
                   }}

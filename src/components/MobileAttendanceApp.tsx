@@ -40,6 +40,7 @@ interface MobileAttendanceAppProps {
   workers: SeasonalWorker[];
   config: CompanyConfig;
   initialWorkerCode?: string;
+  isAdminPreview?: boolean;
   onUpdateWorker: (worker: SeasonalWorker) => void;
   onExitMobileView?: () => void;
 }
@@ -48,51 +49,162 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   workers,
   config,
   initialWorkerCode,
+  isAdminPreview = false,
   onUpdateWorker,
   onExitMobileView,
 }) => {
-  // Tìm công nhân đang chấm công
-  const [selectedWorkerCode, setSelectedWorkerCode] = useState<string>(() => {
-    if (initialWorkerCode) return initialWorkerCode;
+  // 1. Trích xuất thông tin định danh công nhân từ URL params và Hash (bảo đảm nhận đúng tên thợ 100%)
+  const parsedWorkerInfo = useMemo(() => {
+    if (typeof window === 'undefined') return { code: initialWorkerCode || '' };
     const urlParams = new URLSearchParams(window.location.search);
-    let workerParam = urlParams.get('worker');
-    if (!workerParam && typeof window !== 'undefined' && window.location.hash.includes('worker=')) {
-      const match = window.location.hash.match(/worker=([^&]+)/);
-      if (match && match[1]) workerParam = decodeURIComponent(match[1]);
-    }
-    if (workerParam) return workerParam;
-    return workers[0]?.code || 'PNC-TV01';
-  });
+    let code = initialWorkerCode || urlParams.get('worker') || '';
+    let name = urlParams.get('name') || '';
+    let trade = urlParams.get('trade') || '';
+    let project = urlParams.get('project') || '';
+    let team = urlParams.get('team') || '';
 
-  // Tự động chuyển công nhân khi prop initialWorkerCode thay đổi
-  useEffect(() => {
-    if (initialWorkerCode) {
-      setSelectedWorkerCode(initialWorkerCode);
+    // Đọc thêm từ hash nếu query params bị trình duyệt di động hoặc proxy cắt bớt
+    if (window.location.hash) {
+      const hashStr = window.location.hash.replace(/^#/, '');
+      const hashParams = new URLSearchParams(hashStr);
+      if (!code && hashParams.get('worker')) code = hashParams.get('worker') || '';
+      if (!name && hashParams.get('name')) name = hashParams.get('name') || '';
+      if (!trade && hashParams.get('trade')) trade = hashParams.get('trade') || '';
+      if (!project && hashParams.get('project')) project = hashParams.get('project') || '';
+      if (!team && hashParams.get('team')) team = hashParams.get('team') || '';
     }
+
+    if (!code) {
+      const cached = sessionStorage.getItem('pncons_mobile_worker_code');
+      if (cached) code = cached;
+    }
+
+    return { code, name, trade, project, team };
   }, [initialWorkerCode]);
 
-  // Tháng và năm đang chấm công
+  // Tìm công nhân đang chấm công
+  const [selectedWorkerCode, setSelectedWorkerCode] = useState<string>(() => {
+    return parsedWorkerInfo.code || workers[0]?.code || 'PNC-TV01';
+  });
+
+  // Tự động chuyển công nhân khi prop initialWorkerCode hoặc URL thay đổi
+  useEffect(() => {
+    if (parsedWorkerInfo.code) {
+      setSelectedWorkerCode(parsedWorkerInfo.code);
+    }
+  }, [parsedWorkerInfo.code]);
+
+  // 2. ƯU TIÊN THÁNG HIỆN HÀNH THỰC TẾ (Ví dụ: Tháng 11 / 2026)
+  const now = new Date();
+  const currentRealMonth = now.getMonth() + 1; // Ưu tiên tháng hiện hành (Tháng 11)
+  const currentRealYear = now.getFullYear();   // 2026
+
   const [month, setMonth] = useState<number>(() => {
+    if (typeof window === 'undefined') return currentRealMonth;
     const urlParams = new URLSearchParams(window.location.search);
+    // Nếu có force_m thì dùng, nếu không thì luôn luôn ưu tiên tháng hiện hành thực tế
+    const forceM = parseInt(urlParams.get('force_m') || '', 10);
+    if (!isNaN(forceM) && forceM >= 1 && forceM <= 12) return forceM;
     const m = parseInt(urlParams.get('m') || '', 10);
     if (!isNaN(m) && m >= 1 && m <= 12) return m;
-    return config.month || new Date().getMonth() + 1;
+    return currentRealMonth;
   });
 
   const [year, setYear] = useState<number>(() => {
+    if (typeof window === 'undefined') return currentRealYear;
     const urlParams = new URLSearchParams(window.location.search);
+    const forceY = parseInt(urlParams.get('force_y') || '', 10);
+    if (!isNaN(forceY) && forceY >= 2024 && forceY <= 2030) return forceY;
     const y = parseInt(urlParams.get('y') || '', 10);
     if (!isNaN(y) && y >= 2024 && y <= 2030) return y;
-    return config.year || new Date().getFullYear();
+    return currentRealYear;
   });
 
-  // Tìm đối tượng công nhân hiện tại
+  // 3. TÌM HOẶC KHỞI TẠO ĐỐI TƯỢNG CÔNG NHÂN HIỆN TẠI (ĐẢM BẢO ĐÚNG TÊN NHÂN VIÊN 100%)
   const currentWorker = useMemo(() => {
-    return (
-      workers.find((w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode) ||
-      workers[0]
+    const targetCode = selectedWorkerCode || parsedWorkerInfo.code;
+    const found = workers.find(
+      (w) => (targetCode && w.code === targetCode) || (targetCode && String(w.id) === targetCode)
     );
-  }, [workers, selectedWorkerCode]);
+    if (found) {
+      if (parsedWorkerInfo.name && (!found.fullName || found.fullName === 'Công Nhân')) {
+        return {
+          ...found,
+          fullName: parsedWorkerInfo.name,
+          trade: parsedWorkerInfo.trade || found.trade,
+          project: parsedWorkerInfo.project || found.project,
+          teamName: parsedWorkerInfo.team || found.teamName,
+        };
+      }
+      return found;
+    }
+
+    // Nếu công nhân chưa có trong mảng (ví dụ thợ mới PNC-TV36 - TRẦN VĂN TRÃI mở trên điện thoại mới),
+    // Khởi tạo ngay lập tức từ thông tin URL đính kèm để hiển thị chính xác tên thợ, không bao giờ nhảy nhầm sang thợ khác!
+    if (parsedWorkerInfo.code || parsedWorkerInfo.name) {
+      const customWorker: SeasonalWorker = {
+        id: parsedWorkerInfo.code || 'CUSTOM_WORKER',
+        code: parsedWorkerInfo.code || 'PNC-TV',
+        fullName: parsedWorkerInfo.name || 'Công Nhân Kỹ Thuật',
+        trade: parsedWorkerInfo.trade || 'Thợ thi công',
+        skillLevel: 'Thợ thi công',
+        project: parsedWorkerInfo.project || 'Công trình PNCONS',
+        teamName: parsedWorkerInfo.team || 'Đội thi công',
+        teamLeader: '',
+        phone: '',
+        idCard: '',
+        bankAccount: '',
+        bankName: '',
+        paymentMethod: 'BANK',
+        joinDate: '01/01/2026',
+        dailyRate: 0,
+        actualWorkDays: 0,
+        salaryByDays: 0,
+        overtimeHours: 0,
+        overtimePay: 0,
+        mealAllowance: 0,
+        travelSafetyAllowance: 0,
+        otherBonus: 0,
+        totalIncome: 0,
+        hasTaxCommitment: true,
+        personalIncomeTax: 0,
+        advancePayment: 0,
+        totalDeductions: 0,
+        netSalary: 0,
+        status: 'ACTIVE',
+        monthlyAttendance: {},
+      };
+      return customWorker;
+    }
+
+    return workers[0];
+  }, [workers, selectedWorkerCode, parsedWorkerInfo]);
+
+  // Tự động bổ sung thợ vào danh sách quản lý nếu được mở từ link riêng
+  useEffect(() => {
+    if (currentWorker && currentWorker.code && !workers.some((w) => w.code === currentWorker.code)) {
+      onUpdateWorker(currentWorker);
+    }
+  }, [currentWorker, workers, onUpdateWorker]);
+
+  // Tải dữ liệu công nhân và chấm công mới nhất từ máy chủ
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await fetchServerData();
+        if (data && data.seasonalWorkers && data.seasonalWorkers.length > 0) {
+          const matched = data.seasonalWorkers.find(
+            (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code
+          );
+          if (matched) {
+            onUpdateWorker(matched);
+            const record = getWorkerMonthlyAttendance(matched, year, month);
+            setAttendanceDays(record.days);
+          }
+        }
+      } catch {}
+    })();
+  }, [selectedWorkerCode, parsedWorkerInfo.code, year, month]);
 
   // Dữ liệu chấm công tháng của công nhân
   const [attendanceDays, setAttendanceDays] = useState<{ [dayNumber: number]: DailyAttendanceDetail }>({});
@@ -355,49 +467,45 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         </div>
       )}
 
-      {/* 1. Header Web App (Đúng mẫu Ảnh 1: PNCO - Chấm Công • Đồng bộ • Admin) */}
-      <header className="bg-white border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs">
+      {/* 1. Header Web App Chấm Công Di Động */}
+      <header className="bg-white border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs sticky top-0 z-30">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xs">
-              <Clock className="w-3.5 h-3.5 stroke-[2.5]" />
+            <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center shadow-xs">
+              <Clock className="w-4 h-4 stroke-[2.5]" />
             </div>
-            <span className="font-extrabold text-base tracking-tight text-slate-900">
-              PNCO - Chấm Công
-            </span>
+            <div>
+              <span className="font-extrabold text-sm sm:text-base tracking-tight text-slate-900 block leading-tight">
+                PNCO - Chấm Công Di Động
+              </span>
+              <span className="text-[10px] text-slate-500 block">
+                {currentWorker?.fullName ? `${currentWorker.fullName} (${currentWorker.code})` : 'Dành cho công nhân'}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleManualSync}
-              className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full text-xs font-medium transition-colors cursor-pointer"
-              title="Bấm để làm mới và kiểm tra đồng bộ máy chủ"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-full text-xs font-bold transition-colors cursor-pointer shadow-xs"
+              title="Đồng bộ dữ liệu chấm công về máy chủ và Supabase Cloud"
             >
               <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
-              <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ'}</span>
-              <RotateCcw className={`w-3 h-3 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ Supabase'}</span>
+              <RotateCcw className={`w-3 h-3 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
 
-            <button
-              type="button"
-              onClick={() => setIsShareModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs"
-              title="Tạo link và mã QR chia sẻ cho nhân viên"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Chia sẻ link</span>
-            </button>
-
-            {onExitMobileView && (
+            {/* Chỉ hiển thị nút Đóng khi người quản trị mở chế độ Xem thử trong phần mềm máy tính */}
+            {isAdminPreview && onExitMobileView && (
               <button
                 type="button"
-                onClick={handleAdminAccess}
-                className="flex items-center gap-1.5 px-3 py-1 bg-[#09233b] hover:bg-[#0f3d64] text-white rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
-                title="Quay lại giao diện quản trị bảng lương & nhân sự"
+                onClick={onExitMobileView}
+                className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
+                title="Đóng chế độ xem thử để quay lại bảng quản trị"
               >
-                <LogOut className="w-3.5 h-3.5 text-amber-300" />
-                <span>Về Quản Trị</span>
+                <X className="w-3.5 h-3.5 text-slate-500" />
+                <span>Đóng xem thử</span>
               </button>
             )}
           </div>
@@ -406,24 +514,24 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
       {/* Main Content Area */}
       <main className="max-w-6xl mx-auto w-full px-3 sm:px-6 py-5 space-y-4">
-        {/* Tiêu đề Chấm Công (Icon cam + chữ đậm như Ảnh 1) */}
+        {/* Tiêu đề Chấm Công */}
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-orange-500 text-white flex items-center justify-center shadow-xs">
             <Calendar className="w-4 h-4 stroke-[2.5]" />
           </div>
-          <h1 className="text-xl sm:text-2xl font-black text-slate-900">Chấm Công</h1>
+          <h1 className="text-xl sm:text-2xl font-black text-slate-900">Bảng Chấm Công</h1>
         </div>
 
-        {/* Bố cục 2 Cột chuẩn theo Ảnh 1 */}
+        {/* Bố cục 2 Cột chuẩn */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* CỘT TRÁI (Khoảng 4 cột / 12) */}
+          {/* CỘT TRÁI */}
           <div className="lg:col-span-4 space-y-3.5">
             {/* Thanh chuyển tháng: < và > */}
             <div className="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
               <button
                 type="button"
                 onClick={handlePrevMonth}
-                className="w-10 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                className="w-10 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95 cursor-pointer"
                 title="Tháng trước"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -436,49 +544,65 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
               <button
                 type="button"
                 onClick={handleNextMonth}
-                className="w-10 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                className="w-10 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95 cursor-pointer"
                 title="Tháng sau"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Dropdown chọn nhân viên */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 p-2 shadow-2xs">
-              <select
-                value={selectedWorkerCode}
-                onChange={(e) => setSelectedWorkerCode(e.target.value)}
-                className="w-full px-3 py-2 bg-transparent text-xs sm:text-sm font-bold text-slate-800 focus:outline-none cursor-pointer"
-              >
-                {workers.map((w) => (
-                  <option key={w.id} value={w.code}>
-                    {w.fullName} ({w.teamName || w.trade || 'CÔNG NHÂN'})
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Thông tin đối tượng chấm công: Nếu là link riêng của thợ thì cố định tên thợ, không cho chọn thợ khác */}
+            {!parsedWorkerInfo.code ? (
+              <div className="bg-white rounded-2xl border border-slate-200/80 p-2 shadow-2xs">
+                <label className="text-[10px] font-bold text-slate-500 uppercase px-2 pt-1 block">Chọn thợ chấm công:</label>
+                <select
+                  value={selectedWorkerCode}
+                  onChange={(e) => setSelectedWorkerCode(e.target.value)}
+                  className="w-full px-3 py-2 bg-transparent text-xs sm:text-sm font-bold text-slate-800 focus:outline-none cursor-pointer"
+                >
+                  {workers.map((w) => (
+                    <option key={w.id} value={w.code}>
+                      {w.fullName} ({w.teamName || w.trade || 'CÔNG NHÂN'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="bg-blue-50/80 rounded-2xl border border-blue-200/90 p-3 shadow-2xs flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Phiếu chấm công cá nhân:</div>
+                  <div className="text-sm font-black text-blue-950">{currentWorker?.fullName}</div>
+                </div>
+                <div className="text-right">
+                  <span className="inline-block px-2.5 py-0.5 bg-blue-600 text-white rounded-full text-xs font-mono font-bold shadow-2xs">
+                    {currentWorker?.code}
+                  </span>
+                </div>
+              </div>
+            )}
 
-            {/* Thẻ thông tin công nhân (Viền cam trên đỉnh theo Ảnh 1) */}
+            {/* Thẻ thông tin công nhân */}
             <div className="bg-white rounded-2xl border border-slate-200/80 p-4 sm:p-5 shadow-2xs relative overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-1 bg-orange-500" />
 
               <div className="flex items-center gap-3.5 mb-3.5">
                 <div className="w-14 h-14 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-inner">
                   <span className="text-lg font-black text-slate-700">
-                    {currentWorker?.fullName ? currentWorker.fullName.charAt(0) : 'A'}
+                    {currentWorker?.fullName ? currentWorker.fullName.charAt(0) : 'T'}
                   </span>
                 </div>
                 <div>
                   <h2 className="text-base font-extrabold text-slate-900 leading-tight">
                     {currentWorker?.fullName}
                   </h2>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
-                    {currentWorker?.teamName || currentWorker?.trade || 'BAN LÃNH ĐẠO'}
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mt-0.5">
+                    {currentWorker?.trade || currentWorker?.teamName || 'Thợ thi công'}
+                    {currentWorker?.project ? ` • ${currentWorker.project}` : ''}
                   </div>
                 </div>
               </div>
 
-              {/* Chỉ số công & OT (Đã bỏ hoàn toàn đơn giá ngày theo yêu cầu) */}
+              {/* Chỉ số công & OT */}
               <div className="space-y-1.5 text-xs text-slate-600 border-t border-slate-100 pt-3">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-3.5 h-3.5 text-orange-500 shrink-0" />
@@ -502,25 +626,12 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
                 </div>
               </div>
 
-              {/* Nút chia sẻ trực tiếp link cho nhân viên */}
-              <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsShareModalOpen(true)}
-                  className="flex-1 py-2 px-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>Chia sẻ link & Mã QR</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleQuickCopyLink}
-                  className="py-2 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-colors border border-slate-200"
-                  title="Sao chép nhanh link của thợ này"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy</span>
-                </button>
+              {/* Thông báo trạng thái đồng bộ cho công nhân (Đã ẩn nút Chia sẻ link & Về Quản trị) */}
+              <div className="pt-3 border-t border-slate-100">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-center text-xs text-emerald-900 font-medium flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Chạm vào ngày trên lịch để chấm công & lưu tự động</span>
+                </div>
               </div>
             </div>
 
