@@ -66,6 +66,15 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
   const currentMonth = config.month || 9;
   const currentYear = config.year || 2026;
 
+  const [showCustomUrl, setShowCustomUrl] = useState(false);
+  const [customBaseUrl, setCustomBaseUrl] = useState(() => {
+    try {
+      return localStorage.getItem('payroll_public_app_url') || '';
+    } catch {
+      return '';
+    }
+  });
+
   // Sinh đường dẫn URL chia sẻ công khai
   const shareUrl = React.useMemo(() => {
     const workerCode = shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined;
@@ -73,8 +82,9 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
       month: currentMonth,
       year: currentYear,
       includeConfig: true,
+      forceOrigin: customBaseUrl.trim() || undefined,
     });
-  }, [shareMode, activeWorker, currentMonth, currentYear]);
+  }, [shareMode, activeWorker, currentMonth, currentYear, customBaseUrl]);
 
   // URL kiểm tra trực tiếp trên trình duyệt hiện tại (nếu đang ở localhost hoặc dev)
   const localTestUrl = React.useMemo(() => {
@@ -519,7 +529,81 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
               </div>
 
               <div className="text-[11px] text-slate-500 leading-normal bg-emerald-50/80 p-2.5 rounded-lg border border-emerald-200/80 text-emerald-950">
-                ✅ <strong>Link công khai chuẩn Cloud Run:</strong> Điện thoại của thợ mở trực tiếp không cần đăng nhập Google, không bị lỗi trang 404.
+                ✅ <strong>Link chuẩn Cloud Run:</strong> Khi mở trên điện thoại, đảm bảo trình duyệt (Safari/Chrome) đã đăng nhập tài khoản Google của bạn hoặc applet đã được bấm <strong>Share &gt; Public</strong> trên Google AI Studio.
+              </div>
+
+              {/* Nút bật/tắt Tùy chỉnh URL Domain riêng */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomUrl(!showCustomUrl)}
+                  className="text-xs text-blue-700 hover:text-blue-900 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <span>⚙️ Tùy chỉnh Domain / URL máy chủ (Nếu có domain riêng)</span>
+                  <span className="text-[10px] text-slate-400">({showCustomUrl ? 'Thu gọn' : 'Mở rộng'})</span>
+                </button>
+
+                {showCustomUrl && (
+                  <div className="mt-2 p-3 bg-slate-100 rounded-xl border border-slate-200 space-y-2 text-xs">
+                    <label className="font-semibold text-slate-700 block">
+                      Nhập Domain / URL tùy chỉnh của bạn (Ví dụ: https://chamcong.pncons.com):
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={customBaseUrl}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomBaseUrl(val);
+                          if (val.trim()) {
+                            localStorage.setItem('payroll_public_app_url', val.trim());
+                          } else {
+                            localStorage.removeItem('payroll_public_app_url');
+                          }
+                        }}
+                        placeholder="https://ais-pre-phjm5jxgxjrhlw6ojcsnfc-84463466708.asia-southeast1.run.app"
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      {customBaseUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomBaseUrl('');
+                            localStorage.removeItem('payroll_public_app_url');
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
+                        >
+                          Mặc định
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Để trống để tự động dùng URL máy chủ chuẩn Cloud Run của Google AI Studio.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Khối hướng dẫn xử lý lỗi "Page not found" trên điện thoại */}
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-950 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-amber-900 text-sm">
+              <span className="text-base">⚠️</span>
+              <span>Nếu mở link trên điện thoại thấy thông báo &ldquo;Google AI Studio - Page not found&rdquo;:</span>
+            </div>
+            <div className="space-y-1.5 text-slate-700 leading-relaxed pl-1">
+              <div className="flex items-start gap-2">
+                <span className="font-bold text-blue-700 shrink-0">1. Đăng nhập Google trên Safari/Chrome:</span>
+                <span>Trên điện thoại, mở trình duyệt Safari/Chrome và đăng nhập tài khoản Google của bạn (<strong>pncons.management@gmail.com</strong>), sau đó mở lại link. (Nếu mở trực tiếp từ trong ứng dụng Zalo, Zalo là trình duyệt ẩn danh không có tài khoản Google nên Google sẽ chặn).</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-bold text-emerald-700 shrink-0">2. Xuất bản công khai (Public) trên máy tính:</span>
+                <span>Tại góc trên bên phải màn hình làm việc Google AI Studio trên máy tính, bấm nút <strong>&ldquo;Share&rdquo;</strong> &rarr; Đổi quyền thành <strong>Public (Công khai)</strong> để bất kỳ ai có link (kể cả thợ không có tài khoản Google) đều mở được trực tiếp 100%.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-bold text-purple-700 shrink-0">3. Chấm công trực tiếp tức thì:</span>
+                <span>Bạn có thể bấm ngay nút màu xanh <strong>&ldquo;Mở Chấm Công Ngay Cho Thợ (Trực tiếp)&rdquo;</strong> ở phía trên để mở giao diện điện thoại ngay trên màn hình máy tính/iPad này và chấm công cho thợ trong 5 giây.</span>
               </div>
             </div>
           </div>
