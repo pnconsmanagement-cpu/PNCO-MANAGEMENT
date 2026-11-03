@@ -84,11 +84,12 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     }
   }, [periodCycle]);
 
-  // Dữ liệu thời vụ theo chu kỳ
+  // Dữ liệu thời vụ theo chu kỳ - CHỈ NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const scaledSeasonal = useMemo(() => {
     const mult = cycleMultiplier;
     return seasonalWorkers
       .filter((w) => {
+        if ((w.status || 'ACTIVE') !== 'ACTIVE') return false;
         const term = searchTerm.toLowerCase();
         return (
           !term ||
@@ -126,11 +127,12 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       });
   }, [seasonalWorkers, cycleMultiplier, searchTerm]);
 
-  // Dữ liệu tổ đội theo chu kỳ
+  // Dữ liệu tổ đội theo chu kỳ - CHỈ TỔ ĐỘI ĐANG LÀM VIỆC (ACTIVE)
   const scaledTeam = useMemo(() => {
     const mult = cycleMultiplier;
     return teamWorkers
       .filter((t) => {
+        if ((t.status || 'ACTIVE') !== 'ACTIVE') return false;
         const term = searchTerm.toLowerCase();
         return (
           !term ||
@@ -192,12 +194,12 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   // Danh sách dòng bảng lương nhân viên chính thức thích ứng theo chu kỳ
   const filteredEmployees = useMemo(() => {
     return employees.filter((e) => {
-      const isResigned = e.status === 'RESIGNED';
+      const isActive = (e.status || 'ACTIVE') === 'ACTIVE';
       if (!showResignedHistory) {
-        if (isResigned) return false;
+        if (!isActive) return false;
         if (attendanceOnly && e.selectedForAttendance === false) return false;
       } else {
-        if (!isResigned) return false;
+        if (isActive) return false;
       }
 
       if (salaryTypeFilter === 'MONTHLY' && e.salaryType === 'DAILY') return false;

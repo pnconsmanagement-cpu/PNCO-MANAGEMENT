@@ -2,16 +2,23 @@ import { CompanyConfig, Employee } from '../types';
 import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
 import { ensureEmployeeContract } from '../utils/contractHelper';
 
+const realNow = new Date();
+const currentRealMonth = realNow.getMonth() + 1;
+const currentRealYear = realNow.getFullYear();
+const nextRealMonth = currentRealMonth === 12 ? '01' : (currentRealMonth + 1 < 10 ? `0${currentRealMonth + 1}` : `${currentRealMonth + 1}`);
+const nextRealYear = currentRealMonth === 12 ? currentRealYear + 1 : currentRealYear;
+const curMonthStr = currentRealMonth < 10 ? `0${currentRealMonth}` : `${currentRealMonth}`;
+
 export const initialCompanyConfig: CompanyConfig = {
   name: 'CÔNG TY TNHH XÂY DỰNG- CƠ ĐIỆN PHÚC NGUYÊN',
   address: '226/22/18 Đường Số 8, KP3, Linh Xuân, Tp. Hồ Chí Minh',
   taxCode: '0315486790',
   phone: '(028) 3896 1234',
-  period: 'Kỳ lương tháng 09 năm 2026',
-  periodCode: '09/2026',
-  month: 9,
-  year: 2026,
-  paymentDate: '05/10/2026',
+  period: `Kỳ lương tháng ${curMonthStr} năm ${currentRealYear}`,
+  periodCode: `${curMonthStr}/${currentRealYear}`,
+  month: currentRealMonth,
+  year: currentRealYear,
+  paymentDate: `05/${nextRealMonth}/${nextRealYear}`,
   standardWorkDays: 26,
   formNumber: 'Mẫu số: 02-LĐTL',
 };

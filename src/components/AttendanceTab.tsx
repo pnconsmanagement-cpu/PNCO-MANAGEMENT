@@ -36,6 +36,7 @@ interface AttendanceTabProps {
   onGoToEmployeeList?: () => void;
   onGoToSeasonalAttendance?: () => void;
   seasonalCount?: number;
+  forcedGroup?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
 }
 
 export const AttendanceTab: React.FC<AttendanceTabProps> = ({
@@ -50,8 +51,17 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onGoToEmployeeList,
   onGoToSeasonalAttendance,
   seasonalCount = 12,
+  forcedGroup,
 }) => {
-  const [attendanceGroup, setAttendanceGroup] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
+  const [attendanceGroup, setAttendanceGroup] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>(
+    forcedGroup || 'PERMANENT'
+  );
+
+  useEffect(() => {
+    if (forcedGroup) {
+      setAttendanceGroup(forcedGroup);
+    }
+  }, [forcedGroup]);
   const [modifiedEmployees, setModifiedEmployees] = useState<Employee[]>(employees);
   const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(seasonalWorkers);
   const [modifiedTeam, setModifiedTeam] = useState<TeamWorker[]>(teamWorkers);
@@ -361,11 +371,13 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   const monthFormatted = (config.month || 9) < 10 ? `0${config.month || 9}` : config.month;
   const yearFormatted = config.year || 2026;
 
-  // Danh sách hiển thị
+  // Danh sách hiển thị - CHỈ HIỂN THỊ NHÂN SỰ CÓ TRẠNG THÁI 'ACTIVE' (Đang làm việc)
   const displayedEmployees = useMemo(() => {
-    const list = !onlySelected
-      ? modifiedEmployees
-      : modifiedEmployees.filter((e) => e.selectedForAttendance !== false && e.status !== 'RESIGNED');
+    const list = modifiedEmployees.filter((e) => {
+      if ((e.status || 'ACTIVE') !== 'ACTIVE') return false;
+      if (onlySelected && e.selectedForAttendance === false) return false;
+      return true;
+    });
     return [...list].sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
         return a.sortOrder - b.sortOrder;
@@ -374,77 +386,108 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     });
   }, [modifiedEmployees, onlySelected]);
 
-  const selectedCount = modifiedEmployees.filter((e) => e.selectedForAttendance !== false && e.status !== 'RESIGNED').length;
+  const displayedSeasonal = useMemo(() => {
+    return modifiedSeasonal.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+  }, [modifiedSeasonal]);
+
+  const displayedTeam = useMemo(() => {
+    return modifiedTeam.filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
+  }, [modifiedTeam]);
+
+  const selectedCount = displayedEmployees.length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-4">
-      {/* Bộ chuyển đổi 3 nhóm nhân sự chấm công */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            id="tab-att-permanent"
-            onClick={() => setAttendanceGroup('PERMANENT')}
-            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-              attendanceGroup === 'PERMANENT'
-                ? 'bg-[#0f3d64] text-white shadow-md font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-            }`}
-          >
-            <Users className={`w-4 h-4 ${attendanceGroup === 'PERMANENT' ? 'text-sky-300' : 'text-slate-500'}`} />
-            <span>1. Nhân Viên Chính Thức</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-              attendanceGroup === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
-            }`}>
-              {modifiedEmployees.length}
-            </span>
-          </button>
+      {/* Bộ chuyển đổi 3 nhóm nhân sự chấm công (chỉ hiện khi không bị ép nhóm) */}
+      {!forcedGroup ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              id="tab-att-permanent"
+              onClick={() => setAttendanceGroup('PERMANENT')}
+              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+                attendanceGroup === 'PERMANENT'
+                  ? 'bg-[#0f3d64] text-white shadow-md font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Users className={`w-4 h-4 ${attendanceGroup === 'PERMANENT' ? 'text-sky-300' : 'text-slate-500'}`} />
+              <span>1. Nhân Viên Chính Thức</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                attendanceGroup === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {displayedEmployees.length}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            id="tab-att-seasonal"
-            onClick={() => setAttendanceGroup('SEASONAL')}
-            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-              attendanceGroup === 'SEASONAL'
-                ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-            }`}
-          >
-            <HardHat className={`w-4 h-4 ${attendanceGroup === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
-            <span>2. Nhân Lực Thời Vụ</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-              attendanceGroup === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
-            }`}>
-              {modifiedSeasonal.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              id="tab-att-seasonal"
+              onClick={() => setAttendanceGroup('SEASONAL')}
+              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+                attendanceGroup === 'SEASONAL'
+                  ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <HardHat className={`w-4 h-4 ${attendanceGroup === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
+              <span>2. Nhân Lực Thời Vụ</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                attendanceGroup === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {displayedSeasonal.length}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            id="tab-att-team"
-            onClick={() => setAttendanceGroup('TEAM')}
-            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-              attendanceGroup === 'TEAM'
-                ? 'bg-indigo-700 text-white shadow-md font-black ring-2 ring-indigo-700/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-            }`}
-          >
-            <Building className={`w-4 h-4 ${attendanceGroup === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
-            <span>3. Nhân Viên Tổ Đội</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-              attendanceGroup === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'
-            }`}>
-              {modifiedTeam.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              id="tab-att-team"
+              onClick={() => setAttendanceGroup('TEAM')}
+              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
+                attendanceGroup === 'TEAM'
+                  ? 'bg-indigo-700 text-white shadow-md font-black ring-2 ring-indigo-700/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Building className={`w-4 h-4 ${attendanceGroup === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
+              <span>3. Nhân Viên Tổ Đội</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                attendanceGroup === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {displayedTeam.length}
+              </span>
+            </button>
+          </div>
         </div>
-
-        <div className="text-xs text-slate-600 font-medium px-2 hidden sm:block">
-          {attendanceGroup === 'PERMANENT' && 'Chấm công nhân sự văn phòng & kỹ sư cơ hữu'}
-          {attendanceGroup === 'SEASONAL' && 'Chấm công thợ kỹ thuật theo ngày & công trình'}
-          {attendanceGroup === 'TEAM' && 'Chấm công đội khoán & thợ tổ thi công'}
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-3">
+            {forcedGroup === 'PERMANENT' ? (
+              <div className="p-2.5 bg-[#0f3d64] text-white rounded-lg shadow-xs">
+                <Users className="w-5 h-5 text-sky-300" />
+              </div>
+            ) : (
+              <div className="p-2.5 bg-amber-600 text-white rounded-lg shadow-xs">
+                <HardHat className="w-5 h-5 text-amber-200" />
+              </div>
+            )}
+            <div>
+              <h2 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-wide">
+                {forcedGroup === 'PERMANENT' ? 'Bản Chấm Công Nhân Viên Chính Thức' : 'Bản Chấm Công Nhân Viên Thời Vụ'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Chỉ hiển thị các nhân sự đang làm việc trong danh sách ({forcedGroup === 'PERMANENT' ? displayedEmployees.length : displayedSeasonal.length} nhân sự)
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full border border-emerald-300">
+              {forcedGroup === 'PERMANENT' ? displayedEmployees.length : displayedSeasonal.length} người đang làm việc
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Banner phân loại & liên kết bảng chấm công */}
       <div className="bg-gradient-to-r from-sky-50 via-slate-50 to-sky-50/50 border border-sky-200/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
@@ -994,7 +1037,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-[12px]">
-              {modifiedSeasonal.map((w, index) => (
+              {displayedSeasonal.map((w, index) => (
                 <tr key={w.id} className="hover:bg-amber-50/50 transition-colors">
                   <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
                     {index + 1}
@@ -1115,7 +1158,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-[12px]">
-              {modifiedTeam.map((t, index) => (
+              {displayedTeam.map((t, index) => (
                 <tr key={t.id} className="hover:bg-indigo-50/50 transition-colors">
                   <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
                     {index + 1}

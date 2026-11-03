@@ -57,16 +57,12 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   }
 
   const tabs: TabItem[] = [
-    { id: 'PERMANENT_EMPLOYEES', label: '1. NV CHÍNH THỨC', icon: Users, badge: employeeCount, badgeColor: 'bg-sky-500 text-white' },
-    { id: 'SEASONAL_WORKERS', label: '2. NV THỜI VỤ', icon: HardHat, badge: seasonalCount, badgeColor: 'bg-amber-500 text-slate-950 font-bold' },
-    { id: 'PERMANENT_PAYROLL', label: '3. LƯƠNG CHÍNH THỨC', icon: Table2 },
-    { id: 'SEASONAL_PAYROLL', label: '4. LƯƠNG THỜI VỤ', icon: Table2 },
-    { id: 'PROJECTS', label: '5. DỰ ÁN', icon: Building, badge: projectCount },
-    { id: 'SALARY_ADVANCES', label: '6. LƯƠNG ỨNG', icon: CreditCard, badge: advanceCount },
-    { id: 'ATTENDANCE', label: '7. CHẤM CÔNG', icon: CalendarCheck },
-    { id: 'FINANCIAL_REPORT', label: '8. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
-    { id: 'PAYSLIP', label: '9. PHIẾU LƯƠNG', icon: FileText },
-    { id: 'DATA_AUDIT', label: '10. KIỂM TRA', icon: ShieldAlert, badge: auditIssuesCount },
+    { id: 'PERMANENT_EMPLOYEES', label: '1. NHÂN VIÊN CHÍNH THỨC', icon: Users, badge: employeeCount, badgeColor: 'bg-sky-500 text-white font-black' },
+    { id: 'SEASONAL_WORKERS', label: '2. NHÂN VIÊN THỜI VỤ', icon: HardHat, badge: seasonalCount, badgeColor: 'bg-amber-500 text-slate-950 font-black' },
+    { id: 'PROJECTS', label: '3. DỰ ÁN CÔNG TRÌNH', icon: Building, badge: projectCount },
+    { id: 'FINANCIAL_REPORT', label: '4. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
+    { id: 'PAYSLIP', label: '5. PHIẾU LƯƠNG', icon: FileText },
+    { id: 'DATA_AUDIT', label: '6. KIỂM TRA DỮ LIỆU', icon: ShieldAlert, badge: auditIssuesCount },
   ];
 
   return (

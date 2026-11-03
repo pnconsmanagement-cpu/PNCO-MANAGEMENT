@@ -32,6 +32,7 @@ interface SalaryAdvancesTabProps {
   onAddAdvance: (advance: SalaryAdvance) => void;
   onUpdateAdvance: (advance: SalaryAdvance) => void;
   onDeleteAdvance: (id: string) => void;
+  forcedTargetType?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
 }
 
 export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
@@ -43,13 +44,23 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   onAddAdvance,
   onUpdateAdvance,
   onDeleteAdvance,
+  forcedTargetType,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [targetTypeFilter, setTargetTypeFilter] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>('ALL');
+  const [targetTypeFilter, setTargetTypeFilter] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>(
+    forcedTargetType || 'ALL'
+  );
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'DEDUCTED'>('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [printingAdvance, setPrintingAdvance] = useState<SalaryAdvance | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (forcedTargetType) {
+      setTargetTypeFilter(forcedTargetType);
+      setFormTargetType(forcedTargetType);
+    }
+  }, [forcedTargetType]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -57,44 +68,57 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   };
 
   // Form modal state
-  const [formTargetType, setFormTargetType] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
+  const [formTargetType, setFormTargetType] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>(
+    forcedTargetType || 'PERMANENT'
+  );
   const [formWorkerId, setFormWorkerId] = useState('');
   const [formAmount, setFormAmount] = useState<number>(3000000);
   const [formReason, setFormReason] = useState('Tạm ứng tiền sinh hoạt công trường giữa kỳ');
   const [formMethod, setFormMethod] = useState<'BANK' | 'CASH'>('BANK');
   const [formNotes, setFormNotes] = useState('');
 
-  // Danh sách worker khả dụng theo loại target
+  // Danh sách worker khả dụng theo loại target - CHỈ HIỆN NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const availableWorkers = useMemo(() => {
     if (formTargetType === 'PERMANENT') {
-      return employees.map((e) => ({
-        id: e.id,
-        code: e.code,
-        name: e.fullName,
-        sub: e.department,
-      }));
+      return employees
+        .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
+        .map((e) => ({
+          id: e.id,
+          code: e.code,
+          name: e.fullName,
+          sub: e.department,
+        }));
     } else if (formTargetType === 'SEASONAL') {
-      return seasonalWorkers.map((w) => ({
-        id: w.id,
-        code: w.code,
-        name: w.fullName,
-        sub: w.project || w.trade,
-      }));
+      return seasonalWorkers
+        .filter((w) => (w.status || 'ACTIVE') === 'ACTIVE')
+        .map((w) => ({
+          id: w.id,
+          code: w.code,
+          name: w.fullName,
+          sub: w.project || w.trade,
+        }));
     } else {
-      return teamWorkers.map((t) => ({
-        id: t.id,
-        code: t.code,
-        name: t.teamName,
-        sub: `${t.leaderName} (${t.project})`,
-      }));
+      return teamWorkers
+        .filter((t) => (t.status || 'ACTIVE') === 'ACTIVE')
+        .map((t) => ({
+          id: t.id,
+          code: t.code,
+          name: t.teamName,
+          sub: `${t.leaderName} (${t.project})`,
+        }));
     }
   }, [formTargetType, employees, seasonalWorkers, teamWorkers]);
 
   const openAddModal = () => {
-    setFormTargetType('PERMANENT');
-    setFormWorkerId(employees[0]?.id || '');
+    const target = forcedTargetType || 'PERMANENT';
+    setFormTargetType(target);
+    const firstActive =
+      target === 'PERMANENT'
+        ? employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE')?.id
+        : seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE')?.id;
+    setFormWorkerId(firstActive || '');
     setFormAmount(3000000);
-    setFormReason('Tạm ứng tiền sinh hoạt giữa kỳ');
+    setFormReason(target === 'PERMANENT' ? 'Tạm ứng tiền lương giữa kỳ' : 'Tạm ứng tiền sinh hoạt công trường giữa kỳ');
     setFormMethod('BANK');
     setFormNotes('');
     setIsModalOpen(true);
@@ -149,9 +173,23 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     );
   };
 
-  // Lọc danh sách
+  // Lọc danh sách - CHỈ HIỂN THỊ PHIẾU ỨNG CỦA NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const filteredAdvances = useMemo(() => {
     return advances.filter((adv) => {
+      // 1. Kiểm tra xem nhân sự có đang làm việc (ACTIVE) hay không
+      let isWorkerActive = true;
+      if (adv.targetType === 'PERMANENT') {
+        const emp = employees.find((e) => e.id === adv.workerId || e.code === adv.workerCode);
+        if (emp && (emp.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
+      } else if (adv.targetType === 'SEASONAL') {
+        const worker = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
+        if (worker && (worker.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
+      } else if (adv.targetType === 'TEAM') {
+        const team = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
+        if (team && (team.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
+      }
+      if (!isWorkerActive) return false;
+
       const matchSearch =
         adv.workerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         adv.workerCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -164,7 +202,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
 
       return matchSearch && matchTarget && matchStatus;
     });
-  }, [advances, searchTerm, targetTypeFilter, statusFilter]);
+  }, [advances, employees, seasonalWorkers, teamWorkers, searchTerm, targetTypeFilter, statusFilter]);
 
   // Thống kê
   const totalAmount = advances.reduce((sum, a) => sum + (a.amount || 0), 0);
@@ -310,18 +348,28 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       )}
 
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-[#09233b] via-[#0f3d64] to-[#1c5b8c] text-white p-4 sm:p-5 rounded-2xl shadow-sm border border-[#13375c] flex flex-wrap items-center justify-between gap-4">
+      <div className={`text-white p-4 sm:p-5 rounded-2xl shadow-sm border flex flex-wrap items-center justify-between gap-4 ${
+        forcedTargetType === 'SEASONAL'
+          ? 'bg-gradient-to-r from-amber-900 via-amber-800 to-amber-700 border-amber-900'
+          : 'bg-gradient-to-r from-[#09233b] via-[#0f3d64] to-[#1c5b8c] border-[#13375c]'
+      }`}>
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-2 bg-amber-500/20 text-amber-300 rounded-lg">
+            <span className={`p-2 rounded-lg ${forcedTargetType === 'SEASONAL' ? 'bg-amber-500 text-slate-950' : 'bg-amber-500/20 text-amber-300'}`}>
               <CreditCard className="w-5 h-5" />
             </span>
             <h2 className="text-base sm:text-lg font-black tracking-wide uppercase">
-              Bản Lương Ứng Theo Nhân Viên (Tạm Ứng Tiền Lương)
+              {forcedTargetType === 'PERMANENT'
+                ? 'Bản Ứng Lương Nhân Viên Chính Thức'
+                : forcedTargetType === 'SEASONAL'
+                ? 'Bản Ứng Lương Nhân Viên Thời Vụ'
+                : 'Bản Lương Ứng Theo Nhân Viên (Tạm Ứng Tiền Lương)'}
             </h2>
           </div>
-          <p className="text-xs text-sky-200 mt-1 max-w-2xl">
-            Quản lý phê duyệt tạm ứng cho Nhân viên chính thức, Nhân lực thời vụ và Tổ đội thi công. Tự động liên kết và khấu trừ vào Bảng lương hàng kỳ.
+          <p className="text-xs text-sky-100 mt-1 max-w-2xl">
+            {forcedTargetType
+              ? 'Chỉ hiển thị và cho phép lập phiếu tạm ứng đối với nhân sự có trạng thái đang làm việc trong danh sách. Tự động khấu trừ vào Bảng lương hàng kỳ.'
+              : 'Quản lý phê duyệt tạm ứng cho Nhân viên chính thức, Nhân lực thời vụ và Tổ đội thi công. Tự động liên kết và khấu trừ vào Bảng lương hàng kỳ.'}
           </p>
         </div>
 
@@ -411,20 +459,22 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <Filter className="w-3.5 h-3.5 text-slate-500" />
-            <span>Đối tượng:</span>
-            <select
-              value={targetTypeFilter}
-              onChange={(e) => setTargetTypeFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white cursor-pointer"
-            >
-              <option value="ALL">Tất cả đối tượng</option>
-              <option value="PERMANENT">1. Nhân viên chính thức</option>
-              <option value="SEASONAL">2. Nhân lực thời vụ</option>
-              <option value="TEAM">3. Nhân viên tổ đội</option>
-            </select>
-          </div>
+          {!forcedTargetType && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-600">
+              <Filter className="w-3.5 h-3.5 text-slate-500" />
+              <span>Đối tượng:</span>
+              <select
+                value={targetTypeFilter}
+                onChange={(e) => setTargetTypeFilter(e.target.value as any)}
+                className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white cursor-pointer"
+              >
+                <option value="ALL">Tất cả đối tượng</option>
+                <option value="PERMANENT">1. Nhân viên chính thức</option>
+                <option value="SEASONAL">2. Nhân lực thời vụ</option>
+                <option value="TEAM">3. Nhân viên tổ đội</option>
+              </select>
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
             <span>Trạng thái:</span>
