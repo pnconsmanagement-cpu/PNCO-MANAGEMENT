@@ -236,17 +236,19 @@ export default function App() {
     return initialSalaryAdvances;
   });
 
-  const [activeTab, setActiveTab] = useState<TabType>('EMPLOYEE_LIST');
+  const [activeTab, setActiveTab] = useState<TabType>('PERMANENT_EMPLOYEES');
   const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
 
   const handleSelectTab = (tab: TabType) => {
-    if (tab === 'SEASONAL_WORKERS') {
-      setActiveTab('EMPLOYEE_LIST');
-      setEmployeeSubTab('SEASONAL');
-    } else if (tab === 'EMPLOYEE_LIST') {
-      setActiveTab('EMPLOYEE_LIST');
+    if (tab === 'EMPLOYEE_LIST') {
+      setActiveTab('PERMANENT_EMPLOYEES');
+      setEmployeeSubTab('PERMANENT');
+    } else if (tab === 'PAYROLL_TABLE') {
+      setActiveTab('PERMANENT_PAYROLL');
     } else {
       setActiveTab(tab);
+      if (tab === 'PERMANENT_EMPLOYEES') setEmployeeSubTab('PERMANENT');
+      if (tab === 'SEASONAL_WORKERS') setEmployeeSubTab('SEASONAL');
     }
   };
   const [isSidebarMobileOpen, setIsSidebarMobileOpen] = useState(false);
@@ -1016,7 +1018,7 @@ export default function App() {
       <div className="flex flex-1 min-h-[calc(100vh-60px)] relative">
         {/* Left Sidebar Navigation */}
         <Sidebar
-          activeTab={activeTab === 'EMPLOYEE_LIST' ? (employeeSubTab === 'SEASONAL' ? 'SEASONAL_WORKERS' : 'EMPLOYEE_LIST') : activeTab}
+          activeTab={activeTab}
           onSelectTab={handleSelectTab}
           auditIssuesCount={auditCount}
           seasonalCount={seasonalWorkers.length}
@@ -1093,8 +1095,8 @@ export default function App() {
             />
           )}
 
-          {/* Tab 3: Bản Lương (Tuần, Tháng, Quý, Năm) */}
-          {activeTab === 'PAYROLL_TABLE' && (
+          {/* Tab 3: Bản Lương Nhân Viên Chính Thức */}
+          {(activeTab === 'PERMANENT_PAYROLL' || activeTab === 'PAYROLL_TABLE') && (
             <PayrollTableTab
               employees={employees}
               seasonalWorkers={seasonalWorkers}
@@ -1104,194 +1106,80 @@ export default function App() {
               onUpdateEmployee={handleUpdateEmployee}
               onAddEmployee={handleAddEmployee}
               onDeleteEmployee={handleDeleteEmployee}
+              forcedCategory="PERMANENT"
             />
           )}
 
-          {/* Tab 4: Bản Lương Ứng (Tạm Ứng) */}
-          {activeTab === 'SALARY_ADVANCES' && (
-            <SalaryAdvancesTab
-              advances={salaryAdvances}
+          {/* Tab 4: Bản Lương Nhân Viên Thời Vụ */}
+          {activeTab === 'SEASONAL_PAYROLL' && (
+            <PayrollTableTab
               employees={employees}
               seasonalWorkers={seasonalWorkers}
               teamWorkers={teamWorkers}
               config={config}
-              onAddAdvance={handleAddSalaryAdvance}
-              onUpdateAdvance={handleUpdateSalaryAdvance}
-              onDeleteAdvance={handleDeleteSalaryAdvance}
+              onChangeMonthYear={handleChangeMonthYear}
+              onUpdateEmployee={handleUpdateEmployee}
+              onAddEmployee={handleAddEmployee}
+              onDeleteEmployee={handleDeleteEmployee}
+              forcedCategory="SEASONAL"
             />
           )}
 
-          {/* Tab 5: Báo Cáo Tài Chính Tổng Hợp */}
-          {activeTab === 'FINANCIAL_REPORT' && (
-            <FinancialReportTab
+          {/* Tab 1: Bản Nhân Viên Chính Thức */}
+          {(activeTab === 'PERMANENT_EMPLOYEES' || (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')) && (
+            <EmployeeListTab
               employees={employees}
-              seasonalWorkers={seasonalWorkers}
-              teamWorkers={teamWorkers}
+              config={config}
+              onChangeMonthYear={handleChangeMonthYear}
+              onUpdateEmployee={handleUpdateEmployee}
+              onAddEmployee={handleAddEmployee}
+              onDeleteEmployee={handleDeleteEmployee}
+              onBatchUpdate={handleBatchUpdate}
+              onGoToAttendance={() => setActiveTab('ATTENDANCE')}
+              onGoToSeasonalWorkers={() => {
+                setActiveTab('SEASONAL_WORKERS');
+                setEmployeeSubTab('SEASONAL');
+              }}
+              onResetDefault={handleResetDefault}
+            />
+          )}
+
+          {/* Tab 2: Bản Nhân Viên Thời Vụ */}
+          {(activeTab === 'SEASONAL_WORKERS' || (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'SEASONAL')) && (
+            <SeasonalWorkersTab
+              workers={seasonalWorkers}
+              config={config}
+              onChangeMonthYear={handleChangeMonthYear}
+              onUpdateWorker={handleUpdateSeasonalWorker}
+              onAddWorker={handleAddSeasonalWorker}
+              onDeleteWorker={handleDeleteSeasonalWorker}
+              onDeleteBatchWorkers={handleDeleteBatchSeasonalWorkers}
+              onClearAllWorkers={handleClearAllSeasonalWorkers}
+              onResetWorkers={handleResetSeasonalWorkers}
+              onReorderWorkers={handleReorderSeasonalWorkers}
+              onOpenMobileView={(workerCode) => {
+                sessionStorage.setItem('pncons_is_admin_preview', 'true');
+                setActiveMobileWorkerCode(workerCode);
+                setIsMobileAttendanceView(true);
+              }}
+              onGoToPermanentEmployees={() => {
+                setActiveTab('PERMANENT_EMPLOYEES');
+                setEmployeeSubTab('PERMANENT');
+              }}
+            />
+          )}
+
+          {/* Tab Tổ Đội (khi truy cập từ sub-tab) */}
+          {activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'TEAM' && (
+            <TeamWorkersTab
+              workers={teamWorkers}
               projects={projects}
-              advances={salaryAdvances}
               config={config}
+              onAddWorker={handleAddTeamWorker}
+              onUpdateWorker={handleUpdateTeamWorker}
+              onDeleteWorker={handleDeleteTeamWorker}
+              onBatchUpdate={handleBatchUpdateTeamWorkers}
             />
-          )}
-
-          {/* Tab 6: Hub Danh Sách Nhân Viên: 3 nhóm (1. Chính thức, 2. Thời vụ, 3. Tổ đội) */}
-          {(activeTab === 'EMPLOYEE_LIST' || activeTab === 'SEASONAL_WORKERS') && (
-            <div className="flex flex-col gap-3">
-              {/* Thanh chuyển đổi 3 Sub-tabs Nhân viên */}
-              <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-3 select-none">
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Tab con 1: Nhân Viên Chính Thức */}
-                  <button
-                    type="button"
-                    id="subtab-permanent-employees"
-                    onClick={() => {
-                      setEmployeeSubTab('PERMANENT');
-                      setActiveTab('EMPLOYEE_LIST');
-                    }}
-                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
-                      activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT'
-                        ? 'bg-[#0f3d64] text-white shadow-md ring-2 ring-[#0f3d64]/20 font-black'
-                        : 'bg-slate-50 text-slate-700 hover:text-[#0f3d64] hover:bg-sky-50 border border-slate-200'
-                    }`}
-                  >
-                    <Users className={`w-4 h-4 ${(activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT') ? 'text-sky-300' : 'text-slate-500'}`} />
-                    <span>1. Nhân Viên Chính Thức</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                      (activeTab === 'EMPLOYEE_LIST' && employeeSubTab === 'PERMANENT')
-                        ? 'bg-sky-500 text-white'
-                        : 'bg-slate-200 text-slate-700'
-                    }`}>
-                      {employees.length}
-                    </span>
-                  </button>
-
-                  {/* Tab con 2: Nhân Lực Thời Vụ */}
-                  <button
-                    type="button"
-                    id="subtab-seasonal-workers"
-                    onClick={() => {
-                      setEmployeeSubTab('SEASONAL');
-                      setActiveTab('EMPLOYEE_LIST');
-                    }}
-                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
-                      activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL'
-                        ? 'bg-amber-600 text-white shadow-md ring-2 ring-amber-600/20 font-black'
-                        : 'bg-slate-50 text-slate-700 hover:text-amber-800 hover:bg-amber-50 border border-slate-200'
-                    }`}
-                  >
-                    <HardHat className={`w-4 h-4 ${activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
-                    <span>2. Nhân Lực Thời Vụ</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                      activeTab === 'SEASONAL_WORKERS' || employeeSubTab === 'SEASONAL'
-                        ? 'bg-slate-900 text-amber-300'
-                        : 'bg-slate-200 text-slate-700'
-                    }`}>
-                      {seasonalWorkers.length}
-                    </span>
-                  </button>
-
-                  {/* Tab con 3: Nhân Viên Tổ Đội */}
-                  <button
-                    type="button"
-                    id="subtab-team-workers"
-                    onClick={() => {
-                      setEmployeeSubTab('TEAM');
-                      setActiveTab('EMPLOYEE_LIST');
-                    }}
-                    className={`px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer shadow-xs ${
-                      employeeSubTab === 'TEAM'
-                        ? 'bg-indigo-700 text-white shadow-md ring-2 ring-indigo-700/20 font-black'
-                        : 'bg-slate-50 text-slate-700 hover:text-indigo-800 hover:bg-indigo-50 border border-slate-200'
-                    }`}
-                  >
-                    <Building className={`w-4 h-4 ${employeeSubTab === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
-                    <span>3. Nhân Viên Tổ Đội</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                      employeeSubTab === 'TEAM'
-                        ? 'bg-indigo-950 text-indigo-200'
-                        : 'bg-slate-200 text-slate-700'
-                    }`}>
-                      {teamWorkers.length}
-                    </span>
-                  </button>
-                </div>
-
-                <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500 pr-2">
-                  {employeeSubTab === 'PERMANENT' && (
-                    <span className="flex items-center gap-1.5 text-sky-900 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                      Quản lý {employees.length} nhân sự thường trực (HĐLĐ, phòng ban, lương tháng & đánh giá hàng năm)
-                    </span>
-                  )}
-                  {employeeSubTab === 'SEASONAL' && (
-                    <span className="flex items-center gap-1.5 text-amber-900 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                      Quản lý {seasonalWorkers.length} công nhân kỹ thuật & thợ khoán (lương tuần, chấm công công trình)
-                    </span>
-                  )}
-                  {employeeSubTab === 'TEAM' && (
-                    <span className="flex items-center gap-1.5 text-indigo-900 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-                      Quản lý {teamWorkers.length} tổ đội thi công (cai thầu, quân số, đơn giá khoán/ngày)
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Nội dung Tab tương ứng */}
-              {employeeSubTab === 'PERMANENT' && (
-                <EmployeeListTab
-                  employees={employees}
-                  config={config}
-                  onChangeMonthYear={handleChangeMonthYear}
-                  onUpdateEmployee={handleUpdateEmployee}
-                  onAddEmployee={handleAddEmployee}
-                  onDeleteEmployee={handleDeleteEmployee}
-                  onBatchUpdate={handleBatchUpdate}
-                  onGoToAttendance={() => setActiveTab('ATTENDANCE')}
-                  onGoToSeasonalWorkers={() => {
-                    setEmployeeSubTab('SEASONAL');
-                    setActiveTab('EMPLOYEE_LIST');
-                  }}
-                  onResetDefault={handleResetDefault}
-                />
-              )}
-
-              {employeeSubTab === 'SEASONAL' && (
-                <SeasonalWorkersTab
-                  workers={seasonalWorkers}
-                  config={config}
-                  onChangeMonthYear={handleChangeMonthYear}
-                  onUpdateWorker={handleUpdateSeasonalWorker}
-                  onAddWorker={handleAddSeasonalWorker}
-                  onDeleteWorker={handleDeleteSeasonalWorker}
-                  onDeleteBatchWorkers={handleDeleteBatchSeasonalWorkers}
-                  onClearAllWorkers={handleClearAllSeasonalWorkers}
-                  onResetWorkers={handleResetSeasonalWorkers}
-                  onReorderWorkers={handleReorderSeasonalWorkers}
-                  onOpenMobileView={(workerCode) => {
-                    sessionStorage.setItem('pncons_is_admin_preview', 'true');
-                    setActiveMobileWorkerCode(workerCode);
-                    setIsMobileAttendanceView(true);
-                  }}
-                  onGoToPermanentEmployees={() => {
-                    setEmployeeSubTab('PERMANENT');
-                    setActiveTab('EMPLOYEE_LIST');
-                  }}
-                />
-              )}
-
-              {employeeSubTab === 'TEAM' && (
-                <TeamWorkersTab
-                  workers={teamWorkers}
-                  projects={projects}
-                  config={config}
-                  onAddWorker={handleAddTeamWorker}
-                  onUpdateWorker={handleUpdateTeamWorker}
-                  onDeleteWorker={handleDeleteTeamWorker}
-                  onBatchUpdate={handleBatchUpdateTeamWorkers}
-                />
-              )}
-            </div>
           )}
 
           {/* Tab 7: Bản Chấm Công (3 nhóm) */}

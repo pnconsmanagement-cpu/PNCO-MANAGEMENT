@@ -67,33 +67,53 @@ export const Sidebar: React.FC<SidebarProps> = ({
     badgeColor?: string;
   }
 
-  // Danh mục 7 mục chính xác theo yêu cầu người dùng Phúc Nguyên:
+  // Cấu trúc 4 trụ cột phân tách rõ ràng theo yêu cầu:
+  // 1. Bản Nhân viên chính thức
+  // 2. Bản Nhân viên thời vụ
+  // 3. Bản Lương nhân viên chính thức
+  // 4. Bản Lương nhân viên thời vụ
   const menuItems: NavMenuItem[] = [
     {
-      id: 'EMPLOYEE_LIST',
-      label: '1. Danh Sách Nhân Viên',
-      sublabel: 'Chính thức, Thời vụ & Tổ đội',
+      id: 'PERMANENT_EMPLOYEES',
+      label: '1. Bản Nhân Viên Chính Thức',
+      sublabel: 'Hợp đồng, phòng ban & bảo hiểm',
       icon: Users,
-      badge: employeeCount + seasonalCount + teamCount,
+      badge: employeeCount,
       badgeColor: 'bg-sky-500 text-white font-black',
     },
     {
+      id: 'SEASONAL_WORKERS',
+      label: '2. Bản Nhân Viên Thời Vụ',
+      sublabel: 'Thợ công trình, chấm công & QR',
+      icon: HardHat,
+      badge: seasonalCount,
+      badgeColor: 'bg-amber-500 text-slate-950 font-black',
+    },
+    {
+      id: 'PERMANENT_PAYROLL',
+      label: '3. Bản Lương Chính Thức',
+      sublabel: 'Lương tháng, BHXH 10.5% & thuế TNCN',
+      icon: Table2,
+      badgeColor: 'bg-sky-600 text-white font-black',
+    },
+    {
+      id: 'SEASONAL_PAYROLL',
+      label: '4. Bản Lương Thời Vụ',
+      sublabel: 'Lương tuần/2 tuần/tháng & thuế 10%',
+      icon: Table2,
+      badgeColor: 'bg-amber-600 text-white font-black',
+    },
+    {
       id: 'PROJECTS',
-      label: '2. Danh Sách Dự Án',
+      label: '5. Danh Sách Dự Án',
       sublabel: 'Công trình, ngân sách & nhân lực',
       icon: Building2,
       badge: projectCount,
       badgeColor: 'bg-emerald-500 text-white font-black',
     },
     {
-      id: 'PAYROLL_TABLE',
-      label: '3. Bản Lương Chi Tiết',
-      sublabel: 'Theo Tuần, Tháng, Quý, Năm',
-      icon: Table2,
-    },
-    {
       id: 'SALARY_ADVANCES',
-      label: '4. Bản Lương Ứng',
+      label: '6. Bản Lương Ứng',
       sublabel: 'Quản lý tạm ứng & cấn trừ',
       icon: Zap,
       badge: advanceCount,
@@ -101,19 +121,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'ATTENDANCE',
-      label: '5. Bản Chấm Công',
-      sublabel: 'Chính thức, Thời vụ, Tổ đội',
+      label: '7. Bảng Chấm Công',
+      sublabel: 'Chấm trực tiếp & QR di động',
       icon: CalendarCheck,
     },
     {
       id: 'FINANCIAL_REPORT',
-      label: '6. Báo Cáo Tài Chính',
-      sublabel: 'Tổng hợp thời gian & dự án',
+      label: '8. Báo Cáo Tài Chính',
+      sublabel: 'Dòng tiền & Chi phí lương',
       icon: PieChart,
     },
     {
       id: 'PAYSLIP',
-      label: '7. Phiếu Lương In/Gửi',
+      label: '9. Phiếu Lương In/Gửi',
       sublabel: 'Mẫu 02-LĐTL & Zalo',
       icon: FileText,
     },
@@ -207,7 +227,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <nav className="flex-1 overflow-y-auto px-2.5 py-1.5 space-y-1 custom-scrollbar">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive =
+              activeTab === item.id ||
+              (item.id === 'PERMANENT_EMPLOYEES' && activeTab === 'EMPLOYEE_LIST') ||
+              (item.id === 'PERMANENT_PAYROLL' && activeTab === 'PAYROLL_TABLE');
 
             return (
               <button

@@ -13,21 +13,25 @@ import {
 } from 'lucide-react';
 
 export type TabType =
-  | 'EMPLOYEE_LIST'
+  | 'PERMANENT_EMPLOYEES'
+  | 'SEASONAL_WORKERS'
+  | 'PERMANENT_PAYROLL'
+  | 'SEASONAL_PAYROLL'
   | 'PROJECTS'
-  | 'PAYROLL_TABLE'
   | 'SALARY_ADVANCES'
   | 'ATTENDANCE'
   | 'FINANCIAL_REPORT'
   | 'PAYSLIP'
   | 'DEPARTMENT'
   | 'DATA_AUDIT'
-  | 'SEASONAL_WORKERS';
+  | 'EMPLOYEE_LIST'
+  | 'PAYROLL_TABLE';
 
 interface NavigationTabsProps {
   activeTab: TabType;
   onSelectTab: (tab: TabType) => void;
   auditIssuesCount: number;
+  employeeCount?: number;
   seasonalCount?: number;
   teamCount?: number;
   projectCount?: number;
@@ -38,10 +42,11 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   activeTab,
   onSelectTab,
   auditIssuesCount,
-  seasonalCount,
-  teamCount,
-  projectCount,
-  advanceCount,
+  employeeCount = 0,
+  seasonalCount = 0,
+  teamCount = 0,
+  projectCount = 0,
+  advanceCount = 0,
 }) => {
   interface TabItem {
     id: TabType;
@@ -52,15 +57,16 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   }
 
   const tabs: TabItem[] = [
-    { id: 'EMPLOYEE_LIST', label: '1. DANH SÁCH NHÂN VIÊN', icon: Users },
-    { id: 'PROJECTS', label: '2. DỰ ÁN', icon: Building, badge: projectCount },
-    { id: 'PAYROLL_TABLE', label: '3. BẢNG LƯƠNG', icon: Table2 },
-    { id: 'SALARY_ADVANCES', label: '4. LƯƠNG ỨNG', icon: CreditCard, badge: advanceCount },
-    { id: 'ATTENDANCE', label: '5. CHẤM CÔNG', icon: CalendarCheck },
-    { id: 'FINANCIAL_REPORT', label: '6. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
-    { id: 'PAYSLIP', label: '7. PHIẾU LƯƠNG', icon: FileText },
-    { id: 'DEPARTMENT', label: 'BỘ PHẬN', icon: PieChart },
-    { id: 'DATA_AUDIT', label: 'KIỂM TRA', icon: ShieldAlert, badge: auditIssuesCount },
+    { id: 'PERMANENT_EMPLOYEES', label: '1. NV CHÍNH THỨC', icon: Users, badge: employeeCount, badgeColor: 'bg-sky-500 text-white' },
+    { id: 'SEASONAL_WORKERS', label: '2. NV THỜI VỤ', icon: HardHat, badge: seasonalCount, badgeColor: 'bg-amber-500 text-slate-950 font-bold' },
+    { id: 'PERMANENT_PAYROLL', label: '3. LƯƠNG CHÍNH THỨC', icon: Table2 },
+    { id: 'SEASONAL_PAYROLL', label: '4. LƯƠNG THỜI VỤ', icon: Table2 },
+    { id: 'PROJECTS', label: '5. DỰ ÁN', icon: Building, badge: projectCount },
+    { id: 'SALARY_ADVANCES', label: '6. LƯƠNG ỨNG', icon: CreditCard, badge: advanceCount },
+    { id: 'ATTENDANCE', label: '7. CHẤM CÔNG', icon: CalendarCheck },
+    { id: 'FINANCIAL_REPORT', label: '8. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
+    { id: 'PAYSLIP', label: '9. PHIẾU LƯƠNG', icon: FileText },
+    { id: 'DATA_AUDIT', label: '10. KIỂM TRA', icon: ShieldAlert, badge: auditIssuesCount },
   ];
 
   return (

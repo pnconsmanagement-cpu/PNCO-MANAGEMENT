@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Download,
@@ -33,6 +33,7 @@ interface PayrollTableTabProps {
   onUpdateEmployee: (emp: Employee) => void;
   onAddEmployee: (emp: Employee) => void;
   onDeleteEmployee: (id: string) => void;
+  forcedCategory?: 'PERMANENT' | 'SEASONAL' | 'TEAM' | 'ALL';
 }
 
 export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
@@ -44,6 +45,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onUpdateEmployee,
   onAddEmployee,
   onDeleteEmployee,
+  forcedCategory,
 }) => {
   // Chu kỳ ghi nhận lương: Theo Tuần, Theo Tháng, Theo Quý, Theo Năm
   const [periodCycle, setPeriodCycle] = useState<'WEEK' | 'MONTH' | 'QUARTER' | 'YEAR'>('MONTH');
@@ -51,7 +53,15 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [selectedQuarter, setSelectedQuarter] = useState<number>(() => Math.ceil((config.month || 9) / 3));
 
   // Nhóm nhân sự: Tất cả, Chính thức, Thời vụ, Tổ đội
-  const [workerCategory, setWorkerCategory] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
+  const [workerCategory, setWorkerCategory] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>(
+    forcedCategory || 'PERMANENT'
+  );
+
+  useEffect(() => {
+    if (forcedCategory) {
+      setWorkerCategory(forcedCategory);
+    }
+  }, [forcedCategory]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDept, setSelectedDept] = useState('ALL');
@@ -394,6 +404,55 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-4">
+      {/* Banner chuyên dụng nếu ở chế độ Bảng lương riêng biệt */}
+      {forcedCategory === 'PERMANENT' && (
+        <div className="bg-gradient-to-r from-[#0f3d64] to-slate-900 text-white p-3.5 rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-sky-500/20 border border-sky-400/30 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5 text-sky-300" />
+            </div>
+            <div>
+              <h2 className="text-base font-black tracking-wide flex items-center gap-2">
+                3. BẢN LƯƠNG NHÂN VIÊN CHÍNH THỨC
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-sky-500 text-white">
+                  {filteredEmployees.length} nhân sự
+                </span>
+              </h2>
+              <p className="text-xs text-slate-300">
+                Lương theo chức danh & phòng ban, tính công chuẩn 26 ngày, BHXH 10.5%, thuế TNCN lũy tiến từng phần và cấn trừ tạm ứng.
+              </p>
+            </div>
+          </div>
+          <div className="text-xs text-sky-200 bg-sky-950/60 px-3 py-1.5 rounded-lg border border-sky-800/40 font-semibold">
+            Kỳ tính lương: <strong className="text-white">{config.periodCode}</strong>
+          </div>
+        </div>
+      )}
+
+      {forcedCategory === 'SEASONAL' && (
+        <div className="bg-gradient-to-r from-amber-700 to-slate-900 text-white p-3.5 rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
+              <HardHat className="w-5 h-5 text-amber-300" />
+            </div>
+            <div>
+              <h2 className="text-base font-black tracking-wide flex items-center gap-2">
+                4. BẢN LƯƠNG NHÂN VIÊN THỜI VỤ & KỸ THUẬT CÔNG TRÌNH
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950">
+                  {scaledSeasonal.length} công nhân
+                </span>
+              </h2>
+              <p className="text-xs text-amber-200/90">
+                Tính theo chu kỳ (Tuần / 2 Tuần / Tháng), đơn giá ngày công, tăng ca x1.5, phụ cấp ăn trưa/đi lại & khấu trừ thuế TNCN 10%.
+              </p>
+            </div>
+          </div>
+          <div className="text-xs text-amber-200 bg-amber-950/60 px-3 py-1.5 rounded-lg border border-amber-800/40 font-semibold">
+            Kỳ tính lương: <strong className="text-white">{config.periodCode}</strong>
+          </div>
+        </div>
+      )}
+
       {/* 4 Chế độ chu kỳ lương: Theo Tuần, Theo Tháng, Theo Quý, Theo Năm */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-slate-100 rounded-xl border border-slate-200">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -490,75 +549,77 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         )}
       </div>
 
-      {/* 3 Nhóm nhân sự: Chính thức, Thời vụ, Tổ đội, Tổng hợp */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-50 rounded-xl border border-slate-200">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            id="cat-permanent"
-            onClick={() => setWorkerCategory('PERMANENT')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-              workerCategory === 'PERMANENT'
-                ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>1. Nhân Viên Chính Thức</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'}`}>
-              {employees.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            id="cat-seasonal"
-            onClick={() => setWorkerCategory('SEASONAL')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-              workerCategory === 'SEASONAL'
-                ? 'bg-amber-600 text-white shadow-xs font-black ring-2 ring-amber-600/20'
-                : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-200'
-            }`}
-          >
-            <HardHat className="w-3.5 h-3.5" />
-            <span>2. Nhân Lực Thời Vụ</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'}`}>
-              {seasonalWorkers.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            id="cat-team"
-            onClick={() => setWorkerCategory('TEAM')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-              workerCategory === 'TEAM'
-                ? 'bg-indigo-700 text-white shadow-xs font-black ring-2 ring-indigo-700/20'
-                : 'bg-white text-slate-700 hover:bg-indigo-50 border border-slate-200'
-            }`}
-          >
-            <Building className="w-3.5 h-3.5" />
-            <span>3. Nhân Viên Tổ Đội</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'}`}>
-              {teamWorkers.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            id="cat-all"
-            onClick={() => setWorkerCategory('ALL')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-              workerCategory === 'ALL'
-                ? 'bg-slate-800 text-white shadow-xs font-black ring-2 ring-slate-800/20'
-                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Tổng Hợp 3 Nhóm</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'ALL' ? 'bg-slate-950 text-emerald-400' : 'bg-slate-200 text-slate-700'}`}>
-              {employees.length + seasonalWorkers.length + teamWorkers.length}
-            </span>
-          </button>
+      {/* 3 Nhóm nhân sự: Chỉ hiển thị khi xem Tổng hợp (không cố định nhóm) */}
+      {!forcedCategory && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-50 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              id="cat-permanent"
+              onClick={() => setWorkerCategory('PERMANENT')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                workerCategory === 'PERMANENT'
+                  ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>1. Nhân Viên Chính Thức</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {employees.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              id="cat-seasonal"
+              onClick={() => setWorkerCategory('SEASONAL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                workerCategory === 'SEASONAL'
+                  ? 'bg-amber-600 text-white shadow-xs font-black ring-2 ring-amber-600/20'
+                  : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-200'
+              }`}
+            >
+              <HardHat className="w-3.5 h-3.5" />
+              <span>2. Nhân Lực Thời Vụ</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'}`}>
+                {seasonalWorkers.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              id="cat-team"
+              onClick={() => setWorkerCategory('TEAM')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                workerCategory === 'TEAM'
+                  ? 'bg-indigo-700 text-white shadow-xs font-black ring-2 ring-indigo-700/20'
+                  : 'bg-white text-slate-700 hover:bg-indigo-50 border border-slate-200'
+              }`}
+            >
+              <Building className="w-3.5 h-3.5" />
+              <span>3. Nhân Viên Tổ Đội</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'}`}>
+                {teamWorkers.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              id="cat-all"
+              onClick={() => setWorkerCategory('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                workerCategory === 'ALL'
+                  ? 'bg-slate-800 text-white shadow-xs font-black ring-2 ring-slate-800/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Tổng Hợp 3 Nhóm</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${workerCategory === 'ALL' ? 'bg-slate-950 text-emerald-400' : 'bg-slate-200 text-slate-700'}`}>
+                {employees.length + seasonalWorkers.length + teamWorkers.length}
+              </span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Top Filter & Actions */}
       <div className="flex flex-wrap items-center justify-between gap-3">
