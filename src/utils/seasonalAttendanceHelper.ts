@@ -152,62 +152,32 @@ export function getWorkerMonthlyAttendance(
     return worker.monthlyAttendance[monthKey];
   }
 
-  // Nếu chưa có bản ghi tháng, tự động tạo mới
+  // Nếu chưa có bản ghi tháng, tự động tạo mới (mặc định tất cả các ngày là 0 công để thợ/người dùng chấm từ đầu)
   const daysInMonth = getDaysInMonth(year, month);
   const days: { [dayNumber: number]: DailyAttendanceDetail } = {};
-
-  // Kiểm tra xem công nhân đã có số công trong kỳ này chưa
-  const hasExistingWorkDays = (worker.actualWorkDays || 0) > 0;
-  let remainingDays = hasExistingWorkDays ? worker.actualWorkDays : 0;
-  let remainingOT = hasExistingWorkDays ? (worker.overtimeHours || 0) : 0;
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dStr = String(d).padStart(2, '0');
     const dateLabel = `${dStr}/${mStr}`;
     const dayInfo = getDayOfWeekInfo(dateLabel, year, month);
 
-    let dayWork = 0;
-    let dayOT = 0;
-
-    // Nếu công nhân đã có số công ghi nhận trước đó, điền vào các ngày T2 - T7
-    if (remainingDays >= 1 && !dayInfo.isSunday) {
-      dayWork = 1;
-      remainingDays -= 1;
-    } else if (remainingDays >= 0.5 && !dayInfo.isSunday) {
-      dayWork = 0.5;
-      remainingDays -= 0.5;
-    }
-
-    if (dayWork > 0 && remainingOT > 0) {
-      dayOT = Math.min(remainingOT, 4);
-      remainingOT -= dayOT;
-    }
-
     days[d] = {
       day: d,
       dateStr: `${dStr}/${mStr}/${year}`,
-      workUnits: dayWork,
-      otHours: dayOT,
-      note: dayWork > 0 ? (dayOT > 0 ? `Thi công + ${dayOT}h OT` : 'Thi công bình thường') : (dayInfo.isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'),
+      workUnits: 0,
+      otHours: 0,
+      note: dayInfo.isSunday ? 'Nghỉ Chủ Nhật' : 'Chưa chấm công',
       shiftType: 'DAY',
       updatedAt: new Date().toISOString(),
     };
   }
 
-  // Tính tổng công và OT thực tế
-  let totalWorkDays = 0;
-  let totalOtHours = 0;
-  Object.values(days).forEach((d) => {
-    totalWorkDays += d.workUnits || 0;
-    totalOtHours += d.otHours || 0;
-  });
-
   return {
     monthKey,
     month,
     year,
-    totalWorkDays,
-    totalOtHours,
+    totalWorkDays: 0,
+    totalOtHours: 0,
     days,
     lastSubmittedAt: undefined,
   };

@@ -1555,6 +1555,13 @@ export const subscribeToSupabaseRealtime = (
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance_records' },
+        (payload) => {
+          onTableChange('seasonal_workers', payload.eventType, payload);
+        }
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'employees' },
         (payload) => {
           onTableChange('employees', payload.eventType, payload);

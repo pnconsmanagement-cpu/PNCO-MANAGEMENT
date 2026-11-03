@@ -132,6 +132,33 @@ app.post('/api/attendance/mark', (req, res) => {
       (w: any) => (worker.code && w.code === worker.code) || (worker.id && String(w.id) === String(worker.id))
     );
     if (idx >= 0) {
+      const existingMonthly = workers[idx].monthlyAttendance || {};
+      const incomingMonthly = worker.monthlyAttendance || {};
+      const mergedMonthly: Record<string, any> = { ...existingMonthly };
+
+      Object.entries(incomingMonthly).forEach(([mKey, incRec]: [string, any]) => {
+        if (!mergedMonthly[mKey]) {
+          mergedMonthly[mKey] = incRec;
+        } else {
+          const exDays = mergedMonthly[mKey].days || {};
+          const incDays = incRec.days || {};
+          const mergedDays = { ...exDays, ...incDays };
+          let tWork = 0;
+          let tOt = 0;
+          Object.values(mergedDays).forEach((d: any) => {
+            tWork += Number(d.workUnits || 0);
+            tOt += Number(d.otHours || 0);
+          });
+          mergedMonthly[mKey] = {
+            ...mergedMonthly[mKey],
+            ...incRec,
+            days: mergedDays,
+            totalWorkDays: Math.round(tWork * 10) / 10,
+            totalOtHours: tOt,
+          };
+        }
+      });
+
       workers[idx] = {
         ...workers[idx],
         ...worker,
@@ -139,10 +166,7 @@ app.post('/api/attendance/mark', (req, res) => {
           ...(workers[idx].periodRecords || {}),
           ...(worker.periodRecords || {}),
         },
-        monthlyAttendance: {
-          ...(workers[idx].monthlyAttendance || {}),
-          ...(worker.monthlyAttendance || {}),
-        },
+        monthlyAttendance: mergedMonthly,
       };
     } else {
       workers.push(worker);

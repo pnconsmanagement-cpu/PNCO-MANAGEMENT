@@ -34,12 +34,13 @@ import {
   generateShareableAttendanceUrl,
 } from '../utils/seasonalAttendanceHelper';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
-import { saveAttendanceToServer, fetchServerData } from '../services/backendSyncService';
+import { saveAttendanceToServer, fetchServerData, subscribeToSync } from '../services/backendSyncService';
 import {
   syncSingleSeasonalWorkerToSupabase,
   loadSeasonalWorkersFromSupabase,
   isSupabaseConfigured,
   autoApplyUrlConfig,
+  subscribeToSupabaseRealtime,
 } from '../services/supabaseService';
 
 interface MobileAttendanceAppProps {
@@ -199,63 +200,89 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   }, []);
 
   // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
-  useEffect(() => {
-    (async () => {
-      try {
-        let loadedWorker: SeasonalWorker | null = null;
+  const syncLatestAttendance = async () => {
+    try {
+      let loadedWorker: SeasonalWorker | null = null;
 
-        // 1. Ưu tiên tải trực tiếp từ Supabase Cloud
-        if (isSupabaseConfigured()) {
-          try {
-            const cloudWorkers = await loadSeasonalWorkersFromSupabase();
-            if (cloudWorkers && cloudWorkers.length > 0) {
-              const matched = cloudWorkers.find(
-                (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
-              );
-              if (matched) {
-                loadedWorker = matched;
-              }
-            }
-          } catch (e) {
-            console.warn('[Mobile App] Supabase fetch error:', e);
-          }
-        }
-
-        // 2. Fallback tải từ máy chủ backend
-        if (!loadedWorker) {
-          const data = await fetchServerData();
-          if (data && data.seasonalWorkers && data.seasonalWorkers.length > 0) {
-            const matched = data.seasonalWorkers.find(
+      // 1. Ưu tiên tải trực tiếp từ Supabase Cloud
+      if (isSupabaseConfigured()) {
+        try {
+          const cloudWorkers = await loadSeasonalWorkersFromSupabase();
+          if (cloudWorkers && cloudWorkers.length > 0) {
+            const matched = cloudWorkers.find(
               (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
             );
             if (matched) {
               loadedWorker = matched;
             }
           }
+        } catch (e) {
+          console.warn('[Mobile App] Supabase fetch error:', e);
         }
+      }
 
-        if (loadedWorker) {
-          onUpdateWorker(loadedWorker);
-          const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
-          // Kiểm tra xem localStorage có dữ liệu chấm công mới hơn không
-          const cacheKey = `pncons_mobile_days_${loadedWorker.code}_${year}_${month}`;
-          const cached = typeof window !== 'undefined' ? localStorage.getItem(cacheKey) : null;
-          if (cached) {
-            try {
-              const parsedDays = JSON.parse(cached);
-              if (parsedDays && Object.keys(parsedDays).length > 0) {
-                setAttendanceDays({
-                  ...record.days,
-                  ...parsedDays,
-                });
-                return;
-              }
-            } catch {}
+      // 2. Fallback tải từ máy chủ backend
+      if (!loadedWorker) {
+        const data = await fetchServerData();
+        if (data && data.seasonalWorkers && data.seasonalWorkers.length > 0) {
+          const matched = data.seasonalWorkers.find(
+            (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
+          );
+          if (matched) {
+            loadedWorker = matched;
           }
+        }
+      }
+
+      if (loadedWorker) {
+        onUpdateWorker(loadedWorker);
+        const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
+        setAttendanceDays(record.days);
+        try {
+          const cacheKey = `pncons_mobile_days_${loadedWorker.code}_${year}_${month}`;
+          localStorage.setItem(cacheKey, JSON.stringify(record.days));
+          localStorage.setItem(`pncons_mobile_worker_${loadedWorker.code}`, JSON.stringify(loadedWorker));
+        } catch {}
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    syncLatestAttendance();
+
+    // 1. Tự động cập nhật khi có thay đổi trên Supabase Realtime (khi máy tính bấm chấm công)
+    const unsubscribeSupabase = subscribeToSupabaseRealtime((table) => {
+      if (table === 'seasonal_workers') {
+        syncLatestAttendance();
+      }
+    });
+
+    // 2. Tự động cập nhật khi có tín hiệu từ server
+    const unsubscribeServer = subscribeToSync((serverData) => {
+      if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
+        const matched = serverData.seasonalWorkers.find(
+          (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
+        );
+        if (matched) {
+          onUpdateWorker(matched);
+          const record = getWorkerMonthlyAttendance(matched, year, month);
           setAttendanceDays(record.days);
         }
-      } catch {}
-    })();
+      }
+    });
+
+    // 3. Polling chu kỳ 3 giây để đảm bảo 100% hai thiết bị luôn hiển thị giống hệt nhau
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        syncLatestAttendance();
+      }
+    }, 3000);
+
+    return () => {
+      unsubscribeSupabase();
+      unsubscribeServer();
+      clearInterval(interval);
+    };
   }, [selectedWorkerCode, parsedWorkerInfo.code, year, month]);
 
   // Dữ liệu chấm công tháng của công nhân

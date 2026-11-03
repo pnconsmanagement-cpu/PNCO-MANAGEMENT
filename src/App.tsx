@@ -344,15 +344,38 @@ export default function App() {
             const key = cw.code || cw.id;
             const existing = map.get(key);
             if (existing) {
+              const mergedMonthly = { ...(existing.monthlyAttendance || {}) };
+              Object.entries(cw.monthlyAttendance || {}).forEach(([mKey, cRec]) => {
+                const exRec = mergedMonthly[mKey];
+                if (!exRec) {
+                  mergedMonthly[mKey] = cRec;
+                } else {
+                  const mergedDays = {
+                    ...(exRec.days || {}),
+                    ...(cRec.days || {}),
+                  };
+                  let totDays = 0;
+                  let totOt = 0;
+                  Object.values(mergedDays).forEach((d: any) => {
+                    totDays += Number(d.workUnits || 0);
+                    totOt += Number(d.otHours || 0);
+                  });
+                  mergedMonthly[mKey] = {
+                    ...exRec,
+                    ...cRec,
+                    days: mergedDays,
+                    totalWorkDays: Math.round(totDays * 10) / 10,
+                    totalOtHours: totOt,
+                  };
+                }
+              });
+
               map.set(key, {
                 ...existing,
                 ...cw,
                 actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
                 overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
-                monthlyAttendance: {
-                  ...(existing.monthlyAttendance || {}),
-                  ...(cw.monthlyAttendance || {}),
-                },
+                monthlyAttendance: mergedMonthly,
                 periodRecords: {
                   ...(existing.periodRecords || {}),
                   ...(cw.periodRecords || {}),
