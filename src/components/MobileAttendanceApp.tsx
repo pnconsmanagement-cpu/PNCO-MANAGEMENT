@@ -235,7 +235,6 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       }
 
       if (loadedWorker) {
-        onUpdateWorker(loadedWorker);
         const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
         setAttendanceDays(record.days);
         try {
@@ -264,19 +263,18 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
           (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
         );
         if (matched) {
-          onUpdateWorker(matched);
           const record = getWorkerMonthlyAttendance(matched, year, month);
           setAttendanceDays(record.days);
         }
       }
     });
 
-    // 3. Polling chu kỳ 3 giây để đảm bảo 100% hai thiết bị luôn hiển thị giống hệt nhau
+    // 3. Polling dự phòng chu kỳ 30 giây khi tab đang mở (thay vì 3s gây nghẽn)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         syncLatestAttendance();
       }
-    }, 3000);
+    }, 30000);
 
     return () => {
       unsubscribeSupabase();
