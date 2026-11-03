@@ -435,18 +435,71 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     });
   }
 
-  // 1. Nếu đã có bản ghi chu kỳ và bản ghi đó đã ghi nhận (hoặc có công > 0)
-  if (existingRecord && (existingRecord.isRecorded || existingRecord.actualWorkDays > 0 || !hasMonthlyDataForPeriod)) {
+  // Ưu tiên dữ liệu từ monthlyAttendance nếu có dữ liệu chấm công từ điện thoại hoặc monthlyWorkDays > 0
+  const hasRecordedMonthlyDays = hasMonthlyDataForPeriod && monthlyDays && (monthlyWorkDays > 0 || monthlyOtHours > 0);
+
+  // 1. Nếu có dữ liệu từ link chấm công di động trên điện thoại (monthlyAttendance) với công > 0, hoặc chu kỳ chưa có công nhưng monthlyDays có công
+  if (hasRecordedMonthlyDays) {
+    const timesheetFromMonthly: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
+      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
+      const dayDetail = monthlyDays[dayNum];
+      const match = existingRecord?.weeklyTimesheet?.find((d) => d.dateLabel === dateStr);
+
+      const workUnits = dayDetail !== undefined ? Number(dayDetail.workUnits || 0) : (match ? match.workUnits : 0);
+      const otHours = dayDetail !== undefined ? Number(dayDetail.otHours || 0) : (match ? match.otHours : 0);
+      const shiftType = dayDetail?.shiftType || match?.shiftType || 'DAY';
+      const note = dayDetail?.note || match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+
+      return {
+        dayOfWeek,
+        dayName,
+        dateLabel: dateStr,
+        workUnits,
+        otHours,
+        shiftType,
+        note,
+      };
+    });
+
+    const totalDays = timesheetFromMonthly.reduce((sum, d) => sum + (d.workUnits || 0), 0);
+    const totalOT = timesheetFromMonthly.reduce((sum, d) => sum + (d.otHours || 0), 0);
+    const roundedWorkDays = Math.round(totalDays * 10) / 10;
+
+    return recomputeSeasonalWorkerPayroll({
+      ...worker,
+      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
+      currentPeriodKey: pKey,
+      currentWeekId: period.id,
+      currentWeekLabel: period.label,
+      payrollCycleType: period.cycleType,
+      actualWorkDays: roundedWorkDays,
+      overtimeHours: totalOT,
+      mealAllowance: existingRecord?.mealAllowance ?? worker.mealAllowance ?? 0,
+      travelSafetyAllowance: existingRecord?.travelSafetyAllowance ?? worker.travelSafetyAllowance ?? 0,
+      otherBonus: existingRecord?.otherBonus ?? worker.otherBonus ?? 0,
+      advancePayment: existingRecord?.advancePayment ?? worker.advancePayment ?? 0,
+      hasTaxCommitment: existingRecord?.hasTaxCommitment ?? worker.hasTaxCommitment,
+      notes: existingRecord?.notes ?? worker.notes,
+      weeklyTimesheet: timesheetFromMonthly,
+    });
+  }
+
+  // 2. Nếu đã có bản ghi chu kỳ đã lưu trước đó và có công > 0 hoặc đã ghi nhận
+  if (existingRecord && (existingRecord.isRecorded || existingRecord.actualWorkDays > 0)) {
     // Chuẩn hóa weeklyTimesheet đảm bảo thứ và ngày luôn khớp 100% với lịch thực tế
     let normalizedTimesheet: WeeklyDayAttendance[];
     if (existingRecord.weeklyTimesheet && existingRecord.weeklyTimesheet.length > 0) {
       normalizedTimesheet = period.dates.map((dateStr, idx) => {
         const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
+        const dayNum = parseInt(dateStr.split('/')[0], 10);
+        const dayDetail = monthlyDays?.[dayNum];
         const match = existingRecord.weeklyTimesheet?.find((d) => d.dateLabel === dateStr) || existingRecord.weeklyTimesheet?.[idx];
-        const workUnits = match ? match.workUnits : 0;
-        const otHours = match ? match.otHours : 0;
-        const shiftType = match?.shiftType || 'DAY';
-        const note = match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+
+        const workUnits = dayDetail !== undefined ? Number(dayDetail.workUnits || 0) : (match ? match.workUnits : 0);
+        const otHours = dayDetail !== undefined ? Number(dayDetail.otHours || 0) : (match ? match.otHours : 0);
+        const shiftType = dayDetail?.shiftType || match?.shiftType || 'DAY';
+        const note = dayDetail?.note || match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
 
         return {
           dayOfWeek,
@@ -462,6 +515,11 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       normalizedTimesheet = createTimesheetForPeriod(period, existingRecord.actualWorkDays, existingRecord.overtimeHours);
     }
 
+    const totalDays = normalizedTimesheet.reduce((sum, d) => sum + (d.workUnits || 0), 0);
+    const totalOT = normalizedTimesheet.reduce((sum, d) => sum + (d.otHours || 0), 0);
+    const effectiveDays = totalDays > 0 ? Math.round(totalDays * 10) / 10 : existingRecord.actualWorkDays;
+    const effectiveOT = totalOT > 0 ? totalOT : existingRecord.overtimeHours;
+
     return recomputeSeasonalWorkerPayroll({
       ...worker,
       dailyRate: periodDailyRate, // <-- Luôn giữ nguyên đơn giá độc lập của kỳ này
@@ -469,8 +527,8 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       currentWeekId: period.id,
       currentWeekLabel: period.label,
       payrollCycleType: period.cycleType,
-      actualWorkDays: existingRecord.actualWorkDays,
-      overtimeHours: existingRecord.overtimeHours,
+      actualWorkDays: effectiveDays,
+      overtimeHours: effectiveOT,
       mealAllowance: existingRecord.mealAllowance,
       travelSafetyAllowance: existingRecord.travelSafetyAllowance,
       otherBonus: existingRecord.otherBonus,
@@ -478,46 +536,6 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       advancePayment: existingRecord.advancePayment,
       weeklyTimesheet: normalizedTimesheet,
       notes: existingRecord.notes ?? worker.notes,
-    });
-  }
-
-  // 2. Nếu có dữ liệu từ link chấm công di động trên điện thoại (monthlyAttendance)
-  if (hasMonthlyDataForPeriod && monthlyDays) {
-    const timesheetFromMonthly: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
-      const dayNum = parseInt(dateStr.split('/')[0], 10);
-      const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
-      const dayDetail = monthlyDays[dayNum];
-      const workUnits = dayDetail ? Number(dayDetail.workUnits || 0) : 0;
-      const otHours = dayDetail ? Number(dayDetail.otHours || 0) : 0;
-      const shiftType = dayDetail?.shiftType || 'DAY';
-      const note = dayDetail?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công tại công trường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
-
-      return {
-        dayOfWeek,
-        dayName,
-        dateLabel: dateStr,
-        workUnits,
-        otHours,
-        shiftType,
-        note,
-      };
-    });
-
-    const roundedWorkDays = Math.round(monthlyWorkDays * 10) / 10;
-    return recomputeSeasonalWorkerPayroll({
-      ...worker,
-      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
-      currentPeriodKey: pKey,
-      currentWeekId: period.id,
-      currentWeekLabel: period.label,
-      payrollCycleType: period.cycleType,
-      actualWorkDays: roundedWorkDays,
-      overtimeHours: monthlyOtHours,
-      mealAllowance: worker.mealAllowance || 0,
-      travelSafetyAllowance: worker.travelSafetyAllowance || 0,
-      otherBonus: worker.otherBonus || 0,
-      advancePayment: worker.advancePayment || 0,
-      weeklyTimesheet: timesheetFromMonthly,
     });
   }
 
@@ -657,12 +675,23 @@ export function recordWorkerPeriod(
       if (dayItem.dateLabel) {
         const dayNum = parseInt(dayItem.dateLabel.split('/')[0], 10);
         if (!isNaN(dayNum)) {
+          const existingDay = updatedDays[dayNum];
+          // Nếu ngày này trong tháng đã có công (>0) từ trước, và dayItem hiện tại là 0 công mặc định ("Chưa chấm công" hoặc "Nghỉ Chủ Nhật"),
+          // thì không được xóa bỏ ngày công đã chấm của người lao động!
+          const isDefaultUnmarked = (dayItem.workUnits === 0 && dayItem.otHours === 0) &&
+            (!dayItem.note || dayItem.note === 'Chưa chấm công' || dayItem.note === 'Nghỉ ca' || dayItem.note === 'Nghỉ Chủ Nhật');
+
+          if (existingDay && (existingDay.workUnits > 0 || existingDay.otHours > 0) && isDefaultUnmarked) {
+            // Giữ nguyên ngày công đã chấm
+            return;
+          }
+
           updatedDays[dayNum] = {
             day: dayNum,
             dateStr: `${String(dayNum).padStart(2, '0')}/${mStr}/${pYear}`,
             workUnits: dayItem.workUnits,
             otHours: dayItem.otHours,
-            statusType: dayItem.workUnits === 1 ? 'FULL' : dayItem.workUnits === 0.5 ? 'HALF' : 'ABSENT',
+            statusType: dayItem.workUnits === 1 ? 'FULL' : dayItem.workUnits === 0.5 ? 'HALF' : (dayItem.workUnits === 0 ? 'ABSENT' : 'FULL'),
             location: worker.project || '',
             shiftType: dayItem.shiftType || 'DAY',
             otMultiplier: 1.5,

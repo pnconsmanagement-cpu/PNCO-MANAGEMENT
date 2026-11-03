@@ -336,9 +336,36 @@ export default function App() {
         setEmployees(cloudEmp);
         localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
       }
-      if (cloudSea) {
-        setSeasonalWorkers(cloudSea);
-        localStorage.setItem('payroll_seasonal_workers', JSON.stringify(cloudSea));
+      if (cloudSea && cloudSea.length > 0) {
+        setSeasonalWorkers((prev) => {
+          const map = new Map<string, SeasonalWorker>();
+          prev.forEach((w) => map.set(w.code || w.id, w));
+          cloudSea.forEach((cw) => {
+            const key = cw.code || cw.id;
+            const existing = map.get(key);
+            if (existing) {
+              map.set(key, {
+                ...existing,
+                ...cw,
+                actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
+                overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
+                monthlyAttendance: {
+                  ...(existing.monthlyAttendance || {}),
+                  ...(cw.monthlyAttendance || {}),
+                },
+                periodRecords: {
+                  ...(existing.periodRecords || {}),
+                  ...(cw.periodRecords || {}),
+                },
+              });
+            } else {
+              map.set(key, cw);
+            }
+          });
+          const merged = Array.from(map.values()).map((w) => recomputeSeasonal(w));
+          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(merged));
+          return merged;
+        });
       }
       setCloudSyncStatus('synced');
       setLastSyncedText(getLastSyncedTime());
@@ -550,12 +577,12 @@ export default function App() {
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // 4. Polling thông minh mỗi 8 giây đảm bảo dữ liệu luôn tươi mới ngay cả khi WebSocket rớt
+    // 4. Polling thông minh mỗi 4 giây đảm bảo dữ liệu luôn tươi mới ngay cả khi WebSocket rớt
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible' && isSupabaseConfigured()) {
         reloadLatestFromCloud({ silent: true });
       }
-    }, 8000);
+    }, 4000);
 
     return () => {
       window.removeEventListener('focus', handleFocus);

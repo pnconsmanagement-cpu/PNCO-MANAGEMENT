@@ -229,6 +229,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
+  // Giữ editingWorker luôn cập nhật với dữ liệu mới nhất khi có đồng bộ từ xa (Realtime Cloud)
+  useEffect(() => {
+    if (editingWorker && isFormOpen) {
+      const fresh = workers.find((w) => w.id === editingWorker.id || w.code === editingWorker.code);
+      if (fresh) {
+        setEditingWorker(fresh);
+      }
+    }
+  }, [workers, isFormOpen]);
+
   // Bộ đệm gõ phím số ngày công để không bị giật hoặc snap về 0 khi xóa
   const [rowDaysBuffer, setRowDaysBuffer] = useState<Record<string, string>>({});
 

@@ -282,6 +282,20 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     }
   }, [worker, isOpen, existingCodes.length, config.month, config.year, initialPeriod]);
 
+  // Tự động làm mới bảng chấm công khi có dữ liệu đồng bộ mới từ điện thoại / Cloud
+  useEffect(() => {
+    if (isOpen && worker && worker.monthlyAttendance) {
+      const curPeriod = payrollPeriods.find((p) => p.id === selectedPeriodId) || payrollPeriods[0];
+      const freshState = getWorkerForPeriod(worker, curPeriod);
+      setForm((prev) => ({
+        ...prev,
+        ...freshState,
+        monthlyAttendance: worker.monthlyAttendance,
+      }));
+      setTimesheet(freshState.weeklyTimesheet || createEmptyTimesheetForPeriod(curPeriod));
+    }
+  }, [worker?.monthlyAttendance, worker?.periodRecords, worker?.actualWorkDays, selectedPeriodId, payrollPeriods]);
+
   if (!isOpen) return null;
 
   // Cập nhật trường chung và tính toán tức thời

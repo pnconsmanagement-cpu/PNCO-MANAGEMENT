@@ -35,6 +35,11 @@ import {
 } from '../utils/seasonalAttendanceHelper';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 import { saveAttendanceToServer, fetchServerData } from '../services/backendSyncService';
+import {
+  syncSingleSeasonalWorkerToSupabase,
+  loadSeasonalWorkersFromSupabase,
+  isSupabaseConfigured,
+} from '../services/supabaseService';
 
 interface MobileAttendanceAppProps {
   workers: SeasonalWorker[];
@@ -187,20 +192,46 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     }
   }, [currentWorker, workers, onUpdateWorker]);
 
-  // Tải dữ liệu công nhân và chấm công mới nhất từ máy chủ
+  // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
   useEffect(() => {
     (async () => {
       try {
-        const data = await fetchServerData();
-        if (data && data.seasonalWorkers && data.seasonalWorkers.length > 0) {
-          const matched = data.seasonalWorkers.find(
-            (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code
-          );
-          if (matched) {
-            onUpdateWorker(matched);
-            const record = getWorkerMonthlyAttendance(matched, year, month);
-            setAttendanceDays(record.days);
+        let loadedWorker: SeasonalWorker | null = null;
+
+        // 1. Ưu tiên tải trực tiếp từ Supabase Cloud
+        if (isSupabaseConfigured()) {
+          try {
+            const cloudWorkers = await loadSeasonalWorkersFromSupabase();
+            if (cloudWorkers && cloudWorkers.length > 0) {
+              const matched = cloudWorkers.find(
+                (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
+              );
+              if (matched) {
+                loadedWorker = matched;
+              }
+            }
+          } catch (e) {
+            console.warn('[Mobile App] Supabase fetch error:', e);
           }
+        }
+
+        // 2. Fallback tải từ máy chủ backend
+        if (!loadedWorker) {
+          const data = await fetchServerData();
+          if (data && data.seasonalWorkers && data.seasonalWorkers.length > 0) {
+            const matched = data.seasonalWorkers.find(
+              (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
+            );
+            if (matched) {
+              loadedWorker = matched;
+            }
+          }
+        }
+
+        if (loadedWorker) {
+          onUpdateWorker(loadedWorker);
+          const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
+          setAttendanceDays(record.days);
         }
       } catch {}
     })();
@@ -399,8 +430,14 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
-      // Đồng bộ ngay lập tức lên Máy chủ Backend để Web App nhận được tức thì
+      // 1. Đồng bộ ngay lập tức lên Máy chủ Backend
       saveAttendanceToServer(updatedWorker);
+      // 2. Đồng bộ trực tiếp lên Supabase Cloud Database để Web App trên máy tính nhận ngay tức thì
+      if (isSupabaseConfigured()) {
+        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`).catch((err) => {
+          console.warn('[Mobile Sync] Supabase error:', err);
+        });
+      }
     }
 
     setEditingCell(null);
@@ -426,6 +463,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       );
       onUpdateWorker(updatedWorker);
       saveAttendanceToServer(updatedWorker);
+      if (isSupabaseConfigured()) {
+        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`).catch((err) => {
+          console.warn('[Mobile Sync] Supabase error:', err);
+        });
+      }
     }
 
     setEditingCell(null);
@@ -436,18 +478,40 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   const handleManualSync = async () => {
     setIsSyncing(true);
     try {
-      const data = await fetchServerData();
-      if (data && data.seasonalWorkers) {
-        const found = data.seasonalWorkers.find(
-          (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode
-        );
-        if (found) {
-          onUpdateWorker(found);
-          const record = getWorkerMonthlyAttendance(found, year, month);
-          setAttendanceDays(record.days);
-        }
+      // 1. Nếu có công nhân hiện tại và có Supabase, đẩy ngay lập tức lên Cloud
+      if (currentWorker && isSupabaseConfigured()) {
+        const periodCode = `${String(month).padStart(2, '0')}/${year}`;
+        await syncSingleSeasonalWorkerToSupabase(currentWorker, periodCode);
       }
-      showToast('Đã đồng bộ dữ liệu mới nhất từ máy chủ');
+
+      // 2. Tải bản mới nhất từ Supabase Cloud
+      let cloudTarget: SeasonalWorker | null = null;
+      if (isSupabaseConfigured()) {
+        try {
+          const cloudWorkers = await loadSeasonalWorkersFromSupabase();
+          if (cloudWorkers && cloudWorkers.length > 0) {
+            cloudTarget = cloudWorkers.find(
+              (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode || (parsedWorkerInfo.code && w.code === parsedWorkerInfo.code)
+            ) || null;
+          }
+        } catch {}
+      }
+
+      // 3. Fallback: Máy chủ Backend
+      const serverData = await fetchServerData();
+      const serverTarget = serverData?.seasonalWorkers?.find(
+        (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode || (parsedWorkerInfo.code && w.code === parsedWorkerInfo.code)
+      );
+
+      const target = cloudTarget || serverTarget;
+      if (target) {
+        onUpdateWorker(target);
+        const record = getWorkerMonthlyAttendance(target, year, month);
+        setAttendanceDays(record.days);
+        showToast(`Đã đồng bộ thành công cho thợ ${target.fullName}!`);
+      } else {
+        showToast('Đã hoàn tất đồng bộ với Supabase Cloud & Máy chủ');
+      }
     } catch {
       showToast('Không thể kết nối máy chủ');
     } finally {

@@ -593,19 +593,9 @@ export const loadSeasonalWorkersFromSupabase = async (
   if (!client) return null;
 
   try {
-    let query = client.from('seasonal_workers').select('worker_data');
-    if (periodCode) {
-      query = query.eq('period_code', periodCode);
-    }
-
-    let { data, error } = await query;
-
-    // Nếu lọc theo periodCode không có, lấy toàn bộ thợ hiện có
-    if (!error && (!data || data.length === 0)) {
-      const allRes = await client.from('seasonal_workers').select('worker_data');
-      data = allRes.data;
-      error = allRes.error;
-    }
+    // Luôn tải toàn bộ danh sách công nhân từ bảng seasonal_workers
+    // để đảm bảo mọi thợ và toàn bộ lịch sử chấm công (monthlyAttendance & periodRecords) không bao giờ bị lọc mất
+    let { data, error } = await client.from('seasonal_workers').select('worker_data');
 
     if (error || !data || data.length === 0) return null;
 
