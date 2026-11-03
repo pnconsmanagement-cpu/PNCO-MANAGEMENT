@@ -23,21 +23,23 @@ import { Employee, SeasonalWorker, TeamWorker, Project, SalaryAdvance, CompanyCo
 import { formatVND } from '../utils/numberToVietnameseWords';
 
 interface FinancialReportTabProps {
-  employees: Employee[];
-  seasonalWorkers: SeasonalWorker[];
-  teamWorkers: TeamWorker[];
-  projects: Project[];
-  advances: SalaryAdvance[];
+  employees?: Employee[];
+  seasonalWorkers?: SeasonalWorker[];
+  teamWorkers?: TeamWorker[];
+  projects?: Project[];
+  advances?: SalaryAdvance[];
   config: CompanyConfig;
+  onChangeMonthYear?: (month: number, year: number) => void;
 }
 
 export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
-  employees,
-  seasonalWorkers,
-  teamWorkers,
-  projects,
-  advances,
+  employees = [],
+  seasonalWorkers = [],
+  teamWorkers = [],
+  projects = [],
+  advances = [],
   config,
+  onChangeMonthYear,
 }) => {
   // Lựa chọn bộ lọc thời gian: Tháng hiện tại, Quý (Q1, Q2, Q3, Q4) hoặc Cả năm
   const [timeViewMode, setTimeViewMode] = useState<'MONTH' | 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'YEAR'>('MONTH');

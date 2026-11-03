@@ -1471,6 +1471,7 @@ export default function App() {
                   seasonalWorkers={seasonalWorkers}
                   teamWorkers={teamWorkers}
                   projects={projects}
+                  advances={salaryAdvances}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
                 />
