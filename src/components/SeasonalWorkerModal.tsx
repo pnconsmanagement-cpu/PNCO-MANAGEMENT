@@ -284,17 +284,20 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
   // Tự động làm mới bảng chấm công khi có dữ liệu đồng bộ mới từ điện thoại / Cloud
   useEffect(() => {
-    if (isOpen && worker && worker.monthlyAttendance) {
+    if (isOpen && worker) {
       const curPeriod = payrollPeriods.find((p) => p.id === selectedPeriodId) || payrollPeriods[0];
       const freshState = getWorkerForPeriod(worker, curPeriod);
       setForm((prev) => ({
         ...prev,
         ...freshState,
-        monthlyAttendance: worker.monthlyAttendance,
+        monthlyAttendance: worker.monthlyAttendance || prev.monthlyAttendance,
+        periodRecords: worker.periodRecords || prev.periodRecords,
       }));
-      setTimesheet(freshState.weeklyTimesheet || createEmptyTimesheetForPeriod(curPeriod));
+      if (freshState.weeklyTimesheet && freshState.weeklyTimesheet.length > 0) {
+        setTimesheet(freshState.weeklyTimesheet);
+      }
     }
-  }, [worker?.monthlyAttendance, worker?.periodRecords, worker?.actualWorkDays, selectedPeriodId, payrollPeriods]);
+  }, [worker, selectedPeriodId, payrollPeriods, isOpen]);
 
   if (!isOpen) return null;
 
@@ -1040,7 +1043,11 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                     <span className="flex items-center gap-1.5 font-bold text-slate-800">
                       <Clock className="w-3.5 h-3.5 text-sky-700" />
                       <span>
-                        {cycleType === '1_WEEK' ? 'Chọn tuần thi công:' : 'Chọn đợt thi công (2 tuần):'}
+                        {cycleType === '1_WEEK'
+                          ? 'Chọn tuần thi công:'
+                          : cycleType === '1_MONTH'
+                          ? 'Chọn kỳ cả tháng:'
+                          : 'Chọn đợt thi công (2 tuần):'}
                       </span>
                     </span>
                     <span className="text-[11px] text-sky-800 font-bold">
@@ -1051,8 +1058,25 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                     {payrollPeriods.map((p) => {
                       const isSelected = p.id === selectedPeriodId;
-                      const hasRecord = form.periodRecords?.[p.periodKey]?.isRecorded;
-                      const recDays = form.periodRecords?.[p.periodKey]?.actualWorkDays;
+                      const pYear = p.year || parseInt(p.periodKey?.split('-')[0], 10) || attendanceYear;
+                      const pMonth = p.month || parseInt(p.periodKey?.split('-')[1]?.split('_')[0], 10) || attendanceMonth;
+                      const mKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
+                      const mDays = form.monthlyAttendance?.[mKey]?.days || worker?.monthlyAttendance?.[mKey]?.days;
+                      let periodDaysFromMonthly = 0;
+                      if (mDays && p.dates) {
+                        p.dates.forEach((dateStr) => {
+                          const dayNum = parseInt(dateStr.split('/')[0], 10);
+                          if (mDays[dayNum]) {
+                            periodDaysFromMonthly += Number(mDays[dayNum].workUnits || 0);
+                          }
+                        });
+                      }
+                      periodDaysFromMonthly = Math.round(periodDaysFromMonthly * 10) / 10;
+
+                      const hasRecord = Boolean(form.periodRecords?.[p.periodKey]?.isRecorded || periodDaysFromMonthly > 0);
+                      const recDays = (form.periodRecords?.[p.periodKey]?.actualWorkDays !== undefined && form.periodRecords?.[p.periodKey]?.actualWorkDays > 0)
+                        ? form.periodRecords?.[p.periodKey]?.actualWorkDays
+                        : (periodDaysFromMonthly > 0 ? periodDaysFromMonthly : form.periodRecords?.[p.periodKey]?.actualWorkDays);
 
                       return (
                         <button

@@ -595,13 +595,69 @@ export const loadSeasonalWorkersFromSupabase = async (
   try {
     // Luôn tải toàn bộ danh sách công nhân từ bảng seasonal_workers
     // để đảm bảo mọi thợ và toàn bộ lịch sử chấm công (monthlyAttendance & periodRecords) không bao giờ bị lọc mất
-    let { data, error } = await client.from('seasonal_workers').select('worker_data');
+    let { data, error } = await client.from('seasonal_workers').select('id, code, name, trade, project, team, worker_data');
 
     if (error || !data || data.length === 0) return null;
 
+    // Đồng thời truy vấn thêm bảng attendance_records để tích hợp ngay dữ liệu chấm công từ điện thoại
+    let attRecords: any[] = [];
+    try {
+      const { data: attData } = await client
+        .from('attendance_records')
+        .select('*')
+        .eq('worker_type', 'SEASONAL');
+      if (attData && Array.isArray(attData)) {
+        attRecords = attData;
+      }
+    } catch (e) {
+      console.warn('[Supabase Sync] Load attendance_records warning:', e);
+    }
+
     const list = data
-      .map((item) => item.worker_data as SeasonalWorker)
-      .filter((w) => w && w.fullName);
+      .map((item) => {
+        const w = (item.worker_data || {}) as SeasonalWorker;
+        const canonicalId = item.id || w.id;
+        const canonicalCode = item.code || w.code;
+        return {
+          ...w,
+          id: String(canonicalId),
+          code: String(canonicalCode),
+          fullName: w.fullName || item.name || 'Công nhân',
+          trade: w.trade || item.trade || '',
+          project: w.project || item.project || '',
+          teamName: w.teamName || item.team || '',
+        };
+      })
+      .filter((w) => w && (w.fullName || w.code));
+
+    // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records vào monthlyAttendance của từng thợ
+    if (attRecords.length > 0) {
+      list.forEach((w) => {
+        const workerCode = w.code || w.id;
+        const matchingAtts = attRecords.filter(
+          (a) => a.worker_code === workerCode || a.worker_code === w.code || a.worker_code === w.id
+        );
+        matchingAtts.forEach((att) => {
+          const mNum = Number(att.month);
+          const yNum = Number(att.year);
+          const mStr = String(mNum).padStart(2, '0');
+          const monthKey = `${yNum}-${mStr}`;
+          if (!w.monthlyAttendance) w.monthlyAttendance = {};
+          if (att.attendance_data && typeof att.attendance_data === 'object' && Object.keys(att.attendance_data).length > 0) {
+            w.monthlyAttendance[monthKey] = {
+              monthKey,
+              month: mNum,
+              year: yNum,
+              totalWorkDays: Number(att.total_work_days || 0),
+              totalOtHours: Number(att.total_ot_hours || 0),
+              days: att.attendance_data,
+              lastSubmittedAt: att.updated_at,
+              submittedBy: 'WORKER',
+            };
+          }
+        });
+      });
+    }
 
     // Sắp xếp nhất quán tuyệt đối giữa tất cả các máy tính:
     // 1. Ưu tiên sortOrder được lưu
@@ -612,7 +668,8 @@ export const loadSeasonalWorkersFromSupabase = async (
       }
       return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
     });
-  } catch {
+  } catch (err) {
+    console.warn('[Supabase Sync] Load seasonal workers exception:', err);
     return null;
   }
 };
@@ -1176,42 +1233,143 @@ export const syncSingleSeasonalWorkerToSupabase = async (
   if (!client) return { success: false, message: 'Chưa cấu hình Supabase Client.' };
 
   try {
+    const workerCode = String(worker.code || worker.id).trim();
+    let existingRowId: string | null = null;
+    let existingWorkerData: SeasonalWorker | null = null;
+
+    // 1. Tìm bản ghi hiện có trong bảng seasonal_workers theo CODE hoặc ID
+    // Cực kỳ quan trọng: Trong Postgres, cột code có UNIQUE constraint ("seasonal_workers_code_key").
+    // Nếu thiết bị di động có ID khác với máy tính, phải dùng ID hiện có trong DB để UPDATE, tránh lỗi duplicate key!
+    try {
+      const { data: codeMatches } = await client
+        .from('seasonal_workers')
+        .select('id, code, worker_data')
+        .eq('code', workerCode)
+        .limit(1);
+
+      if (codeMatches && codeMatches.length > 0) {
+        existingRowId = codeMatches[0].id;
+        existingWorkerData = codeMatches[0].worker_data as SeasonalWorker;
+      } else if (worker.id) {
+        const { data: idMatches } = await client
+          .from('seasonal_workers')
+          .select('id, code, worker_data')
+          .eq('id', String(worker.id))
+          .limit(1);
+        if (idMatches && idMatches.length > 0) {
+          existingRowId = idMatches[0].id;
+          existingWorkerData = idMatches[0].worker_data as SeasonalWorker;
+        }
+      }
+    } catch (lookupErr) {
+      console.warn('[Supabase Sync] Lookup worker error:', lookupErr);
+    }
+
+    const canonicalId = existingRowId || worker.id || workerCode;
+
+    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó
+    const mergedMonthlyAttendance = {
+      ...(existingWorkerData?.monthlyAttendance || {}),
+      ...(worker.monthlyAttendance || {}),
+    };
+    const mergedPeriodRecords = {
+      ...(existingWorkerData?.periodRecords || {}),
+      ...(worker.periodRecords || {}),
+    };
+
+    const sortOrder = typeof worker.sortOrder === 'number'
+      ? worker.sortOrder
+      : (typeof existingWorkerData?.sortOrder === 'number' ? existingWorkerData.sortOrder : 99);
+
+    const mergedWorker: SeasonalWorker = {
+      ...(existingWorkerData || {}),
+      ...worker,
+      id: String(canonicalId),
+      code: workerCode,
+      fullName: worker.fullName || existingWorkerData?.fullName || 'Công nhân',
+      trade: worker.trade || existingWorkerData?.trade || '',
+      project: worker.project || existingWorkerData?.project || '',
+      teamName: worker.teamName || existingWorkerData?.teamName || '',
+      sortOrder,
+      monthlyAttendance: mergedMonthlyAttendance,
+      periodRecords: mergedPeriodRecords,
+    };
+
     const payload = {
-      id: String(worker.id),
-      code: String(worker.code || ''),
-      name: String(worker.fullName || 'Công nhân'),
-      trade: String(worker.trade || ''),
-      skill_level: String(worker.skillLevel || ''),
-      project: String(worker.project || ''),
-      team: String(worker.teamName || ''),
-      phone: String(worker.phone || ''),
-      id_card: String(worker.idCard || ''),
-      bank_account: String(worker.bankAccount || ''),
-      bank_name: String(worker.bankName || ''),
-      daily_rate: Number(worker.dailyRate || 0),
-      actual_work_days: Number(worker.actualWorkDays || 0),
-      overtime_hours: Number(worker.overtimeHours || 0),
-      advance_payment: Number(worker.advancePayment || 0),
-      has_tax_commitment: Boolean(worker.hasTaxCommitment ?? true),
-      payment_method: String(worker.paymentMethod || 'BANK'),
-      payroll_cycle_type: String(worker.payrollCycleType || '1_WEEK'),
-      status: String(worker.status || 'ACTIVE'),
-      net_salary: Number(worker.netSalary || 0),
+      id: String(canonicalId),
+      code: String(workerCode),
+      name: String(mergedWorker.fullName || 'Công nhân'),
+      trade: String(mergedWorker.trade || ''),
+      skill_level: String(mergedWorker.skillLevel || ''),
+      project: String(mergedWorker.project || ''),
+      team: String(mergedWorker.teamName || ''),
+      phone: String(mergedWorker.phone || ''),
+      id_card: String(mergedWorker.idCard || ''),
+      bank_account: String(mergedWorker.bankAccount || ''),
+      bank_name: String(mergedWorker.bankName || ''),
+      daily_rate: Number(mergedWorker.dailyRate || 0),
+      actual_work_days: Number(mergedWorker.actualWorkDays || 0),
+      overtime_hours: Number(mergedWorker.overtimeHours || 0),
+      advance_payment: Number(mergedWorker.advancePayment || 0),
+      has_tax_commitment: Boolean(mergedWorker.hasTaxCommitment ?? true),
+      payment_method: String(mergedWorker.paymentMethod || 'BANK'),
+      payroll_cycle_type: String(mergedWorker.payrollCycleType || '1_WEEK'),
+      status: String(mergedWorker.status || 'ACTIVE'),
+      net_salary: Number(mergedWorker.netSalary || 0),
       period_code: String(periodCode || '09/2026'),
-      worker_data: worker,
+      worker_data: mergedWorker,
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await client.from('seasonal_workers').upsert(payload, {
+    const { error: upsertErr } = await client.from('seasonal_workers').upsert(payload, {
       onConflict: 'id',
     });
 
-    if (error) {
-      console.error('syncSingleSeasonalWorker error:', error);
-      return { success: false, message: error.message, error: error.message };
+    if (upsertErr) {
+      console.warn('[Supabase Sync] Upsert by ID failed, falling back to update by code:', upsertErr.message);
+      const { error: updateErr } = await client
+        .from('seasonal_workers')
+        .update(payload)
+        .eq('code', workerCode);
+      if (updateErr) {
+        console.error('[Supabase Sync] Update fallback also failed:', updateErr.message);
+        return { success: false, message: updateErr.message, error: updateErr.message };
+      }
     }
+
+    // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase
+    // Đảm bảo dữ liệu chấm công từ điện thoại được lưu vào cả 2 bảng
+    if (mergedWorker.monthlyAttendance) {
+      for (const [mKey, mRec] of Object.entries(mergedWorker.monthlyAttendance)) {
+        if (mRec && mRec.month && mRec.year) {
+          const mStr = String(mRec.month).padStart(2, '0');
+          const attId = `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
+          const attPayload = {
+            id: attId,
+            worker_type: 'SEASONAL',
+            worker_code: workerCode,
+            worker_name: String(mergedWorker.fullName || 'Công nhân'),
+            project_code: String(mergedWorker.project || ''),
+            month: Number(mRec.month),
+            year: Number(mRec.year),
+            period_key: `${mStr}/${mRec.year}`,
+            total_work_days: Number(mRec.totalWorkDays || 0),
+            total_ot_hours: Number(mRec.totalOtHours || 0),
+            attendance_data: mRec.days || {},
+            updated_at: new Date().toISOString(),
+          };
+          try {
+            await client.from('attendance_records').upsert(attPayload, { onConflict: 'id' });
+          } catch (e) {
+            console.warn('[Supabase Sync] Upsert attendance_records warning:', e);
+          }
+        }
+      }
+    }
+
     return { success: true, message: 'Đã lưu công nhân thời vụ lên Supabase.' };
   } catch (e: any) {
+    console.error('[Supabase Sync] syncSingleSeasonalWorker exception:', e);
     return { success: false, message: e.message || String(e), error: e.message };
   }
 };

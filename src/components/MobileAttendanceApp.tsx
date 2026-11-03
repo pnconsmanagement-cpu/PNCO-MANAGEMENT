@@ -39,6 +39,7 @@ import {
   syncSingleSeasonalWorkerToSupabase,
   loadSeasonalWorkersFromSupabase,
   isSupabaseConfigured,
+  autoApplyUrlConfig,
 } from '../services/supabaseService';
 
 interface MobileAttendanceAppProps {
@@ -192,6 +193,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     }
   }, [currentWorker, workers, onUpdateWorker]);
 
+  // Tự động kiểm tra URL hash/query để nạp cấu hình Supabase trên điện thoại nếu có
+  useEffect(() => {
+    autoApplyUrlConfig();
+  }, []);
+
   // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
   useEffect(() => {
     (async () => {
@@ -231,6 +237,21 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         if (loadedWorker) {
           onUpdateWorker(loadedWorker);
           const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
+          // Kiểm tra xem localStorage có dữ liệu chấm công mới hơn không
+          const cacheKey = `pncons_mobile_days_${loadedWorker.code}_${year}_${month}`;
+          const cached = typeof window !== 'undefined' ? localStorage.getItem(cacheKey) : null;
+          if (cached) {
+            try {
+              const parsedDays = JSON.parse(cached);
+              if (parsedDays && Object.keys(parsedDays).length > 0) {
+                setAttendanceDays({
+                  ...record.days,
+                  ...parsedDays,
+                });
+                return;
+              }
+            } catch {}
+          }
           setAttendanceDays(record.days);
         }
       } catch {}
@@ -288,8 +309,28 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   // Nạp dữ liệu chấm công khi đổi công nhân, đổi tháng hoặc khi dữ liệu công nhân cập nhật từ xa
   useEffect(() => {
     if (!currentWorker) return;
+    const workerCode = currentWorker.code || selectedWorkerCode;
+    const cacheKey = `pncons_mobile_days_${workerCode}_${year}_${month}`;
+    const localCached = typeof window !== 'undefined' ? localStorage.getItem(cacheKey) : null;
+    let cachedDays: any = null;
+    if (localCached) {
+      try {
+        const parsed = JSON.parse(localCached);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          cachedDays = parsed;
+        }
+      } catch {}
+    }
+
     const record = getWorkerMonthlyAttendance(currentWorker, year, month);
-    setAttendanceDays(record.days);
+    if (cachedDays) {
+      setAttendanceDays({
+        ...record.days,
+        ...cachedDays,
+      });
+    } else {
+      setAttendanceDays(record.days);
+    }
   }, [currentWorker?.code, currentWorker?.monthlyAttendance, month, year]);
 
   // Sinh lưới lịch tháng
@@ -422,6 +463,12 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
     setAttendanceDays(updated);
     if (currentWorker) {
+      const workerCode = currentWorker.code || selectedWorkerCode;
+      // 1. Lưu vào LocalStorage của điện thoại ngay lập tức để không bao giờ bị mất khi F5
+      try {
+        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(updated));
+      } catch {}
+
       const updatedWorker = updateWorkerMonthlyAttendance(
         currentWorker,
         year,
@@ -430,18 +477,32 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
-      // 1. Đồng bộ ngay lập tức lên Máy chủ Backend
+      try {
+        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
+      } catch {}
+
+      // 2. Đồng bộ ngay lập tức lên Máy chủ Backend
       saveAttendanceToServer(updatedWorker);
-      // 2. Đồng bộ trực tiếp lên Supabase Cloud Database để Web App trên máy tính nhận ngay tức thì
+
+      // 3. Đồng bộ trực tiếp lên Supabase Cloud Database để Web App trên máy tính nhận ngay tức thì
       if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`).catch((err) => {
-          console.warn('[Mobile Sync] Supabase error:', err);
-        });
+        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
+          .then((res) => {
+            if (res.success) {
+              showToast(`Đã lưu & đồng bộ Supabase: ngày ${dayNum}/${month}/${year}`);
+            } else {
+              console.warn('[Mobile Sync] Supabase warning:', res.message);
+              showToast(`Đã lưu chấm công ngày ${dayNum}/${month}/${year}`);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Mobile Sync] Supabase error:', err);
+            showToast(`Đã lưu chấm công ngày ${dayNum}/${month}/${year}`);
+          });
       }
     }
 
     setEditingCell(null);
-    showToast(`Đã lưu & đồng bộ chấm công ngày ${dayNum}/${month}/${year}`);
   };
 
   // Xóa trạng thái của ngày trong popup
@@ -454,6 +515,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
     setAttendanceDays(updated);
     if (currentWorker) {
+      const workerCode = currentWorker.code || selectedWorkerCode;
+      try {
+        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(updated));
+      } catch {}
+
       const updatedWorker = updateWorkerMonthlyAttendance(
         currentWorker,
         year,
@@ -462,16 +528,28 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
+      try {
+        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
+      } catch {}
+
       saveAttendanceToServer(updatedWorker);
       if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`).catch((err) => {
-          console.warn('[Mobile Sync] Supabase error:', err);
-        });
+        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
+          .then((res) => {
+            if (res.success) {
+              showToast(`Đã xóa & đồng bộ Supabase: ngày ${dayNum}/${month}/${year}`);
+            } else {
+              showToast(`Đã xóa trạng thái ngày ${dayNum}/${month}/${year}`);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Mobile Sync] Supabase error:', err);
+            showToast(`Đã xóa trạng thái ngày ${dayNum}/${month}/${year}`);
+          });
       }
     }
 
     setEditingCell(null);
-    showToast(`Đã xóa & đồng bộ trạng thái ngày ${dayNum}/${month}/${year}`);
   };
 
   const [isSyncing, setIsSyncing] = useState(false);

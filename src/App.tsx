@@ -624,9 +624,31 @@ export default function App() {
   // Cập nhật công nhân thời vụ - đồng bộ ngay lập tức lên Máy chủ và Supabase Cloud
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
     const recalculated = recomputeSeasonal(updated);
-    setSeasonalWorkers((prev) =>
-      prev.map((w) => (String(w.id) === String(recalculated.id) ? recalculated : w))
-    );
+    setSeasonalWorkers((prev) => {
+      const idx = prev.findIndex(
+        (w) => String(w.id) === String(recalculated.id) || (w.code && w.code === recalculated.code)
+      );
+      let next: SeasonalWorker[];
+      if (idx !== -1) {
+        next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          ...recalculated,
+          monthlyAttendance: {
+            ...(next[idx].monthlyAttendance || {}),
+            ...(recalculated.monthlyAttendance || {}),
+          },
+          periodRecords: {
+            ...(next[idx].periodRecords || {}),
+            ...(recalculated.periodRecords || {}),
+          },
+        };
+      } else {
+        next = [...prev, recalculated];
+      }
+      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(next));
+      return next;
+    });
     // Lưu ngay lên máy chủ Backend để các thiết bị khác nhận được tức thì
     saveAttendanceToServer(recalculated);
     if (isSupabaseConfigured()) {
