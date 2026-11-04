@@ -324,7 +324,7 @@ export default function App() {
     try {
       return JSON.stringify({
         p: cfg?.periodCode,
-        e: emps.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.baseSalary, x.overtimeHours]),
+        e: emps.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.baseSalary, x.overtimeHours, x.monthlyAttendance]),
         s: seas.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.dailyRate, x.overtimeHours, x.monthlyAttendance]),
       });
     } catch {
@@ -825,12 +825,30 @@ export default function App() {
     }
   };
 
-  // Cập nhật nhân viên chính thức - đồng bộ ngay lập tức lên Supabase Cloud
+  // Cập nhật nhân viên chính thức - đồng bộ ngay lập tức lên Máy chủ & Supabase Cloud
   const handleUpdateEmployee = (updated: Employee) => {
     const recalculated = recomputeEmployeePayroll(updated);
-    setEmployees((prev) =>
-      prev.map((emp) => (emp.id === recalculated.id ? recalculated : emp))
-    );
+    setEmployees((prev) => {
+      const next = prev.map((emp) =>
+        emp.id === recalculated.id || emp.code === recalculated.code
+          ? {
+              ...emp,
+              ...recalculated,
+              monthlyAttendance: {
+                ...(emp.monthlyAttendance || {}),
+                ...(recalculated.monthlyAttendance || {}),
+              },
+              periodRecords: {
+                ...(emp.periodRecords || {}),
+                ...(recalculated.periodRecords || {}),
+              },
+            }
+          : emp
+      );
+      localStorage.setItem('payroll_employees', JSON.stringify(next));
+      saveAllToServer(config, next, seasonalWorkers);
+      return next;
+    });
     if (isSupabaseConfigured()) {
       syncSingleEmployeeToSupabase(recalculated, config.periodCode).then(() => notifyCrossTab());
     }
@@ -1053,13 +1071,74 @@ export default function App() {
       typeof window !== 'undefined' &&
       sessionStorage.getItem('pncons_is_admin_preview') === 'true';
 
+    // Chuyển đổi NV Chính Thức đang làm việc sang định dạng chung để dùng chung Web App Chấm Công Di Động
+    const permanentAsWorkers: SeasonalWorker[] = employees
+      .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
+      .map((e) => ({
+        id: e.id,
+        code: e.code,
+        fullName: e.fullName,
+        trade: e.title || 'Nhân viên chính thức',
+        skillLevel: e.department || 'Chính thức',
+        project: e.department || 'Văn phòng / Dự án',
+        teamName: e.department || 'Phòng ban',
+        teamLeader: '',
+        phone: e.phone || '',
+        idCard: e.idCard || '',
+        bankAccount: e.bankAccount || '',
+        bankName: e.bankName || '',
+        paymentMethod: 'BANK',
+        joinDate: e.joinDate || '',
+        dailyRate:
+          e.salaryType === 'DAILY'
+            ? e.baseSalary
+            : Math.round((e.baseSalary || 0) / (e.standardWorkDays || config.standardWorkDays || 26)),
+        actualWorkDays: e.actualWorkDays || 0,
+        salaryByDays: e.salaryByActualDays || 0,
+        overtimeHours: e.overtimeHours || 0,
+        overtimePay: e.overtimePay || 0,
+        mealAllowance: e.mealAllowance || 0,
+        travelSafetyAllowance: e.phoneTravelAllowance || 0,
+        otherBonus: e.kpiBonus || 0,
+        totalIncome: e.totalIncome || 0,
+        hasTaxCommitment: true,
+        personalIncomeTax: e.personalIncomeTax || 0,
+        advancePayment: e.advancePayment || 0,
+        totalDeductions: e.totalDeductions || 0,
+        netSalary: e.netSalary || 0,
+        status: 'ACTIVE',
+        monthlyAttendance: e.monthlyAttendance,
+        periodRecords: e.periodRecords,
+        payrollCycleType: e.payrollCycleType || '1_MONTH',
+        currentPeriodKey: e.currentPeriodKey,
+      }));
+
+    const allMobileWorkers: SeasonalWorker[] = [...seasonalWorkers, ...permanentAsWorkers];
+
     return (
       <MobileAttendanceApp
-        workers={seasonalWorkers}
+        workers={allMobileWorkers}
         config={config}
         initialWorkerCode={activeMobileWorkerCode}
         isAdminPreview={isAdminPreview}
-        onUpdateWorker={handleUpdateSeasonalWorker}
+        onUpdateWorker={(updatedWorker) => {
+          const matchedPerm = employees.find(
+            (e) => e.code === updatedWorker.code || String(e.id) === String(updatedWorker.id)
+          );
+          if (matchedPerm) {
+            handleUpdateEmployee({
+              ...matchedPerm,
+              actualWorkDays: updatedWorker.actualWorkDays,
+              overtimeHours: updatedWorker.overtimeHours,
+              monthlyAttendance: updatedWorker.monthlyAttendance,
+              periodRecords: updatedWorker.periodRecords,
+              payrollCycleType: updatedWorker.payrollCycleType,
+              currentPeriodKey: updatedWorker.currentPeriodKey,
+            });
+          } else {
+            handleUpdateSeasonalWorker(updatedWorker);
+          }
+        }}
         onExitMobileView={() => {
           sessionStorage.setItem('pncons_admin_auth', 'true');
           sessionStorage.removeItem('pncons_is_admin_preview');
@@ -1256,6 +1335,11 @@ export default function App() {
                       onBatchUpdate={handleBatchUpdate}
                       onBatchUpdateSeasonal={handleBatchUpdateSeasonalWorkers}
                       onBatchUpdateTeam={handleBatchUpdateTeamWorkers}
+                      onOpenMobileView={(workerCode) => {
+                        sessionStorage.setItem('pncons_is_admin_preview', 'true');
+                        setActiveMobileWorkerCode(workerCode);
+                        setIsMobileAttendanceView(true);
+                      }}
                       forcedGroup="PERMANENT"
                       seasonalCount={seasonalWorkers.length}
                     />
@@ -1414,6 +1498,11 @@ export default function App() {
                       onBatchUpdate={handleBatchUpdate}
                       onBatchUpdateSeasonal={handleBatchUpdateSeasonalWorkers}
                       onBatchUpdateTeam={handleBatchUpdateTeamWorkers}
+                      onOpenMobileView={(workerCode) => {
+                        sessionStorage.setItem('pncons_is_admin_preview', 'true');
+                        setActiveMobileWorkerCode(workerCode);
+                        setIsMobileAttendanceView(true);
+                      }}
                       forcedGroup="SEASONAL"
                       seasonalCount={seasonalWorkers.length}
                     />

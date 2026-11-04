@@ -65,6 +65,10 @@ export interface Employee {
   contractFileName?: string; // Tên file tài liệu đính kèm (vd: HDLD_PNC0001.pdf)
   contractAddendums?: ContractAddendum[]; // Phụ lục hợp đồng & Lịch sử nâng lương hàng năm
   sortOrder?: number; // Thứ tự sắp xếp STT hiển thị cố định giữa các máy tính
+  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH';
+  currentPeriodKey?: string;
+  periodRecords?: { [periodKey: string]: SeasonalPeriodRecord };
+  monthlyAttendance?: { [monthKey: string]: MonthlyAttendanceRecord }; // Bản ghi chấm công từng ngày (đồng bộ từ link chấm công & bảng chấm công)
 }
 
 export interface SeasonalWorker {

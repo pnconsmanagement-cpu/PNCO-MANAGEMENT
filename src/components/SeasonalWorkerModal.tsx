@@ -1132,9 +1132,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 </div>
 
                 {/* =================================================================== */}
-                {/* CÁC THẺ CHẤM CÔNG CHI TIẾT TỪNG NGÀY (THIẾT KẾ ĐẸP, HIỆN ĐẠI) */}
+                {/* CÁC Ô CHẤM CÔNG CHI TIẾT TỪNG NGÀY (ICON NHỎ GỌN, HIỆN ĐẠI) */}
                 {/* =================================================================== */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 max-h-[380px] overflow-y-auto p-1">
+                <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-1.5 max-h-[360px] overflow-y-auto p-1">
                   {timesheet.map((day, idx) => {
                     const isSunday = day.dayOfWeek === 'CN';
                     const isFullDay = day.workUnits === 1;
@@ -1145,166 +1145,108 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                     return (
                       <div
                         key={`${day.dayOfWeek}_${day.dateLabel || idx}`}
-                        className={`rounded-xl border p-2.5 flex flex-col justify-between transition-all duration-150 ${
+                        className={`rounded-lg border p-1.5 flex flex-col justify-between transition-all duration-150 ${
                           isFullDay
-                            ? 'bg-gradient-to-b from-emerald-50/60 via-white to-emerald-50/20 border-emerald-300 ring-2 ring-emerald-200/50 shadow-xs'
+                            ? 'bg-emerald-50/70 border-emerald-400 ring-1 ring-emerald-200'
                             : isHalfDay
-                            ? 'bg-gradient-to-b from-amber-50/60 via-white to-amber-50/20 border-amber-300 ring-2 ring-amber-200/50 shadow-xs'
+                            ? 'bg-amber-50/70 border-amber-400 ring-1 ring-amber-200'
                             : isSunday
                             ? 'bg-rose-50/30 border-rose-200/80'
-                            : 'bg-slate-50/60 border-slate-200'
+                            : 'bg-slate-50/70 border-slate-200'
                         }`}
                       >
-                        {/* Phần tiêu đề ngày & Thứ */}
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 mb-2.5">
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black ${
-                                isSunday
-                                  ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                                  : 'bg-[#0f3d64] text-white'
-                              }`}
-                            >
-                              {day.dayOfWeek}
-                            </span>
-                            <span
-                              className={`font-black text-xs ${
-                                isSunday ? 'text-rose-600' : 'text-slate-800'
-                              }`}
-                            >
-                              {day.dayName}
-                            </span>
-                          </div>
-
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600 font-bold shadow-2xs">
+                        {/* Phần tiêu đề ngày & Thứ (nhỏ gọn) */}
+                        <div className="flex items-center justify-between pb-1 border-b border-slate-200/70 mb-1">
+                          <span
+                            className={`px-1 py-0.2 rounded text-[9px] font-black ${
+                              isSunday
+                                ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                                : 'bg-[#0f3d64] text-white'
+                            }`}
+                          >
+                            {day.dayOfWeek}
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-slate-700">
                             {day.dateLabel || activePeriod?.dates[idx] || ''}
                           </span>
                         </div>
 
-                        {/* Chọn nhanh số công: 1.0 (Đủ) | 0.5 (Nửa) | 0 (Nghỉ) */}
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500">
-                            <span>Công ngày:</span>
-                            <span
-                              className={`font-mono font-black ${
-                                isFullDay
-                                  ? 'text-emerald-700'
-                                  : isHalfDay
-                                  ? 'text-amber-700'
-                                  : 'text-slate-400'
-                              }`}
-                            >
-                              {day.workUnits} công
-                            </span>
-                          </div>
-
-                          {/* Nhóm nút bấm Segmented Control */}
-                          <div className="grid grid-cols-3 gap-1 bg-slate-200/70 p-0.5 rounded-lg">
-                            <button
-                              type="button"
-                              onClick={() => handleDayWorkUnitsChange(idx, 1)}
-                              className={`py-1 rounded-md font-black text-[11px] transition-all cursor-pointer flex items-center justify-center gap-0.5 ${
-                                isFullDay
-                                  ? 'bg-emerald-600 text-white shadow-xs'
-                                  : 'text-slate-700 hover:bg-white/80'
-                              }`}
-                              title="Đi làm đủ ngày (8 tiếng = 1 công)"
-                            >
-                              {isFullDay && <Check className="w-3 h-3 stroke-[3]" />}
-                              <span>1.0</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDayWorkUnitsChange(idx, 0.5)}
-                              className={`py-1 rounded-md font-black text-[11px] transition-all cursor-pointer flex items-center justify-center gap-0.5 ${
-                                isHalfDay
-                                  ? 'bg-amber-500 text-white shadow-xs'
-                                  : 'text-slate-700 hover:bg-white/80'
-                              }`}
-                              title="Đi làm nửa ngày (4 tiếng = 0.5 công)"
-                            >
-                              <span>0.5</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDayWorkUnitsChange(idx, 0)}
-                              className={`py-1 rounded-md font-bold text-[11px] transition-all cursor-pointer flex items-center justify-center ${
-                                isOff
-                                  ? 'bg-slate-600 text-white shadow-xs'
-                                  : 'text-slate-500 hover:bg-white/80'
-                              }`}
-                              title="Nghỉ ca (0 công)"
-                            >
-                              <span>0</span>
-                            </button>
-                          </div>
-
-                          {/* Nhãn trạng thái trực quan */}
-                          <div className="text-center pt-0.5">
-                            {isFullDay ? (
-                              <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full inline-block">
-                                ✓ Đủ ca (8h)
-                              </span>
-                            ) : isHalfDay ? (
-                              <span className="text-[10px] text-amber-900 font-bold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full inline-block">
-                                ◐ Nửa ca (4h)
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full inline-block">
-                                Nghỉ ca
-                              </span>
-                            )}
-                          </div>
+                        {/* Chọn nhanh số công: 1.0 | 0.5 | 0 (icon nhỏ) */}
+                        <div className="grid grid-cols-3 gap-0.5 bg-slate-200/80 p-0.5 rounded">
+                          <button
+                            type="button"
+                            onClick={() => handleDayWorkUnitsChange(idx, 1)}
+                            className={`py-0.5 rounded font-black text-[10px] transition-all cursor-pointer flex items-center justify-center ${
+                              isFullDay
+                                ? 'bg-emerald-600 text-white shadow-2xs'
+                                : 'text-slate-700 hover:bg-white'
+                            }`}
+                            title="1.0 công (Đủ 8h)"
+                          >
+                            1.0
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDayWorkUnitsChange(idx, 0.5)}
+                            className={`py-0.5 rounded font-black text-[10px] transition-all cursor-pointer flex items-center justify-center ${
+                              isHalfDay
+                                ? 'bg-amber-500 text-white shadow-2xs'
+                                : 'text-slate-700 hover:bg-white'
+                            }`}
+                            title="0.5 công (Nửa ca 4h)"
+                          >
+                            0.5
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDayWorkUnitsChange(idx, 0)}
+                            className={`py-0.5 rounded font-bold text-[10px] transition-all cursor-pointer flex items-center justify-center ${
+                              isOff
+                                ? 'bg-slate-600 text-white shadow-2xs'
+                                : 'text-slate-500 hover:bg-white'
+                            }`}
+                            title="Nghỉ (0 công)"
+                          >
+                            0
+                          </button>
                         </div>
 
-                        {/* TĂNG CA OT TRONG NGÀY */}
-                        <div className="mt-2.5 pt-2 border-t border-slate-200/80 space-y-1.5">
-                          <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500">
-                            <span>Tăng ca (OT):</span>
-                            {hasOT ? (
-                              <span className="font-mono font-black text-amber-800 bg-amber-100/90 px-1.5 py-0.2 rounded border border-amber-300">
-                                ⚡ +{day.otHours}h OT
-                              </span>
-                            ) : (
-                              <span className="font-mono text-slate-400">0h</span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
+                        {/* TĂNG CA OT TRONG NGÀY (nhỏ gọn) */}
+                        <div className="mt-1 pt-1 border-t border-slate-200/70 flex items-center justify-between gap-0.5">
+                          <span className="text-[9px] text-slate-500 font-semibold">OT:</span>
+                          <div className="flex items-center gap-0.5">
                             <button
                               type="button"
                               onClick={() => handleDayOTChange(idx, -1)}
-                              className="w-5 h-5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-black flex items-center justify-center transition cursor-pointer"
-                              title="Giảm 1 giờ OT"
+                              className="w-4 h-4 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px] font-black flex items-center justify-center cursor-pointer"
                             >
                               -
                             </button>
-                            <span className="font-mono font-black text-xs px-1 text-slate-900">
+                            <span
+                              className={`font-mono font-black text-[10px] px-0.5 ${
+                                hasOT ? 'text-amber-800 bg-amber-100 rounded' : 'text-slate-600'
+                              }`}
+                            >
                               {day.otHours}h
                             </span>
                             <button
                               type="button"
                               onClick={() => handleDayOTChange(idx, 1)}
-                              className="w-5 h-5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-xs font-black flex items-center justify-center transition cursor-pointer"
-                              title="Tăng 1 giờ OT"
+                              className="w-4 h-4 bg-amber-200 hover:bg-amber-300 text-amber-950 rounded text-[10px] font-black flex items-center justify-center cursor-pointer"
                             >
                               +
                             </button>
                           </div>
                         </div>
 
-                        {/* Ghi chú công việc */}
-                        <div className="mt-2 pt-1.5 border-t border-slate-100">
-                          <input
-                            type="text"
-                            placeholder="Ghi chú ca..."
-                            value={day.note || ''}
-                            onChange={(e) => handleDayNoteChange(idx, e.target.value)}
-                            className="w-full text-[10px] px-2 py-1 bg-white border border-slate-200 rounded-md focus:ring-1 focus:ring-sky-500 text-slate-700 placeholder-slate-400"
-                          />
-                        </div>
+                        {/* Ghi chú ngắn */}
+                        <input
+                          type="text"
+                          placeholder="Ghi chú..."
+                          value={day.note || ''}
+                          onChange={(e) => handleDayNoteChange(idx, e.target.value)}
+                          className="mt-1 w-full text-[9px] px-1 py-0.5 bg-white border border-slate-200 rounded text-slate-700 placeholder-slate-400"
+                        />
                       </div>
                     );
                   })}

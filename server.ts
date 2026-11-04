@@ -110,107 +110,167 @@ app.post('/api/sync', (req, res) => {
   res.json({ success: true, lastUpdated: updated.lastUpdated });
 });
 
-// Worker info lookup by code
+// Worker info lookup by code (supports both Seasonal Workers and Permanent Employees)
 app.get('/api/worker/:code', (req, res) => {
   const code = req.params.code;
   const current = readStorage();
-  const worker = (current.seasonalWorkers || []).find(
+  let worker = (current.seasonalWorkers || []).find(
     (w: any) => w.code === code || String(w.id) === code
   );
+  if (!worker) {
+    const emp = (current.employees || []).find(
+      (e: any) => e.code === code || String(e.id) === code
+    );
+    if (emp) {
+      worker = {
+        ...emp,
+        trade: emp.title || 'Nhân viên chính thức',
+        skillLevel: emp.department || 'Chính thức',
+        project: emp.department || 'Văn phòng / Dự án',
+        dailyRate: emp.salaryType === 'DAILY' ? emp.baseSalary : Math.round((emp.baseSalary || 0) / (emp.standardWorkDays || 26)),
+        status: emp.status || 'ACTIVE',
+      };
+    }
+  }
   res.json({ worker: worker || null, lastUpdated: current.lastUpdated });
 });
 
-// Specific endpoint for Attendance updates from Mobile App
+// Specific endpoint for Attendance updates from Mobile App (updates both Seasonal Workers and Permanent Employees)
 app.post('/api/attendance/mark', (req, res) => {
   const { worker, workerCode, year, month, days } = req.body;
   const current = readStorage();
   let workers = [...(current.seasonalWorkers || [])];
+  let employees = [...(current.employees || [])];
+
+  const mergeMonthlyAttendance = (existingMonthly: Record<string, any> = {}, incomingMonthly: Record<string, any> = {}) => {
+    const mergedMonthly: Record<string, any> = { ...existingMonthly };
+    Object.entries(incomingMonthly).forEach(([mKey, incRec]: [string, any]) => {
+      if (!mergedMonthly[mKey]) {
+        mergedMonthly[mKey] = incRec;
+      } else {
+        const exDays = mergedMonthly[mKey].days || {};
+        const incDays = incRec.days || {};
+        const mergedDays = { ...exDays, ...incDays };
+        let tWork = 0;
+        let tOt = 0;
+        Object.values(mergedDays).forEach((d: any) => {
+          tWork += Number(d.workUnits || 0);
+          tOt += Number(d.otHours || 0);
+        });
+        mergedMonthly[mKey] = {
+          ...mergedMonthly[mKey],
+          ...incRec,
+          days: mergedDays,
+          totalWorkDays: Math.round(tWork * 10) / 10,
+          totalOtHours: tOt,
+        };
+      }
+    });
+    return mergedMonthly;
+  };
 
   if (worker && (worker.code || worker.id)) {
-    // Direct worker object replace/update
-    const idx = workers.findIndex(
+    const empIdx = employees.findIndex(
+      (e: any) => (worker.code && e.code === worker.code) || (worker.id && String(e.id) === String(worker.id))
+    );
+    const seaIdx = workers.findIndex(
       (w: any) => (worker.code && w.code === worker.code) || (worker.id && String(w.id) === String(worker.id))
     );
-    if (idx >= 0) {
-      const existingMonthly = workers[idx].monthlyAttendance || {};
-      const incomingMonthly = worker.monthlyAttendance || {};
-      const mergedMonthly: Record<string, any> = { ...existingMonthly };
 
-      Object.entries(incomingMonthly).forEach(([mKey, incRec]: [string, any]) => {
-        if (!mergedMonthly[mKey]) {
-          mergedMonthly[mKey] = incRec;
-        } else {
-          const exDays = mergedMonthly[mKey].days || {};
-          const incDays = incRec.days || {};
-          const mergedDays = { ...exDays, ...incDays };
-          let tWork = 0;
-          let tOt = 0;
-          Object.values(mergedDays).forEach((d: any) => {
-            tWork += Number(d.workUnits || 0);
-            tOt += Number(d.otHours || 0);
-          });
-          mergedMonthly[mKey] = {
-            ...mergedMonthly[mKey],
-            ...incRec,
-            days: mergedDays,
-            totalWorkDays: Math.round(tWork * 10) / 10,
-            totalOtHours: tOt,
-          };
-        }
-      });
-
-      workers[idx] = {
-        ...workers[idx],
-        ...worker,
+    if (empIdx >= 0) {
+      const mergedMonthly = mergeMonthlyAttendance(employees[empIdx].monthlyAttendance, worker.monthlyAttendance);
+      employees[empIdx] = {
+        ...employees[empIdx],
+        actualWorkDays: worker.actualWorkDays !== undefined ? worker.actualWorkDays : employees[empIdx].actualWorkDays,
+        overtimeHours: worker.overtimeHours !== undefined ? worker.overtimeHours : employees[empIdx].overtimeHours,
         periodRecords: {
-          ...(workers[idx].periodRecords || {}),
+          ...(employees[empIdx].periodRecords || {}),
           ...(worker.periodRecords || {}),
         },
         monthlyAttendance: mergedMonthly,
       };
-    } else {
+    }
+
+    if (seaIdx >= 0) {
+      const mergedMonthly = mergeMonthlyAttendance(workers[seaIdx].monthlyAttendance, worker.monthlyAttendance);
+      workers[seaIdx] = {
+        ...workers[seaIdx],
+        ...worker,
+        periodRecords: {
+          ...(workers[seaIdx].periodRecords || {}),
+          ...(worker.periodRecords || {}),
+        },
+        monthlyAttendance: mergedMonthly,
+      };
+    } else if (empIdx < 0) {
       workers.push(worker);
     }
   } else if (workerCode && days) {
-    const idx = workers.findIndex((w: any) => w.code === workerCode || String(w.id) === workerCode);
-    if (idx >= 0) {
-      const targetWorker = { ...workers[idx] };
-      const mStr = String(month).padStart(2, '0');
-      const monthKey = `${year}-${mStr}`;
-      
-      let totalWorkDays = 0;
-      let totalOtHours = 0;
-      Object.values(days).forEach((d: any) => {
-        totalWorkDays += Number(d.workUnits || 0);
-        totalOtHours += Number(d.otHours || 0);
-      });
+    const mStr = String(month).padStart(2, '0');
+    const monthKey = `${year}-${mStr}`;
+    let totalWorkDays = 0;
+    let totalOtHours = 0;
+    Object.values(days).forEach((d: any) => {
+      totalWorkDays += Number(d.workUnits || 0);
+      totalOtHours += Number(d.otHours || 0);
+    });
+    const roundedDays = Math.round(totalWorkDays * 10) / 10;
 
+    const seaIdx = workers.findIndex((w: any) => w.code === workerCode || String(w.id) === workerCode);
+    if (seaIdx >= 0) {
+      const targetWorker = { ...workers[seaIdx] };
       targetWorker.monthlyAttendance = {
         ...(targetWorker.monthlyAttendance || {}),
         [monthKey]: {
           monthKey,
           month,
           year,
-          totalWorkDays: Math.round(totalWorkDays * 10) / 10,
+          totalWorkDays: roundedDays,
           totalOtHours,
           days,
           lastSubmittedAt: new Date().toISOString(),
           submittedBy: 'WORKER',
         },
       };
-      targetWorker.actualWorkDays = Math.round(totalWorkDays * 10) / 10;
+      targetWorker.actualWorkDays = roundedDays;
       targetWorker.overtimeHours = totalOtHours;
-      workers[idx] = targetWorker;
+      workers[seaIdx] = targetWorker;
+    }
+
+    const empIdx = employees.findIndex((e: any) => e.code === workerCode || String(e.id) === workerCode);
+    if (empIdx >= 0) {
+      const targetEmp = { ...employees[empIdx] };
+      targetEmp.monthlyAttendance = {
+        ...(targetEmp.monthlyAttendance || {}),
+        [monthKey]: {
+          monthKey,
+          month,
+          year,
+          totalWorkDays: roundedDays,
+          totalOtHours,
+          days,
+          lastSubmittedAt: new Date().toISOString(),
+          submittedBy: 'WORKER',
+        },
+      };
+      targetEmp.actualWorkDays = roundedDays;
+      targetEmp.overtimeHours = totalOtHours;
+      employees[empIdx] = targetEmp;
     }
   }
 
   current.seasonalWorkers = workers;
+  current.employees = employees;
   current.lastUpdated = Date.now();
   writeStorage(current);
 
-  const matchedWorker = workers.find(
-    (w: any) => (worker && (w.code === worker.code || String(w.id) === String(worker.id))) || w.code === workerCode
-  );
+  const matchedWorker =
+    workers.find(
+      (w: any) => (worker && (w.code === worker.code || String(w.id) === String(worker.id))) || w.code === workerCode
+    ) ||
+    employees.find(
+      (e: any) => (worker && (e.code === worker.code || String(e.id) === String(worker.id))) || e.code === workerCode
+    );
 
   res.json({
     success: true,

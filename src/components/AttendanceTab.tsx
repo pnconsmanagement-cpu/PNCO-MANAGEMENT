@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CompanyConfig, Employee, SeasonalWorker, TeamWorker } from '../types';
+import {
+  CompanyConfig,
+  Employee,
+  SeasonalWorker,
+  TeamWorker,
+  MonthlyAttendanceRecord,
+  DailyAttendanceDetail,
+  SeasonalCycleType,
+} from '../types';
 import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
+import { recomputeSeasonalWorkerPayroll } from '../data/mockSeasonalWorkers';
 import {
   Calendar,
   Check,
@@ -21,8 +30,14 @@ import {
   Clock,
   Briefcase,
   Building,
+  Smartphone,
+  QrCode,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { MonthYearPicker } from './MonthYearPicker';
+import { CompactDailyAttendancePanel } from './CompactDailyAttendancePanel';
+import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 
 interface AttendanceTabProps {
   employees: Employee[];
@@ -35,6 +50,7 @@ interface AttendanceTabProps {
   onBatchUpdateTeam?: (updated: TeamWorker[]) => void;
   onGoToEmployeeList?: () => void;
   onGoToSeasonalAttendance?: () => void;
+  onOpenMobileView?: (workerCode?: string) => void;
   seasonalCount?: number;
   forcedGroup?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
 }
@@ -50,6 +66,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onBatchUpdateTeam,
   onGoToEmployeeList,
   onGoToSeasonalAttendance,
+  onOpenMobileView,
   seasonalCount = 12,
   forcedGroup,
 }) => {
@@ -66,6 +83,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(seasonalWorkers);
   const [modifiedTeam, setModifiedTeam] = useState<TeamWorker[]>(teamWorkers);
   const [onlySelected, setOnlySelected] = useState(true);
+  const [expandedDailyCode, setExpandedDailyCode] = useState<string | null>(null);
+  const [shareModalTargetId, setShareModalTargetId] = useState<string | null>(null);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
     message: string;
@@ -106,6 +126,68 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   useEffect(() => {
     setModifiedTeam(teamWorkers);
   }, [teamWorkers]);
+
+  // Cập nhật chấm công từng ngày (Lịch ngày thu gọn) cho NV Chính thức
+  const handlePermanentDailyCalendarUpdate = (
+    code: string,
+    payload: {
+      monthlyAttendance: { [monthKey: string]: MonthlyAttendanceRecord };
+      actualWorkDays: number;
+      overtimeHours: number;
+      cycleType: SeasonalCycleType;
+      periodKey: string;
+    }
+  ) => {
+    const updated = modifiedEmployees.map((emp) => {
+      if (emp.code === code) {
+        const item: Employee = {
+          ...emp,
+          monthlyAttendance: payload.monthlyAttendance,
+          actualWorkDays: payload.actualWorkDays,
+          overtimeHours: payload.overtimeHours,
+          payrollCycleType: payload.cycleType,
+          currentPeriodKey: payload.periodKey,
+        };
+        return recomputeEmployeePayroll(item);
+      }
+      return emp;
+    });
+    setModifiedEmployees(updated);
+    onBatchUpdate(updated);
+    setLastSavedCode(code);
+    setTimeout(() => setLastSavedCode(null), 1500);
+  };
+
+  // Cập nhật chấm công từng ngày (Lịch ngày thu gọn) cho NV Thời vụ
+  const handleSeasonalDailyCalendarUpdate = (
+    code: string,
+    payload: {
+      monthlyAttendance: { [monthKey: string]: MonthlyAttendanceRecord };
+      actualWorkDays: number;
+      overtimeHours: number;
+      cycleType: SeasonalCycleType;
+      periodKey: string;
+    }
+  ) => {
+    const updated = modifiedSeasonal.map((w) => {
+      if (w.code === code) {
+        const nextWorker: SeasonalWorker = {
+          ...w,
+          monthlyAttendance: payload.monthlyAttendance,
+          actualWorkDays: payload.actualWorkDays,
+          overtimeHours: payload.overtimeHours,
+          payrollCycleType: payload.cycleType,
+          currentPeriodKey: payload.periodKey,
+        };
+        return recomputeSeasonalWorkerPayroll(nextWorker);
+      }
+      return w;
+    });
+    setModifiedSeasonal(updated);
+    if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
+    setLastSavedCode(code);
+    setTimeout(() => setLastSavedCode(null), 1500);
+  };
 
   // Cập nhật số ngày công thực tế cho NV Chính thức
   const handleWorkDaysChange = (code: string, newDays: number) => {
@@ -368,8 +450,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     setToastMessage('Đã lưu & đồng bộ toàn bộ bảng chấm công và tính lại bảng lương!');
   };
 
-  const monthFormatted = (config.month || 9) < 10 ? `0${config.month || 9}` : config.month;
+  const monthFormatted = (config.month || 11) < 10 ? `0${config.month || 11}` : config.month || 11;
   const yearFormatted = config.year || 2026;
+  const currentMonthKey = `${yearFormatted}-${String(config.month || 11).padStart(2, '0')}`;
 
   // Danh sách hiển thị - CHỈ HIỂN THỊ NHÂN SỰ CÓ TRẠNG THÁI 'ACTIVE' (Đang làm việc)
   const displayedEmployees = useMemo(() => {
@@ -393,6 +476,53 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   const displayedTeam = useMemo(() => {
     return modifiedTeam.filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
   }, [modifiedTeam]);
+
+  // Danh sách nhân sự để truyền vào Modal tạo Link Chấm Công Di Động (hỗ trợ cả NV Chính Thức & Thời Vụ)
+  const shareableWorkers: SeasonalWorker[] = useMemo(() => {
+    const permMapped: SeasonalWorker[] = displayedEmployees.map((e) => ({
+      id: e.id,
+      code: e.code,
+      fullName: e.fullName,
+      trade: e.title || 'Nhân viên chính thức',
+      skillLevel: e.department || 'Chính thức',
+      project: e.department || 'Văn phòng / Dự án',
+      teamName: e.department || 'Phòng ban',
+      teamLeader: '',
+      phone: e.phone || '',
+      idCard: e.idCard || '',
+      bankAccount: e.bankAccount || '',
+      bankName: e.bankName || '',
+      paymentMethod: 'BANK',
+      joinDate: e.joinDate || '',
+      dailyRate:
+        e.salaryType === 'DAILY'
+          ? e.baseSalary
+          : Math.round((e.baseSalary || 0) / (e.standardWorkDays || config.standardWorkDays || 26)),
+      actualWorkDays: e.actualWorkDays || 0,
+      salaryByDays: e.salaryByActualDays || 0,
+      overtimeHours: e.overtimeHours || 0,
+      overtimePay: e.overtimePay || 0,
+      mealAllowance: e.mealAllowance || 0,
+      travelSafetyAllowance: e.phoneTravelAllowance || 0,
+      otherBonus: e.kpiBonus || 0,
+      totalIncome: e.totalIncome || 0,
+      hasTaxCommitment: true,
+      personalIncomeTax: e.personalIncomeTax || 0,
+      advancePayment: e.advancePayment || 0,
+      totalDeductions: e.totalDeductions || 0,
+      netSalary: e.netSalary || 0,
+      status: 'ACTIVE',
+      monthlyAttendance: e.monthlyAttendance,
+      periodRecords: e.periodRecords,
+      payrollCycleType: e.payrollCycleType || '1_MONTH',
+      currentPeriodKey: e.currentPeriodKey,
+    }));
+
+    if (attendanceGroup === 'PERMANENT') {
+      return [...permMapped, ...displayedSeasonal];
+    }
+    return [...displayedSeasonal, ...permMapped];
+  }, [displayedEmployees, displayedSeasonal, attendanceGroup, config.standardWorkDays]);
 
   const selectedCount = displayedEmployees.length;
 
@@ -482,6 +612,22 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const firstId =
+                  forcedGroup === 'PERMANENT'
+                    ? displayedEmployees[0]?.id
+                    : displayedSeasonal[0]?.id;
+                setShareModalTargetId(firstId ? String(firstId) : null);
+                setIsShareModalOpen(true);
+              }}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer transition"
+              title="Lấy Link & Mã QR gửi cho mọi người tự chấm công trên điện thoại (tự động hiện số công & giờ tăng ca)"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Gửi Link Chấm Công (Hiện Công & OT)</span>
+            </button>
             <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full border border-emerald-300">
               {forcedGroup === 'PERMANENT' ? displayedEmployees.length : displayedSeasonal.length} người đang làm việc
             </span>
@@ -502,12 +648,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               </h2>
               <span className="px-2 py-0.5 bg-sky-100 text-sky-900 border border-sky-300 font-bold rounded-full text-[10px]">
                 {attendanceGroup === 'PERMANENT' && `Nhân viên chính thức (${selectedCount}/${modifiedEmployees.length})`}
-                {attendanceGroup === 'SEASONAL' && `Nhân lực thời vụ (${modifiedSeasonal.length} thợ)`}
-                {attendanceGroup === 'TEAM' && `Nhân viên tổ đội (${modifiedTeam.length} tổ)`}
+                {attendanceGroup === 'SEASONAL' && `Nhân lực thời vụ (${displayedSeasonal.length} thợ)`}
+                {attendanceGroup === 'TEAM' && `Nhân viên tổ đội (${displayedTeam.length} tổ)`}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Ghi nhận ngày công thực tế, giờ tăng ca OT và ngày nghỉ để tự động tính chính xác lương
+              Bấm biểu tượng <strong className="text-[#0f3d64]">📅 Lịch ngày</strong> trên từng dòng để mở lịch chấm công từng ngày (icon nhỏ gọn) hoặc <strong className="text-emerald-700">📱 Link</strong> để gửi link chấm công tự động đồng bộ Số công & Giờ tăng ca OT.
             </p>
           </div>
         </div>
@@ -532,28 +678,47 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         <div className="flex flex-wrap items-center gap-3">
           {/* Bộ chọn tháng năm */}
           <MonthYearPicker
-            month={config.month || 9}
+            month={config.month || 11}
             year={config.year || 2026}
             onChange={onChangeMonthYear}
             label="Kỳ chấm công:"
           />
 
           {/* Lọc chỉ hiện nhân viên chọn chấm công */}
-          <button
-            type="button"
-            onClick={() => setOnlySelected(!onlySelected)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
-              onlySelected
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs'
-                : 'bg-slate-100 text-slate-700 border-slate-300'
-            }`}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            <span>{onlySelected ? `Chỉ hiện NV chấm công (${selectedCount})` : `Hiện tất cả nhân sự (${modifiedEmployees.length})`}</span>
-          </button>
+          {attendanceGroup === 'PERMANENT' && (
+            <button
+              type="button"
+              onClick={() => setOnlySelected(!onlySelected)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                onlySelected
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 border-slate-300'
+              }`}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              <span>{onlySelected ? `Chỉ hiện NV chấm công (${selectedCount})` : `Hiện tất cả đang làm việc`}</span>
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const firstId =
+                attendanceGroup === 'PERMANENT'
+                  ? displayedEmployees[0]?.id
+                  : displayedSeasonal[0]?.id;
+              setShareModalTargetId(firstId ? String(firstId) : null);
+              setIsShareModalOpen(true);
+            }}
+            className="px-3 py-1.5 border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+            title="Tạo Link & Mã QR gửi cho nhân viên chấm công trên điện thoại"
+          >
+            <QrCode className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Link Chấm Công Điện Thoại</span>
+          </button>
+
           {onGoToEmployeeList && (
             <button
               type="button"
@@ -597,7 +762,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       </div>
 
       {/* Bảng chấm công chi tiết theo từng nhóm */}
-      <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[660px] text-xs shadow-xs">
+      <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[680px] text-xs shadow-xs">
         {attendanceGroup === 'PERMANENT' && (
         <table className="w-full border-collapse text-left whitespace-nowrap">
           <thead className="bg-[#0f3d64] text-white sticky top-0 z-20 text-[11px] select-none">
@@ -611,14 +776,14 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 Họ và tên
               </th>
               <th className="p-2.5 border-r border-sky-800 min-w-[120px]">Bộ phận</th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-28">
-                <div>Hình thức lương</div>
-                <div className="text-[9px] text-amber-200 font-normal">Tháng / Ngày</div>
+              <th className="p-2.5 border-r border-sky-800 text-center min-w-[195px] bg-[#144d7d]">
+                <div className="font-bold text-emerald-300">Chấm Từng Ngày & Link</div>
+                <div className="text-[9px] text-sky-200 font-normal">Lịch icon nhỏ + Link điện thoại</div>
               </th>
               <th className="p-2.5 border-r border-sky-800 text-center w-20">Công chuẩn</th>
               <th className="p-2.5 border-r border-sky-800 text-center min-w-[180px] bg-[#144d7d]">
                 <div className="font-bold text-amber-200">Công thực tế *</div>
-                <div className="text-[9px] text-sky-200 font-normal">Nhập số hoặc bấm +/-</div>
+                <div className="text-[9px] text-sky-200 font-normal">Tự đồng bộ từ lịch/link</div>
               </th>
               <th className="p-2.5 border-r border-sky-800 text-center min-w-[145px]">
                 <div>Giờ OT (h)</div>
@@ -640,6 +805,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             {displayedEmployees.map((emp, index) => {
               const isSelectedForAttendance = emp.selectedForAttendance !== false;
               const stdDays = emp.standardWorkDays || config.standardWorkDays || 26;
+              const isExpanded = expandedDailyCode === emp.code;
+              const monthRec = emp.monthlyAttendance?.[currentMonthKey];
+              const checkedDayEntries = (Object.values(monthRec?.days || {}) as DailyAttendanceDetail[]).filter(
+                (d) => (d.workUnits || 0) > 0 || (d.otHours || 0) > 0
+              );
 
               // Lấy giá trị chuỗi nhập liệu tạm thời (nếu người dùng đang gõ)
               const rawDaysValue =
@@ -673,335 +843,403 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               const isRecentlySaved = lastSavedCode === emp.code;
 
               return (
-                <tr
-                  key={emp.code}
-                  className={`hover:bg-sky-50/60 transition-colors ${
-                    !isSelectedForAttendance ? 'bg-slate-50/70 opacity-60' : ''
-                  }`}
-                >
-                  {/* STT */}
-                  <td className="p-2 border-r border-slate-200 text-center text-slate-500 font-mono">
-                    {index + 1}
-                  </td>
+                <React.Fragment key={emp.code}>
+                  <tr
+                    className={`hover:bg-sky-50/60 transition-colors ${
+                      !isSelectedForAttendance ? 'bg-slate-50/70 opacity-60' : ''
+                    } ${isExpanded ? 'bg-sky-50/80' : ''}`}
+                  >
+                    {/* STT */}
+                    <td className="p-2 border-r border-slate-200 text-center text-slate-500 font-mono">
+                      {index + 1}
+                    </td>
 
-                  {/* Checkbox Chấm công */}
-                  <td className="p-2 border-r border-slate-200 text-center">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSelectAttendance(emp.code)}
-                      className="cursor-pointer inline-flex items-center justify-center p-1 rounded hover:bg-slate-200/60 transition"
-                      title={isSelectedForAttendance ? 'Đang chọn chấm công. Nhấn để bỏ chọn.' : 'Đã bỏ chọn. Nhấn để chọn chấm công.'}
-                    >
-                      {isSelectedForAttendance ? (
-                        <CheckSquare className="w-4 h-4 text-emerald-600" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-400" />
-                      )}
-                    </button>
-                  </td>
+                    {/* Checkbox Chấm công */}
+                    <td className="p-2 border-r border-slate-200 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSelectAttendance(emp.code)}
+                        className="cursor-pointer inline-flex items-center justify-center p-1 rounded hover:bg-slate-200/60 transition"
+                        title={isSelectedForAttendance ? 'Đang chọn chấm công. Nhấn để bỏ chọn.' : 'Đã bỏ chọn. Nhấn để chọn chấm công.'}
+                      >
+                        {isSelectedForAttendance ? (
+                          <CheckSquare className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-400" />
+                        )}
+                      </button>
+                    </td>
 
-                  {/* Mã NV */}
-                  <td className="p-2 border-r border-slate-200 font-mono font-bold text-[#0f3d64] text-center">
-                    {emp.code}
-                  </td>
+                    {/* Mã NV */}
+                    <td className="p-2 border-r border-slate-200 font-mono font-bold text-[#0f3d64] text-center">
+                      {emp.code}
+                    </td>
 
-                  {/* Họ và tên (Cố định cột trái khi scroll) */}
-                  <td className="p-2 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50 font-bold text-slate-900 z-10">
-                    <div className="flex items-center justify-between gap-2">
-                      <span>{emp.fullName}</span>
-                      {isRecentlySaved && (
-                        <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded font-bold animate-in fade-in">
-                          ✓ Đã lưu
-                        </span>
-                      )}
-                    </div>
-                  </td>
-
-                  {/* Bộ phận */}
-                  <td className="p-2 border-r border-slate-200 text-slate-600">
-                    {emp.department}
-                  </td>
-
-                  {/* Hình thức lương & Mức lương cơ bản */}
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    {emp.salaryType === 'DAILY' ? (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                          Theo ngày
-                        </span>
-                        <span className="text-[11px] font-mono text-amber-950 font-bold mt-0.5">
-                          {new Intl.NumberFormat('vi-VN').format(emp.baseSalary)} đ
-                        </span>
+                    {/* Họ và tên (Cố định cột trái khi scroll) */}
+                    <td className="p-2 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50 font-bold text-slate-900 z-10">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{emp.fullName}</span>
+                        {isRecentlySaved && (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded font-bold animate-in fade-in">
+                            ✓ Đã lưu
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-sky-50 text-[#0f3d64] border border-sky-200">
-                          Theo tháng
-                        </span>
-                        <span className="text-[11px] font-mono text-slate-700 mt-0.5">
-                          {new Intl.NumberFormat('vi-VN').format(emp.baseSalary)} đ
-                        </span>
+                    </td>
+
+                    {/* Bộ phận */}
+                    <td className="p-2 border-r border-slate-200 text-slate-600">
+                      {emp.department}
+                    </td>
+
+                    {/* CHẤM TỪNG NGÀY (ICON NHỎ) & LINK CHẤM CÔNG */}
+                    <td className="p-1.5 border-r border-slate-200 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedDailyCode(isExpanded ? null : emp.code)
+                          }
+                          className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 cursor-pointer transition border ${
+                            isExpanded
+                              ? 'bg-[#0f3d64] text-white border-[#0f3d64] shadow-xs'
+                              : checkedDayEntries.length > 0
+                              ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
+                              : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-sky-50 hover:border-sky-300'
+                          }`}
+                          title="Mở / Đóng bảng chấm công từng ngày (icon nhỏ gọn)"
+                        >
+                          <Calendar className="w-3 h-3 shrink-0" />
+                          <span>
+                            {checkedDayEntries.length > 0
+                              ? `${checkedDayEntries.length} ngày`
+                              : 'Lịch ngày'}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp className="w-3 h-3" />
+                          ) : (
+                            <ChevronDown className="w-3 h-3" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShareModalTargetId(String(emp.id));
+                            setIsShareModalOpen(true);
+                          }}
+                          className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                          title={`Lấy Link chấm công gửi cho ${emp.fullName} (khi chấm sẽ tự hiện số công & giờ tăng ca)`}
+                        >
+                          <Smartphone className="w-3 h-3" />
+                          <span>Link</span>
+                        </button>
                       </div>
-                    )}
-                  </td>
-
-                  {/* Công chuẩn */}
-                  <td className="p-2 border-r border-slate-200 text-center font-bold text-slate-700 font-mono">
-                    {stdDays}
-                  </td>
-
-                  {/* ========================================================================= */}
-                  {/* CÔNG THỰC TẾ: Hỗ trợ gõ trực tiếp, xóa backspace không bị snap về 0, */}
-                  {/* hỗ trợ số thập phân 25.5, kèm stepper - / + và nút chấm đủ công */}
-                  {/* ========================================================================= */}
-                  <td className="p-1.5 border-r border-slate-200 text-center bg-sky-50/40">
-                    <div className="flex items-center justify-center gap-1">
-                      {/* Nút giảm 0.5 công */}
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(emp.code, -0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                        title="Giảm 0.5 ngày công"
-                      >
-                        -
-                      </button>
-
-                      {/* Ô nhập ngày công dạng text để gõ mượt mà 100%, không bị trình duyệt xóa khi gõ dấu chấm */}
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0"
-                        value={rawDaysValue}
-                        onChange={(e) => {
-                          const valStr = e.target.value;
-                          // Cho phép nhập số và tối đa 1 dấu chấm thập phân
-                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                            setLocalInputs((prev) => ({
-                              ...prev,
-                              [emp.code]: {
-                                ...(prev[emp.code] || {}),
-                                actualWorkDays: valStr,
-                              },
-                            }));
-
-                            // Nếu là số hợp lệ, cập nhật tức thời
-                            if (valStr !== '' && !valStr.endsWith('.')) {
-                              const parsed = parseFloat(valStr);
-                              if (!isNaN(parsed) && parsed >= 0 && parsed <= 31) {
-                                handleWorkDaysChange(emp.code, parsed);
-                              }
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const currentStr = localInputs[emp.code]?.actualWorkDays;
-                          if (currentStr !== undefined) {
-                            const parsed = parseFloat(currentStr);
-                            const finalDays = isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed));
-                            handleWorkDaysChange(emp.code, finalDays);
-                            // Xóa bộ đệm sau khi blur để hiển thị số chuẩn
-                            setLocalInputs((prev) => {
-                              const next = { ...prev };
-                              if (next[emp.code]) {
-                                delete next[emp.code].actualWorkDays;
-                              }
-                              return next;
-                            });
-                          }
-                        }}
-                        className="w-14 px-1.5 py-1 border border-sky-400 focus:border-sky-600 focus:ring-1 focus:ring-sky-500 rounded text-center font-mono font-black text-xs text-slate-900 bg-white shadow-2xs"
-                        title="Nhập số ngày công làm việc (VD: 26, 25.5, 24)"
-                      />
-
-                      {/* Nút tăng 0.5 công */}
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(emp.code, 0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                        title="Tăng 0.5 ngày công"
-                      >
-                        +
-                      </button>
-
-                      {/* Nút chấm nhanh đủ công chuẩn (26) */}
-                      <button
-                        type="button"
-                        onClick={() => handleWorkDaysChange(emp.code, stdDays)}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 cursor-pointer transition"
-                        title={`Đặt nhanh đủ công chuẩn (${stdDays} ngày)`}
-                      >
-                        Đủ {stdDays}
-                      </button>
-                    </div>
-                  </td>
-
-                  {/* GIỜ TĂNG CA (OT) */}
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(emp.code, -1)}
-                        className="w-4.5 h-5.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                        title="Giảm 1 giờ OT"
-                      >
-                        -
-                      </button>
-
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0"
-                        value={rawOtValue}
-                        onChange={(e) => {
-                          const valStr = e.target.value;
-                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                            setLocalInputs((prev) => ({
-                              ...prev,
-                              [emp.code]: {
-                                ...(prev[emp.code] || {}),
-                                overtimeHours: valStr,
-                              },
-                            }));
-                            if (valStr !== '' && !valStr.endsWith('.')) {
-                              const parsed = parseFloat(valStr);
-                              if (!isNaN(parsed) && parsed >= 0) {
-                                handleOtChange(emp.code, parsed);
-                              }
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const currentStr = localInputs[emp.code]?.overtimeHours;
-                          if (currentStr !== undefined) {
-                            const parsed = parseFloat(currentStr);
-                            const finalOT = isNaN(parsed) ? 0 : Math.max(0, parsed);
-                            handleOtChange(emp.code, finalOT);
-                            setLocalInputs((prev) => {
-                              const next = { ...prev };
-                              if (next[emp.code]) delete next[emp.code].overtimeHours;
-                              return next;
-                            });
-                          }
-                        }}
-                        className="w-11 px-1 py-0.5 border border-slate-300 focus:border-sky-500 rounded text-center font-mono font-bold text-xs text-amber-900 bg-white"
-                        title="Nhập giờ làm thêm OT"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(emp.code, 1)}
-                        className="w-4.5 h-5.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                        title="Tăng 1 giờ OT"
-                      >
-                        +
-                      </button>
-                      <span className="text-[10px] text-slate-400">h</span>
-                    </div>
-                  </td>
-
-                  {/* Tiền làm thêm giờ (1.5x) */}
-                  <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-amber-900 bg-amber-50/20">
-                    {(emp.overtimePay || 0) > 0 ? (
-                      `${new Intl.NumberFormat('vi-VN').format(emp.overtimePay)} đ`
-                    ) : (
-                      <span className="text-slate-400 font-normal">—</span>
-                    )}
-                  </td>
-
-                  {/* Nghỉ phép có lương */}
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={rawPaidLeaveValue}
-                      onChange={(e) => {
-                        const valStr = e.target.value;
-                        if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                          setLocalInputs((prev) => ({
-                            ...prev,
-                            [emp.code]: {
-                              ...(prev[emp.code] || {}),
-                              paidLeaveDays: valStr,
-                            },
-                          }));
-                          if (valStr !== '' && !valStr.endsWith('.')) {
-                            const parsed = parseFloat(valStr);
-                            if (!isNaN(parsed)) handlePaidLeaveChange(emp.code, parsed);
-                          }
-                        }
-                      }}
-                      onBlur={() => {
-                        const currentStr = localInputs[emp.code]?.paidLeaveDays;
-                        if (currentStr !== undefined) {
-                          const parsed = parseFloat(currentStr);
-                          handlePaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                          setLocalInputs((prev) => {
-                            const next = { ...prev };
-                            if (next[emp.code]) delete next[emp.code].paidLeaveDays;
-                            return next;
-                          });
-                        }
-                      }}
-                      className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                      title="Số ngày nghỉ phép hưởng nguyên lương"
-                    />
-                  </td>
-
-                  {/* Nghỉ không lương */}
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={rawUnpaidLeaveValue}
-                      onChange={(e) => {
-                        const valStr = e.target.value;
-                        if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                          setLocalInputs((prev) => ({
-                            ...prev,
-                            [emp.code]: {
-                              ...(prev[emp.code] || {}),
-                              unpaidLeaveDays: valStr,
-                            },
-                          }));
-                          if (valStr !== '' && !valStr.endsWith('.')) {
-                            const parsed = parseFloat(valStr);
-                            if (!isNaN(parsed)) handleUnpaidLeaveChange(emp.code, parsed);
-                          }
-                        }
-                      }}
-                      onBlur={() => {
-                        const currentStr = localInputs[emp.code]?.unpaidLeaveDays;
-                        if (currentStr !== undefined) {
-                          const parsed = parseFloat(currentStr);
-                          handleUnpaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                          setLocalInputs((prev) => {
-                            const next = { ...prev };
-                            if (next[emp.code]) delete next[emp.code].unpaidLeaveDays;
-                            return next;
-                          });
-                        }
-                      }}
-                      className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                      title="Số ngày nghỉ không lương"
-                    />
-                  </td>
-
-                  {/* Lương theo công */}
-                  <td className="p-2 text-right font-mono font-bold text-[#0f3d64]">
-                    {emp.actualWorkDays === 0 ? (
-                      <span className="text-slate-400 font-normal italic text-[11px]">Chưa nhập công (0đ)</span>
-                    ) : (
-                      <div>
-                        <div>{new Intl.NumberFormat('vi-VN').format(emp.salaryByActualDays)} đ</div>
-                        <div className="text-[9px] text-slate-500 font-normal">
-                          {emp.salaryType === 'DAILY' ? '(Đơn giá × công)' : '(=Lương/26 × công)'}
+                      {/* Hiển thị mini-icons các ngày đã chấm (nếu có) */}
+                      {checkedDayEntries.length > 0 && (
+                        <div className="flex items-center justify-center gap-0.5 mt-1 flex-wrap max-w-[180px] mx-auto">
+                          {checkedDayEntries.slice(0, 6).map((d) => (
+                            <span
+                              key={d.day}
+                              className={`text-[8px] font-mono font-bold px-1 rounded ${
+                                d.workUnits === 1
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+                              }`}
+                              title={`Ngày ${d.dateStr}: ${d.workUnits} công${d.otHours ? ` + ${d.otHours}h OT` : ''}`}
+                            >
+                              {d.day < 10 ? `0${d.day}` : d.day}
+                              {d.otHours > 0 ? `+${d.otHours}h` : ''}
+                            </span>
+                          ))}
+                          {checkedDayEntries.length > 6 && (
+                            <span className="text-[8px] font-bold text-slate-500">
+                              +{checkedDayEntries.length - 6}
+                            </span>
+                          )}
                         </div>
+                      )}
+                    </td>
+
+                    {/* Công chuẩn */}
+                    <td className="p-2 border-r border-slate-200 text-center font-bold text-slate-700 font-mono">
+                      {stdDays}
+                    </td>
+
+                    {/* CÔNG THỰC TẾ */}
+                    <td className="p-1.5 border-r border-slate-200 text-center bg-sky-50/40">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleStepWorkDays(emp.code, -0.5)}
+                          className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
+                          title="Giảm 0.5 ngày công"
+                        >
+                          -
+                        </button>
+
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0"
+                          value={rawDaysValue}
+                          onChange={(e) => {
+                            const valStr = e.target.value;
+                            if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
+                              setLocalInputs((prev) => ({
+                                ...prev,
+                                [emp.code]: {
+                                  ...(prev[emp.code] || {}),
+                                  actualWorkDays: valStr,
+                                },
+                              }));
+
+                              if (valStr !== '' && !valStr.endsWith('.')) {
+                                const parsed = parseFloat(valStr);
+                                if (!isNaN(parsed) && parsed >= 0 && parsed <= 31) {
+                                  handleWorkDaysChange(emp.code, parsed);
+                                }
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            const currentStr = localInputs[emp.code]?.actualWorkDays;
+                            if (currentStr !== undefined) {
+                              const parsed = parseFloat(currentStr);
+                              const finalDays = isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed));
+                              handleWorkDaysChange(emp.code, finalDays);
+                              setLocalInputs((prev) => {
+                                const next = { ...prev };
+                                if (next[emp.code]) {
+                                  delete next[emp.code].actualWorkDays;
+                                }
+                                return next;
+                              });
+                            }
+                          }}
+                          className="w-14 px-1.5 py-1 border border-sky-400 focus:border-sky-600 focus:ring-1 focus:ring-sky-500 rounded text-center font-mono font-black text-xs text-slate-900 bg-white shadow-2xs"
+                          title="Nhập số ngày công làm việc (VD: 26, 25.5, 24)"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => handleStepWorkDays(emp.code, 0.5)}
+                          className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
+                          title="Tăng 0.5 ngày công"
+                        >
+                          +
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleWorkDaysChange(emp.code, stdDays)}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 cursor-pointer transition"
+                          title={`Đặt nhanh đủ công chuẩn (${stdDays} ngày)`}
+                        >
+                          Đủ {stdDays}
+                        </button>
                       </div>
-                    )}
-                  </td>
-                </tr>
+                    </td>
+
+                    {/* GIỜ TĂNG CA (OT) */}
+                    <td className="p-1.5 border-r border-slate-200 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleStepOT(emp.code, -1)}
+                          className="w-4.5 h-5.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                          title="Giảm 1 giờ OT"
+                        >
+                          -
+                        </button>
+
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0"
+                          value={rawOtValue}
+                          onChange={(e) => {
+                            const valStr = e.target.value;
+                            if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
+                              setLocalInputs((prev) => ({
+                                ...prev,
+                                [emp.code]: {
+                                  ...(prev[emp.code] || {}),
+                                  overtimeHours: valStr,
+                                },
+                              }));
+                              if (valStr !== '' && !valStr.endsWith('.')) {
+                                const parsed = parseFloat(valStr);
+                                if (!isNaN(parsed) && parsed >= 0) {
+                                  handleOtChange(emp.code, parsed);
+                                }
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            const currentStr = localInputs[emp.code]?.overtimeHours;
+                            if (currentStr !== undefined) {
+                              const parsed = parseFloat(currentStr);
+                              const finalOT = isNaN(parsed) ? 0 : Math.max(0, parsed);
+                              handleOtChange(emp.code, finalOT);
+                              setLocalInputs((prev) => {
+                                const next = { ...prev };
+                                if (next[emp.code]) delete next[emp.code].overtimeHours;
+                                return next;
+                              });
+                            }
+                          }}
+                          className="w-11 px-1 py-0.5 border border-slate-300 focus:border-sky-500 rounded text-center font-mono font-bold text-xs text-amber-900 bg-white"
+                          title="Nhập giờ làm thêm OT"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => handleStepOT(emp.code, 1)}
+                          className="w-4.5 h-5.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                          title="Tăng 1 giờ OT"
+                        >
+                          +
+                        </button>
+                        <span className="text-[10px] text-slate-400">h</span>
+                      </div>
+                    </td>
+
+                    {/* Tiền làm thêm giờ (1.5x) */}
+                    <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-amber-900 bg-amber-50/20">
+                      {(emp.overtimePay || 0) > 0 ? (
+                        `${new Intl.NumberFormat('vi-VN').format(emp.overtimePay)} đ`
+                      ) : (
+                        <span className="text-slate-400 font-normal">—</span>
+                      )}
+                    </td>
+
+                    {/* Nghỉ phép có lương */}
+                    <td className="p-1.5 border-r border-slate-200 text-center">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={rawPaidLeaveValue}
+                        onChange={(e) => {
+                          const valStr = e.target.value;
+                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
+                            setLocalInputs((prev) => ({
+                              ...prev,
+                              [emp.code]: {
+                                ...(prev[emp.code] || {}),
+                                paidLeaveDays: valStr,
+                              },
+                            }));
+                            if (valStr !== '' && !valStr.endsWith('.')) {
+                              const parsed = parseFloat(valStr);
+                              if (!isNaN(parsed)) handlePaidLeaveChange(emp.code, parsed);
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const currentStr = localInputs[emp.code]?.paidLeaveDays;
+                          if (currentStr !== undefined) {
+                            const parsed = parseFloat(currentStr);
+                            handlePaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
+                            setLocalInputs((prev) => {
+                              const next = { ...prev };
+                              if (next[emp.code]) delete next[emp.code].paidLeaveDays;
+                              return next;
+                            });
+                          }
+                        }}
+                        className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
+                        title="Số ngày nghỉ phép hưởng nguyên lương"
+                      />
+                    </td>
+
+                    {/* Nghỉ không lương */}
+                    <td className="p-1.5 border-r border-slate-200 text-center">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={rawUnpaidLeaveValue}
+                        onChange={(e) => {
+                          const valStr = e.target.value;
+                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
+                            setLocalInputs((prev) => ({
+                              ...prev,
+                              [emp.code]: {
+                                ...(prev[emp.code] || {}),
+                                unpaidLeaveDays: valStr,
+                              },
+                            }));
+                            if (valStr !== '' && !valStr.endsWith('.')) {
+                              const parsed = parseFloat(valStr);
+                              if (!isNaN(parsed)) handleUnpaidLeaveChange(emp.code, parsed);
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const currentStr = localInputs[emp.code]?.unpaidLeaveDays;
+                          if (currentStr !== undefined) {
+                            const parsed = parseFloat(currentStr);
+                            handleUnpaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
+                            setLocalInputs((prev) => {
+                              const next = { ...prev };
+                              if (next[emp.code]) delete next[emp.code].unpaidLeaveDays;
+                              return next;
+                            });
+                          }
+                        }}
+                        className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
+                        title="Số ngày nghỉ không lương"
+                      />
+                    </td>
+
+                    {/* Lương theo công */}
+                    <td className="p-2 text-right font-mono font-bold text-[#0f3d64]">
+                      {emp.actualWorkDays === 0 ? (
+                        <span className="text-slate-400 font-normal italic text-[11px]">Chưa nhập công (0đ)</span>
+                      ) : (
+                        <div>
+                          <div>{new Intl.NumberFormat('vi-VN').format(emp.salaryByActualDays)} đ</div>
+                          <div className="text-[9px] text-slate-500 font-normal">
+                            {emp.salaryType === 'DAILY' ? '(Đơn giá × công)' : '(=Lương/26 × công)'}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+
+                  {/* BẢNG CHẤM CÔNG TỪNG NGÀY DẠNG ICON NHỎ GỌN (MỞ RỘNG NGAY DƯỚI DÒNG) */}
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={13} className="p-2.5 bg-sky-50/50 border-b border-sky-200 whitespace-normal">
+                        <CompactDailyAttendancePanel
+                          workerCode={emp.code}
+                          workerName={emp.fullName}
+                          month={config.month || 11}
+                          year={config.year || 2026}
+                          standardWorkDays={stdDays}
+                          dailyRate={
+                            emp.salaryType === 'DAILY'
+                              ? emp.baseSalary
+                              : Math.round((emp.baseSalary || 0) / stdDays)
+                          }
+                          monthlyAttendance={emp.monthlyAttendance}
+                          initialCycleType={emp.payrollCycleType || '1_MONTH'}
+                          onChangeMonthYear={onChangeMonthYear}
+                          onUpdateAttendance={(payload) =>
+                            handlePermanentDailyCalendarUpdate(emp.code, payload)
+                          }
+                          onOpenShareLink={() => {
+                            setShareModalTargetId(String(emp.id));
+                            setIsShareModalOpen(true);
+                          }}
+                          onClose={() => setExpandedDailyCode(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -1019,11 +1257,14 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                   Họ tên thợ kỹ thuật
                 </th>
                 <th className="p-2.5 border-r border-amber-800 min-w-[130px]">Nghề & Tay nghề</th>
-                <th className="p-2.5 border-r border-amber-800 min-w-[150px]">Dự án thi công</th>
+                <th className="p-2.5 border-r border-amber-800 text-center min-w-[195px] bg-amber-800">
+                  <div className="font-bold text-amber-200">Chấm Từng Ngày & Link</div>
+                  <div className="text-[9px] text-amber-100/90 font-normal">Lịch icon nhỏ + Link điện thoại</div>
+                </th>
                 <th className="p-2.5 border-r border-amber-800 text-right w-28">Đơn giá ngày</th>
                 <th className="p-2.5 border-r border-amber-800 text-center min-w-[180px] bg-amber-800">
                   <div className="font-bold text-amber-200">Công thực tế *</div>
-                  <div className="text-[9px] text-amber-200/80 font-normal">Nhập số hoặc bấm +/-</div>
+                  <div className="text-[9px] text-amber-200/80 font-normal">Tự đồng bộ từ lịch/link</div>
                 </th>
                 <th className="p-2.5 border-r border-amber-800 text-center min-w-[130px]">
                   <div>Tăng ca (OT)</div>
@@ -1037,94 +1278,195 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-[12px]">
-              {displayedSeasonal.map((w, index) => (
-                <tr key={w.id} className="hover:bg-amber-50/50 transition-colors">
-                  <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
-                    {index + 1}
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-amber-900">
-                    {w.code}
-                  </td>
-                  <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
-                    <div>{w.fullName}</div>
-                    <div className="text-[10px] text-slate-500 font-normal">{w.phone || 'SĐT: Chưa có'}</div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-slate-700">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                      {w.trade}
-                    </span>
-                    <div className="text-[10px] text-slate-500 mt-0.5">{w.skillLevel}</div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-slate-700">
-                    <span className="font-medium text-slate-800">{w.project || 'Toàn dự án'}</span>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                    {new Intl.NumberFormat('vi-VN').format(w.dailyRate || 0)} đ
-                  </td>
-                  <td className="p-1.5 border-r border-slate-200 text-center bg-amber-50/40">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(w.code, -0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                      >
-                        -
-                      </button>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="0"
-                        max="31"
-                        value={w.actualWorkDays || 0}
-                        onChange={(e) => handleSeasonalWorkDaysChange(w.code, parseFloat(e.target.value) || 0)}
-                        className="w-14 px-1 py-1 border border-amber-400 focus:border-amber-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(w.code, 0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSeasonalWorkDaysChange(w.code, 26)}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer"
-                      >
-                        26c
-                      </button>
-                    </div>
-                  </td>
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(w.code, -1)}
-                        className="w-4 h-5 rounded bg-slate-200 text-xs font-bold"
-                      >
-                        -
-                      </button>
-                      <span className="font-mono font-bold text-amber-900">{w.overtimeHours || 0}h</span>
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(w.code, 1)}
-                        className="w-4 h-5 rounded bg-amber-200 text-xs font-bold text-amber-900"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                    {new Intl.NumberFormat('vi-VN').format(w.mealAllowance || 0)} đ
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
-                    {(w.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(w.advancePayment)} đ` : '0 đ'}
-                  </td>
-                  <td className="p-2 text-right font-mono font-black text-amber-900 bg-amber-50/50">
-                    {new Intl.NumberFormat('vi-VN').format(w.netSalary || 0)} đ
-                  </td>
-                </tr>
-              ))}
+              {displayedSeasonal.map((w, index) => {
+                const isExpanded = expandedDailyCode === w.code;
+                const monthRec = w.monthlyAttendance?.[currentMonthKey];
+                const checkedDayEntries = (Object.values(monthRec?.days || {}) as DailyAttendanceDetail[]).filter(
+                  (d) => (d.workUnits || 0) > 0 || (d.otHours || 0) > 0
+                );
+
+                return (
+                  <React.Fragment key={w.id}>
+                    <tr className={`hover:bg-amber-50/50 transition-colors ${isExpanded ? 'bg-amber-50/70' : ''}`}>
+                      <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
+                        {index + 1}
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-amber-900">
+                        {w.code}
+                      </td>
+                      <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
+                        <div>{w.fullName}</div>
+                        <div className="text-[10px] text-slate-500 font-normal">{w.phone || 'SĐT: Chưa có'}</div>
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-slate-700">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          {w.trade}
+                        </span>
+                        <div className="text-[10px] text-slate-500 mt-0.5">{w.project || w.skillLevel}</div>
+                      </td>
+
+                      {/* CHẤM TỪNG NGÀY (ICON NHỎ) & LINK CHẤM CÔNG */}
+                      <td className="p-1.5 border-r border-slate-200 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDailyCode(isExpanded ? null : w.code)}
+                            className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 cursor-pointer transition border ${
+                              isExpanded
+                                ? 'bg-amber-700 text-white border-amber-700 shadow-xs'
+                                : checkedDayEntries.length > 0
+                                ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
+                                : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-amber-50 hover:border-amber-300'
+                            }`}
+                            title="Mở / Đóng bảng chấm công từng ngày (icon nhỏ gọn)"
+                          >
+                            <Calendar className="w-3 h-3 shrink-0" />
+                            <span>
+                              {checkedDayEntries.length > 0
+                                ? `${checkedDayEntries.length} ngày`
+                                : 'Lịch ngày'}
+                            </span>
+                            {isExpanded ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShareModalTargetId(String(w.id));
+                              setIsShareModalOpen(true);
+                            }}
+                            className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                            title={`Lấy Link chấm công gửi cho ${w.fullName} (khi chấm sẽ tự hiện số công & giờ tăng ca)`}
+                          >
+                            <Smartphone className="w-3 h-3" />
+                            <span>Link</span>
+                          </button>
+                        </div>
+                        {checkedDayEntries.length > 0 && (
+                          <div className="flex items-center justify-center gap-0.5 mt-1 flex-wrap max-w-[180px] mx-auto">
+                            {checkedDayEntries.slice(0, 6).map((d) => (
+                              <span
+                                key={d.day}
+                                className={`text-[8px] font-mono font-bold px-1 rounded ${
+                                  d.workUnits === 1
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                }`}
+                                title={`Ngày ${d.dateStr}: ${d.workUnits} công${d.otHours ? ` + ${d.otHours}h OT` : ''}`}
+                              >
+                                {d.day < 10 ? `0${d.day}` : d.day}
+                                {d.otHours > 0 ? `+${d.otHours}h` : ''}
+                              </span>
+                            ))}
+                            {checkedDayEntries.length > 6 && (
+                              <span className="text-[8px] font-bold text-slate-500">
+                                +{checkedDayEntries.length - 6}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
+                        {new Intl.NumberFormat('vi-VN').format(w.dailyRate || 0)} đ
+                      </td>
+                      <td className="p-1.5 border-r border-slate-200 text-center bg-amber-50/40">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleStepWorkDays(w.code, -0.5)}
+                            className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="31"
+                            value={w.actualWorkDays || 0}
+                            onChange={(e) => handleSeasonalWorkDaysChange(w.code, parseFloat(e.target.value) || 0)}
+                            className="w-14 px-1 py-1 border border-amber-400 focus:border-amber-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleStepWorkDays(w.code, 0.5)}
+                            className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSeasonalWorkDaysChange(w.code, 26)}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer"
+                          >
+                            26c
+                          </button>
+                        </div>
+                      </td>
+                      <td className="p-1.5 border-r border-slate-200 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleStepOT(w.code, -1)}
+                            className="w-4 h-5 rounded bg-slate-200 text-xs font-bold cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <span className="font-mono font-bold text-amber-900">{w.overtimeHours || 0}h</span>
+                          <button
+                            type="button"
+                            onClick={() => handleStepOT(w.code, 1)}
+                            className="w-4 h-5 rounded bg-amber-200 text-xs font-bold text-amber-900 cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
+                        {new Intl.NumberFormat('vi-VN').format(w.mealAllowance || 0)} đ
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
+                        {(w.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(w.advancePayment)} đ` : '0 đ'}
+                      </td>
+                      <td className="p-2 text-right font-mono font-black text-amber-900 bg-amber-50/50">
+                        {new Intl.NumberFormat('vi-VN').format(w.netSalary || 0)} đ
+                      </td>
+                    </tr>
+
+                    {/* BẢNG CHẤM CÔNG TỪNG NGÀY DẠNG ICON NHỎ GỌN (MỞ RỘNG NGAY DƯỚI DÒNG) */}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={11} className="p-2.5 bg-amber-50/40 border-b border-amber-200 whitespace-normal">
+                          <CompactDailyAttendancePanel
+                            workerCode={w.code}
+                            workerName={w.fullName}
+                            month={config.month || 11}
+                            year={config.year || 2026}
+                            standardWorkDays={config.standardWorkDays || 26}
+                            dailyRate={w.dailyRate || 0}
+                            monthlyAttendance={w.monthlyAttendance}
+                            initialCycleType={w.payrollCycleType || '1_MONTH'}
+                            onChangeMonthYear={onChangeMonthYear}
+                            onUpdateAttendance={(payload) =>
+                              handleSeasonalDailyCalendarUpdate(w.code, payload)
+                            }
+                            onOpenShareLink={() => {
+                              setShareModalTargetId(String(w.id));
+                              setIsShareModalOpen(true);
+                            }}
+                            onClose={() => setExpandedDailyCode(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -1253,6 +1595,16 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           </table>
         )}
       </div>
+
+      {/* Modal Chia sẻ Link & QR Chấm Công Di Động (cho cả NV Chính Thức & Thời Vụ) */}
+      <MobileAttendanceShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        workers={shareableWorkers}
+        config={config}
+        selectedWorkerId={shareModalTargetId}
+        onOpenMobileView={onOpenMobileView}
+      />
 
       {/* Confirmation Modal */}
       {confirmModal && (
