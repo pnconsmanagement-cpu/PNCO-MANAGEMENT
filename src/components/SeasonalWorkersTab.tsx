@@ -820,15 +820,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             <option value="COMPLETED">⚪ Đã nghỉ / Xong việc ({workers.length - stats.activeWorkers})</option>
           </select>
 
-          {/* Lọc Tham gia chấm công */}
+          {/* Lọc Chu kỳ lương */}
           <select
-            value={attendanceFilter}
-            onChange={(e) => setAttendanceFilter(e.target.value as any)}
-            className="px-2.5 py-1.5 border border-emerald-300 rounded-lg bg-emerald-50/50 font-bold text-emerald-900 text-xs"
+            value={selectedWorkerCycleFilter}
+            onChange={(e) => setSelectedWorkerCycleFilter(e.target.value as any)}
+            className="px-2.5 py-1.5 border border-sky-300 rounded-lg bg-sky-50/50 font-bold text-[#0f3d64] text-xs"
           >
-            <option value="ALL">Chấm công kỳ này (Tất cả)</option>
-            <option value="PARTICIPATING">🟢 Tham gia chấm công ({stats.recordedWorkersCount})</option>
-            <option value="NOT_PARTICIPATING">⚪ Chưa chấm công ({stats.totalWorkers - stats.recordedWorkersCount})</option>
+            <option value="ALL">Chu kỳ lương (Tất cả)</option>
+            <option value="1_WEEK">Lương 1 Tuần</option>
+            <option value="2_WEEKS">Lương 2 Tuần</option>
+            <option value="1_MONTH">Lương Tháng</option>
           </select>
 
           {/* Lọc Dự án */}
@@ -1052,9 +1053,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[135px] bg-emerald-900">
-                <div>Chấm công kỳ này</div>
-                <div className="text-[9px] text-emerald-200 font-normal">(Đồng bộ 2.2 & 2.3)</div>
+              <th className="p-2 border-r border-sky-800 text-center min-w-[130px] bg-[#124977]">
+                <div>Chu kỳ lương</div>
+                <div className="text-[9px] text-sky-200 font-normal">(1 Tuần • 2 Tuần • Tháng)</div>
               </th>
               <th className="p-2 border-r border-sky-800 min-w-[150px]">Nghề nghiệp / Bậc thợ</th>
               <th className="p-2 border-r border-sky-800 min-w-[140px]">Công trình / Đội</th>
@@ -1120,7 +1121,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                 </div>
               </th>
               <th className="p-2 border-r border-sky-800 min-w-[120px]">Hình thức & STK</th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[95px] bg-[#124977]">Chu kỳ lương</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[115px]">Trạng thái làm việc</th>
               <th className="p-2 text-center w-36 no-print sticky right-0 bg-[#0f3d64] z-30">Thao tác</th>
             </tr>
@@ -1128,7 +1128,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           <tbody className="divide-y divide-slate-200">
             {filteredWorkers.length === 0 ? (
               <tr>
-                <td colSpan={24} className="p-12 text-center text-slate-400">
+                <td colSpan={23} className="p-12 text-center text-slate-400">
                   <HardHat className="w-12 h-12 mx-auto text-amber-500/70 mb-3" />
                   <p className="font-bold text-base text-slate-700">
                     {workers.length === 0
@@ -1295,34 +1295,39 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       )}
                     </td>
 
-                    {/* Nút Bật/Tắt Tham Gia Chấm Công Kỳ Này */}
-                    <td className="p-2 border-r border-slate-200 text-center bg-emerald-50/20">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleAttendanceParticipation(w)}
-                        className={`px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition cursor-pointer inline-flex items-center gap-1 shadow-2xs ${
-                          isParticipating
-                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
-                            : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-800 border-slate-300'
+                    {/* Chu kỳ tính lương (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng) */}
+                    <td className="p-2 border-r border-slate-200 text-center bg-slate-50/40">
+                      <select
+                        value={w.payrollCycleType || '1_MONTH'}
+                        onChange={(e) => {
+                          const newCycle = e.target.value as SeasonalCycleType;
+                          try {
+                            localStorage.setItem('seasonal_payroll_active_tab', newCycle);
+                          } catch {}
+                          handleQuickUpdate(w, { payrollCycleType: newCycle });
+                          showToast(
+                            `Đã chuyển ${w.fullName} sang ${
+                              newCycle === '1_WEEK'
+                                ? 'Lương 1 Tuần'
+                                : newCycle === '2_WEEKS'
+                                ? 'Lương 2 Tuần'
+                                : 'Lương Tháng'
+                            }!`
+                          );
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition shadow-2xs ${
+                          (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                            ? 'bg-sky-50 text-sky-900 border-sky-300'
+                            : 'bg-emerald-50 text-emerald-900 border-emerald-300'
                         }`}
-                        title={
-                          isParticipating
-                            ? 'Đang tham gia chấm công và tính lương trên 2.2 Bản Chấm Công & 2.3 Bản Lương. Bấm để tắt về 0 công.'
-                            : 'Chưa chấm công (0 công). Bấm để bật Tham gia chấm công và tự động nhảy lương!'
-                        }
+                        title="Chọn chu kỳ lương: Lương 1 Tuần, Lương 2 Tuần hoặc Lương Tháng"
                       >
-                        {isParticipating ? (
-                          <>
-                            <CheckCircle2 className="w-3 h-3 shrink-0" />
-                            <span>Tham gia ({w.actualWorkDays}c)</span>
-                          </>
-                        ) : (
-                          <>
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span>Chưa chấm (Bật)</span>
-                          </>
-                        )}
-                      </button>
+                        <option value="1_WEEK">Lương 1 Tuần</option>
+                        <option value="2_WEEKS">Lương 2 Tuần</option>
+                        <option value="1_MONTH">Lương Tháng</option>
+                      </select>
                     </td>
 
                     {/* Nghề nghiệp / Bậc thợ */}
@@ -1584,40 +1589,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       )}
                     </td>
 
-                    {/* Chu kỳ tính lương của thợ (Khai báo phân vào Tab Bản Lương 1 Tuần / 2 Tuần / Lương Tháng) */}
-                    <td className="p-2 border-r border-slate-200 text-center">
-                      <select
-                        value={w.payrollCycleType || '1_MONTH'}
-                        onChange={(e) => {
-                          const newCycle = e.target.value as SeasonalCycleType;
-                          try {
-                            localStorage.setItem('seasonal_payroll_active_tab', newCycle);
-                          } catch {}
-                          handleQuickUpdate(w, { payrollCycleType: newCycle });
-                          showToast(
-                            `Đã chuyển ${w.fullName} sang ${
-                              newCycle === '1_WEEK'
-                                ? 'Bản Lương 1 Tuần'
-                                : newCycle === '2_WEEKS'
-                                ? 'Bản Lương 2 Tuần'
-                                : 'Bản Lương Tháng'
-                            }!`
-                          );
-                        }}
-                        className={`px-2 py-1 rounded text-[10.5px] font-bold border cursor-pointer transition ${
-                          (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
-                            ? 'bg-amber-50 text-amber-900 border-amber-300'
-                            : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
-                            ? 'bg-sky-50 text-sky-900 border-sky-300'
-                            : 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                        }`}
-                        title="Chọn chu kỳ lương để phân loại nhân viên này sang Tab Bản Lương 1 Tuần, Bản Lương 2 Tuần hoặc Bản Lương Tháng"
-                      >
-                        <option value="1_WEEK">Lương 1 Tuần</option>
-                        <option value="2_WEEKS">Lương 2 Tuần</option>
-                        <option value="1_MONTH">Lương Tháng</option>
-                      </select>
-                    </td>
 
                     {/* Trạng thái làm việc (Bấm để chuyển Đang làm việc <-> Đã nghỉ) */}
                     <td className="p-2 border-r border-slate-200 text-center">
@@ -1755,7 +1726,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               <td className="p-2 border-r border-slate-300 text-right font-mono font-black text-emerald-800 text-xs bg-emerald-100/60">
                 {formatNumberOnly(stats.totalNet)} đ
               </td>
-              <td colSpan={4} className="p-2 font-normal text-slate-600 text-[10px] italic">
+              <td colSpan={3} className="p-2 font-normal text-slate-600 text-[10px] italic">
                 Bằng chữ: {numberToVietnameseWords(stats.totalNet)}
               </td>
             </tr>

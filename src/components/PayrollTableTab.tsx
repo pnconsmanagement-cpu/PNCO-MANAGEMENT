@@ -77,7 +77,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDept, setSelectedDept] = useState('ALL');
   const [attendanceOnly, setAttendanceOnly] = useState(true);
-  const [seasonalAttendanceOnly, setSeasonalAttendanceOnly] = useState(false);
+  const [seasonalAttendanceOnly, setSeasonalAttendanceOnly] = useState(true);
   const [salaryTypeFilter, setSalaryTypeFilter] = useState<'ALL' | 'MONTHLY' | 'DAILY'>('ALL');
   const [showResignedHistory, setShowResignedHistory] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -139,17 +139,32 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return syncedSeasonalForMonth.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
   }, [syncedSeasonalForMonth]);
 
-  // Số lượng nhân viên thời vụ theo từng Tab Chu kỳ lương đã khai báo
+  // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG theo từng Tab Chu kỳ lương đã khai báo
   const oneWeekWorkersCount = useMemo(
-    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '1_WEEK').length,
+    () =>
+      activeSeasonalWorkers.filter(
+        (w) =>
+          (w.payrollCycleType || '1_MONTH') === '1_WEEK' &&
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+      ).length,
     [activeSeasonalWorkers]
   );
   const twoWeeksWorkersCount = useMemo(
-    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '2_WEEKS').length,
+    () =>
+      activeSeasonalWorkers.filter(
+        (w) =>
+          (w.payrollCycleType || '1_MONTH') === '2_WEEKS' &&
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+      ).length,
     [activeSeasonalWorkers]
   );
   const monthlySeasonalWorkersCount = useMemo(
-    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '1_MONTH').length,
+    () =>
+      activeSeasonalWorkers.filter(
+        (w) =>
+          (w.payrollCycleType || '1_MONTH') === '1_MONTH' &&
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+      ).length,
     [activeSeasonalWorkers]
   );
 
@@ -724,20 +739,39 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 >
                   Tổng hợp cả tháng {config.periodCode}
                 </button>
-                {seasonalSubPeriods.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setSelectedSeasonalSubPeriodId(p.id)}
-                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
-                      selectedSeasonalSubPeriodId === p.id
-                        ? 'bg-amber-600 text-white shadow-2xs'
-                        : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-300'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+                {seasonalSubPeriods.map((p) => {
+                  const workersInThisSubPeriod = activeSeasonalWorkers.filter((w) => {
+                    if ((w.payrollCycleType || '1_MONTH') !== seasonalCycleTab) return false;
+                    const wPeriod = getWorkerForPeriod(w, p);
+                    return (wPeriod.actualWorkDays || 0) > 0 || (wPeriod.overtimeHours || 0) > 0;
+                  }).length;
+
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedSeasonalSubPeriodId(p.id)}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        selectedSeasonalSubPeriodId === p.id
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-300'
+                      }`}
+                    >
+                      <span>{p.label}</span>
+                      {workersInThisSubPeriod > 0 && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                            selectedSeasonalSubPeriodId === p.id
+                              ? 'bg-white text-amber-900'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          {workersInThisSubPeriod} có công
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

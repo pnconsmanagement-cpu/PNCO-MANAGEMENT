@@ -1011,9 +1011,13 @@ export function recordWorkerPeriod(
     });
   }
 
-  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này
+  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này (chỉ ghi đè days khi người dùng thực sự sửa số công / OT / lịch)
+  const isAttendancePatched =
+    patch.actualWorkDays !== undefined ||
+    patch.overtimeHours !== undefined ||
+    patch.weeklyTimesheet !== undefined;
   const monthlyAttendance = worker.monthlyAttendance ? { ...worker.monthlyAttendance } : {};
-  if (effectiveTimesheet && effectiveTimesheet.length > 0) {
+  if (isAttendancePatched && effectiveTimesheet && effectiveTimesheet.length > 0) {
     const pYear = period.year || 2026;
     const pMonth = period.month || 9;
     const mStr = String(pMonth).padStart(2, '0');
