@@ -344,25 +344,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         );
       }
     }
-  }, [worker, isOpen, existingCodes.length, config.month, config.year, initialPeriod, availableProjects]);
-
-  // Tự động làm mới bảng chấm công khi có dữ liệu đồng bộ mới từ điện thoại / Cloud
-  useEffect(() => {
-    if (isOpen && worker) {
-      const curPeriod = payrollPeriods.find((p) => p.id === selectedPeriodId) || payrollPeriods[0];
-      const freshState = getWorkerForPeriod(worker, curPeriod);
-      setForm((prev) => ({
-        ...prev,
-        ...freshState,
-        payrollCycleType: prev.payrollCycleType || worker.payrollCycleType || cycleType,
-        monthlyAttendance: worker.monthlyAttendance || prev.monthlyAttendance,
-        periodRecords: worker.periodRecords || prev.periodRecords,
-      }));
-      if (freshState.weeklyTimesheet && freshState.weeklyTimesheet.length > 0) {
-        setTimesheet(freshState.weeklyTimesheet);
-      }
-    }
-  }, [worker, selectedPeriodId, payrollPeriods, isOpen]);
+  }, [worker?.id, isOpen]);
 
   if (!isOpen) return null;
 
@@ -416,7 +398,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     );
 
     const newPeriodState = getWorkerForPeriod(workerWithSavedCurrent, firstPeriod);
-    setForm({ ...newPeriodState, payrollCycleType: newCycle });
+    setForm(
+      recomputeSeasonalWorkerPayroll({
+        ...newPeriodState,
+        dailyRate: form.dailyRate,
+        payrollCycleType: newCycle,
+      })
+    );
     setTimesheet(newPeriodState.weeklyTimesheet || createEmptyTimesheetForPeriod(firstPeriod));
   };
 
@@ -444,7 +432,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     // Lấy trạng thái của kỳ mới (nếu chưa có thì MẶC ĐỊNH 0 CÔNG để người dùng chấm lại từ đầu)
     const newPeriodState = getWorkerForPeriod(workerWithSavedCurrent, targetPeriod);
-    setForm({ ...newPeriodState, payrollCycleType: cycleType });
+    setForm(
+      recomputeSeasonalWorkerPayroll({
+        ...newPeriodState,
+        dailyRate: form.dailyRate,
+        payrollCycleType: cycleType,
+      })
+    );
     setTimesheet(newPeriodState.weeklyTimesheet || createEmptyTimesheetForPeriod(targetPeriod));
   };
 
@@ -466,7 +460,12 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       advancePayment: form.advancePayment,
     });
     const nextState = getWorkerForPeriod(workerWithSaved, newPeriod);
-    setForm(nextState);
+    setForm(
+      recomputeSeasonalWorkerPayroll({
+        ...nextState,
+        dailyRate: form.dailyRate,
+      })
+    );
     setTimesheet(nextState.weeklyTimesheet || createEmptyTimesheetForPeriod(newPeriod));
   };
 
@@ -488,7 +487,12 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       advancePayment: form.advancePayment,
     });
     const nextState = getWorkerForPeriod(workerWithSaved, newPeriod);
-    setForm(nextState);
+    setForm(
+      recomputeSeasonalWorkerPayroll({
+        ...nextState,
+        dailyRate: form.dailyRate,
+      })
+    );
     setTimesheet(nextState.weeklyTimesheet || createEmptyTimesheetForPeriod(newPeriod));
   };
 
@@ -1542,33 +1546,8 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block font-semibold text-slate-700">
-                    Đơn giá ({activePeriod?.shortLabel || 'Kỳ này'}) *
+                    Đơn giá ngày công *
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const curRate = form.dailyRate;
-                      if (!curRate || curRate <= 0) return;
-                      const currentRecords = { ...(form.periodRecords || {}) };
-                      Object.keys(currentRecords).forEach((key) => {
-                        currentRecords[key] = {
-                          ...currentRecords[key],
-                          dailyRate: curRate,
-                          salaryByDays: Math.round(curRate * (currentRecords[key].actualWorkDays || 0)),
-                          overtimePay: Math.round((curRate / 8) * (currentRecords[key].overtimeHours || 0) * 1.5),
-                        };
-                      });
-                      setForm((prev) => ({
-                        ...prev,
-                        dailyRate: curRate,
-                        periodRecords: currentRecords,
-                      }));
-                    }}
-                    className="text-[10px] text-sky-700 hover:text-sky-900 underline font-medium cursor-pointer"
-                    title="Sao chép mức lương này sang tất cả các tuần/kỳ khác của công nhân này"
-                  >
-                    Chép cho mọi tuần
-                  </button>
                 </div>
                 <input
                   type="number"
@@ -1595,7 +1574,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   ))}
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1 italic">
-                  Đơn giá lưu riêng cho {activePeriod?.shortLabel}. Các tuần khác giữ nguyên giá trị riêng.
+                  Đồng bộ thống nhất giữa Hồ sơ, Danh sách nhân viên và Bản lương.
                 </p>
               </div>
 

@@ -993,6 +993,32 @@ export default function App() {
       let next: SeasonalWorker[];
       if (idx !== -1) {
         next = [...prev];
+        const mergedRecords = {
+          ...(next[idx].periodRecords || {}),
+          ...(recalculated.periodRecords || {}),
+        };
+        if (recalculated.dailyRate && recalculated.dailyRate > 0) {
+          Object.keys(mergedRecords).forEach((k) => {
+            if (mergedRecords[k]) {
+              const r = mergedRecords[k];
+              const sByDays = Math.round(recalculated.dailyRate * Number(r.actualWorkDays || 0));
+              const otPay = Math.round((recalculated.dailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+              const totInc = sByDays + otPay + Number(r.mealAllowance || 0) + Number(r.travelSafetyAllowance || 0) + Number(r.otherBonus || 0);
+              const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+              const totDed = tax + Number(r.advancePayment || 0);
+              mergedRecords[k] = {
+                ...r,
+                dailyRate: recalculated.dailyRate,
+                salaryByDays: sByDays,
+                overtimePay: otPay,
+                totalIncome: totInc,
+                personalIncomeTax: tax,
+                totalDeductions: totDed,
+                netSalary: totInc - totDed,
+              };
+            }
+          });
+        }
         next[idx] = {
           ...next[idx],
           ...recalculated,
@@ -1000,10 +1026,7 @@ export default function App() {
             ...(next[idx].monthlyAttendance || {}),
             ...(recalculated.monthlyAttendance || {}),
           },
-          periodRecords: {
-            ...(next[idx].periodRecords || {}),
-            ...(recalculated.periodRecords || {}),
-          },
+          periodRecords: mergedRecords,
         };
       } else {
         next = [...prev, recalculated];

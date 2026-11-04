@@ -469,6 +469,68 @@ export function buildSeasonalMonthlyAttendanceRecord(
  * Đồng bộ dữ liệu chấm công tháng (monthlyAttendance[monthKey] & periodRecords) của công nhân thời vụ
  * sang Danh Sách Thời Vụ, Bản Chấm Công và Bản Lương cho bất kỳ Tháng/Năm nào.
  */
+export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
+  const currentKey = worker.currentPeriodKey;
+  if (
+    currentKey &&
+    worker.periodRecords?.[currentKey]?.dailyRate &&
+    worker.periodRecords[currentKey].dailyRate > 0
+  ) {
+    return worker.periodRecords[currentKey].dailyRate;
+  }
+  if (worker.dailyRate && worker.dailyRate > 0) {
+    return worker.dailyRate;
+  }
+  if (worker.periodRecords) {
+    for (const rec of Object.values(worker.periodRecords)) {
+      if (rec && rec.dailyRate && rec.dailyRate > 0) {
+        return rec.dailyRate;
+      }
+    }
+  }
+  return 0;
+}
+
+function syncPeriodRecordsDailyRate(
+  records: Record<string, SeasonalPeriodRecord> | undefined,
+  unifiedRate: number
+): Record<string, SeasonalPeriodRecord> {
+  if (!records) return {};
+  const result: Record<string, SeasonalPeriodRecord> = {};
+  Object.keys(records).forEach((key) => {
+    const rec = records[key];
+    if (!rec) return;
+    const rate = unifiedRate > 0 ? unifiedRate : rec.dailyRate || 0;
+    const workDays = Number(rec.actualWorkDays || 0);
+    const otHours = Number(rec.overtimeHours || 0);
+    const salaryByDays = Math.round(rate * workDays);
+    const hourlyRate = rate / 8;
+    const overtimePay = Math.round(hourlyRate * otHours * 1.5);
+    const mealAllowance = Number(rec.mealAllowance || 0);
+    const travelSafetyAllowance = Number(rec.travelSafetyAllowance || 0);
+    const otherBonus = Number(rec.otherBonus || 0);
+    const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+    const hasTaxCommitment = rec.hasTaxCommitment ?? true;
+    const personalIncomeTax =
+      !hasTaxCommitment && totalIncome >= 2000000 ? Math.round(totalIncome * 0.1) : 0;
+    const advancePayment = Number(rec.advancePayment || 0);
+    const totalDeductions = personalIncomeTax + advancePayment;
+    const netSalary = totalIncome - totalDeductions;
+
+    result[key] = {
+      ...rec,
+      dailyRate: rate,
+      salaryByDays,
+      overtimePay,
+      totalIncome,
+      personalIncomeTax,
+      totalDeductions,
+      netSalary,
+    };
+  });
+  return result;
+}
+
 export function syncSeasonalWorkerForMonth(
   worker: SeasonalWorker,
   month: number,
@@ -478,6 +540,8 @@ export function syncSeasonalWorkerForMonth(
   const monthKey = `${year}-${mStr}`;
   const monthPeriodKey = `${monthKey}_MONTH`;
   const monthRec = worker.monthlyAttendance?.[monthKey];
+  const effectiveRate = getUnifiedWorkerDailyRate(worker);
+  const syncedRecords = syncPeriodRecordsDailyRate(worker.periodRecords, effectiveRate);
 
   // 1. Nếu đã có bản ghi tháng trong monthlyAttendance[monthKey] (kể cả khi đã xóa trắng về 0 ngày công / days rỗng)
   if (monthRec && monthRec.days) {
@@ -486,8 +550,7 @@ export function syncSeasonalWorkerForMonth(
     if (dayKeys.length === 0 && Number(monthRec.totalWorkDays || 0) === 0 && Number(monthRec.totalOtHours || 0) === 0) {
       const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
       const emptySheet = createEmptyTimesheetForPeriod(mPeriodOption);
-      const existingPeriodRec = worker.periodRecords?.[monthPeriodKey];
-      const effectiveRate = existingPeriodRec?.dailyRate || worker.dailyRate || 0;
+      const existingPeriodRec = syncedRecords[monthPeriodKey];
       const recomputedZero = recomputeSeasonalWorkerPayroll({
         ...worker,
         dailyRate: effectiveRate,
@@ -498,6 +561,7 @@ export function syncSeasonalWorkerForMonth(
       });
       return {
         ...recomputedZero,
+        dailyRate: effectiveRate,
         selectedForAttendance: false,
         monthlyAttendance: {
           ...(worker.monthlyAttendance || {}),
@@ -509,7 +573,7 @@ export function syncSeasonalWorkerForMonth(
           },
         },
         periodRecords: {
-          ...(worker.periodRecords || {}),
+          ...syncedRecords,
           [monthPeriodKey]: {
             periodKey: monthPeriodKey,
             periodLabel: mPeriodOption.label,
@@ -575,8 +639,7 @@ export function syncSeasonalWorkerForMonth(
         };
       });
 
-      const existingPeriodRec = worker.periodRecords?.[monthPeriodKey];
-      const effectiveRate = existingPeriodRec?.dailyRate || worker.dailyRate || 0;
+      const existingPeriodRec = syncedRecords[monthPeriodKey];
       const effectiveMeal = existingPeriodRec?.mealAllowance ?? (roundedWork > 0 ? (worker.mealAllowance || roundedWork * 30000) : 0);
       const effectiveTravel = existingPeriodRec?.travelSafetyAllowance ?? (roundedWork > 0 ? (worker.travelSafetyAllowance || 0) : 0);
       const effectiveBonus = existingPeriodRec?.otherBonus ?? (roundedWork > 0 ? (worker.otherBonus || 0) : 0);
@@ -599,6 +662,7 @@ export function syncSeasonalWorkerForMonth(
 
       return {
         ...recomputed,
+        dailyRate: effectiveRate,
         selectedForAttendance: isParticipating,
         monthlyAttendance: {
           ...(worker.monthlyAttendance || {}),
@@ -609,7 +673,7 @@ export function syncSeasonalWorkerForMonth(
           },
         },
         periodRecords: {
-          ...(worker.periodRecords || {}),
+          ...syncedRecords,
           [monthPeriodKey]: {
             periodKey: monthPeriodKey,
             periodLabel: mPeriodOption.label,
@@ -639,10 +703,10 @@ export function syncSeasonalWorkerForMonth(
 
   // 2. Nếu chưa có monthlyAttendance[monthKey], kiểm tra xem có các bản ghi tuần/đợt trong periodRecords của tháng này không
   const prefix = `${monthKey}_`;
-  const matchingPeriodKeys = Object.keys(worker.periodRecords || {}).filter((k) => k.startsWith(prefix));
+  const matchingPeriodKeys = Object.keys(syncedRecords).filter((k) => k.startsWith(prefix));
   if (matchingPeriodKeys.length > 0) {
     // Nếu có bản ghi cả tháng _MONTH
-    const fullMonthRec = worker.periodRecords?.[monthPeriodKey];
+    const fullMonthRec = syncedRecords[monthPeriodKey];
     if (fullMonthRec && fullMonthRec.isRecorded && (fullMonthRec.actualWorkDays > 0 || fullMonthRec.overtimeHours > 0)) {
       const builtMonthly = buildSeasonalMonthlyAttendanceRecord(
         worker,
@@ -653,7 +717,7 @@ export function syncSeasonalWorkerForMonth(
       );
       return recomputeSeasonalWorkerPayroll({
         ...worker,
-        dailyRate: fullMonthRec.dailyRate || worker.dailyRate,
+        dailyRate: effectiveRate,
         actualWorkDays: fullMonthRec.actualWorkDays,
         overtimeHours: fullMonthRec.overtimeHours,
         mealAllowance: fullMonthRec.mealAllowance,
@@ -661,6 +725,7 @@ export function syncSeasonalWorkerForMonth(
         otherBonus: fullMonthRec.otherBonus,
         advancePayment: fullMonthRec.advancePayment,
         selectedForAttendance: true,
+        periodRecords: syncedRecords,
         monthlyAttendance: {
           ...(worker.monthlyAttendance || {}),
           [monthKey]: builtMonthly,
@@ -678,7 +743,7 @@ export function syncSeasonalWorkerForMonth(
       let sumBonus = 0;
       let sumAdv = 0;
       weekKeys.forEach((wk) => {
-        const r = worker.periodRecords?.[wk];
+        const r = syncedRecords[wk];
         if (r && r.isRecorded) {
           sumDays += Number(r.actualWorkDays || 0);
           sumOt += Number(r.overtimeHours || 0);
@@ -693,6 +758,7 @@ export function syncSeasonalWorkerForMonth(
         const builtMonthly = buildSeasonalMonthlyAttendanceRecord(worker, month, year, roundedDays, sumOt);
         return recomputeSeasonalWorkerPayroll({
           ...worker,
+          dailyRate: effectiveRate,
           actualWorkDays: roundedDays,
           overtimeHours: sumOt,
           mealAllowance: sumMeal || worker.mealAllowance,
@@ -700,6 +766,7 @@ export function syncSeasonalWorkerForMonth(
           otherBonus: sumBonus || worker.otherBonus,
           advancePayment: sumAdv || worker.advancePayment,
           selectedForAttendance: true,
+          periodRecords: syncedRecords,
           monthlyAttendance: {
             ...(worker.monthlyAttendance || {}),
             [monthKey]: builtMonthly,
@@ -712,6 +779,8 @@ export function syncSeasonalWorkerForMonth(
   // 3. Nếu đã có dữ liệu ở các tháng khác nhưng tháng đang chọn hoàn toàn chưa chấm công -> mặc định 0 công (Chưa chấm công)
   return recomputeSeasonalWorkerPayroll({
     ...worker,
+    dailyRate: effectiveRate,
+    periodRecords: syncedRecords,
     actualWorkDays: 0,
     overtimeHours: 0,
     selectedForAttendance: false,
@@ -731,19 +800,8 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
   const monthKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
 
-  // Đơn giá ngày công độc lập của kỳ này (Tuần 1, Tuần 2, Tuần 3... có thể có mức lương riêng)
-  // Ưu tiên:
-  // 1. existingRecord.dailyRate (nếu đã lưu riêng cho kỳ này, vd: 450k tuần 1-2, 480k tuần 3)
-  // 2. Tính từ existingRecord.salaryByDays / existingRecord.actualWorkDays nếu có
-  // 3. worker.dailyRate
-  const existingDailyRate = existingRecord?.dailyRate ?? (
-    existingRecord && existingRecord.actualWorkDays > 0 && existingRecord.salaryByDays > 0
-      ? Math.round(existingRecord.salaryByDays / existingRecord.actualWorkDays)
-      : undefined
-  );
-  const periodDailyRate = (existingDailyRate !== undefined && existingDailyRate > 0)
-    ? existingDailyRate
-    : (worker.dailyRate || 0);
+  // Đồng bộ đơn giá ngày công thống nhất giữa Hồ sơ công nhân, Danh sách nhân viên và Bản lương
+  const periodDailyRate = getUnifiedWorkerDailyRate(worker);
 
   // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
   const monthlyDays = worker.monthlyAttendance?.[monthKey]?.days;
@@ -795,7 +853,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
     return recomputeSeasonalWorkerPayroll({
       ...worker,
-      dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
+      dailyRate: periodDailyRate,
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
@@ -852,7 +910,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
     return recomputeSeasonalWorkerPayroll({
       ...worker,
-      dailyRate: periodDailyRate, // <-- Luôn giữ nguyên đơn giá độc lập của kỳ này
+      dailyRate: periodDailyRate,
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
@@ -876,7 +934,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   const emptySheet = createEmptyTimesheetForPeriod(period);
   return recomputeSeasonalWorkerPayroll({
     ...worker,
-    dailyRate: periodDailyRate, // <-- Giữ nguyên đơn giá độc lập của kỳ này
+    dailyRate: periodDailyRate,
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
@@ -893,7 +951,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
 /**
  * Chấm công và record lại số liệu của công nhân cho một chu kỳ cụ thể,
- * đồng thời giữ nguyên đơn giá ngày độc lập của kỳ đó trong periodRecords
+ * đồng thời đồng bộ thống nhất đơn giá ngày công trên toàn bộ các kỳ
  */
 export function recordWorkerPeriod(
   worker: SeasonalWorker,
@@ -902,20 +960,10 @@ export function recordWorkerPeriod(
 ): SeasonalWorker {
   const pKey = period.periodKey;
 
-  // Lấy đơn giá ngày của chu kỳ này:
-  // Nếu patch có dailyRate thì ghi nhận đơn giá đó cho riêng kỳ này!
-  // Nếu không, ưu tiên lấy đơn giá đã lưu trong periodRecords của kỳ này, nếu chưa có thì tính từ salaryByDays/actualWorkDays hoặc lấy worker.dailyRate.
-  const existingPeriodRate = worker.periodRecords?.[pKey]?.dailyRate ?? (
-    worker.periodRecords?.[pKey] && worker.periodRecords[pKey].actualWorkDays > 0 && worker.periodRecords[pKey].salaryByDays > 0
-      ? Math.round(worker.periodRecords[pKey].salaryByDays / worker.periodRecords[pKey].actualWorkDays)
-      : undefined
-  );
-
-  const periodDailyRate = (patch.dailyRate !== undefined && patch.dailyRate > 0)
-    ? patch.dailyRate
-    : (existingPeriodRate !== undefined && existingPeriodRate > 0
-        ? existingPeriodRate
-        : (worker.dailyRate || 0));
+  const periodDailyRate =
+    patch.dailyRate !== undefined && patch.dailyRate >= 0
+      ? patch.dailyRate
+      : getUnifiedWorkerDailyRate(worker);
 
   // Xác định số ngày công và giờ OT mục tiêu
   const targetDays = patch.actualWorkDays !== undefined ? Math.max(0, patch.actualWorkDays) : Math.max(0, worker.actualWorkDays || 0);
@@ -951,7 +999,7 @@ export function recordWorkerPeriod(
     periodLabel: period.label,
     cycleType: period.cycleType,
     isRecorded: isPeriodParticipating,
-    dailyRate: periodDailyRate, // <-- Giữ nguyên mức lương riêng của tuần / kỳ này!
+    dailyRate: periodDailyRate,
     actualWorkDays: updated.actualWorkDays,
     salaryByDays: updated.salaryByDays,
     overtimeHours: updated.overtimeHours,
@@ -969,28 +1017,13 @@ export function recordWorkerPeriod(
     notes: updated.notes,
   };
 
-  const periodRecords = {
-    ...(worker.periodRecords || {}),
-  };
-
-  // QUAN TRỌNG: Bảo vệ và giữ nguyên mức lương riêng của TẤT CẢ các kỳ khác!
-  // Đảm bảo các kỳ hiện có (Tuần 1, Tuần 2...) không bị thiếu dailyRate dẫn đến bị nhảy theo Tuần 3
-  Object.keys(periodRecords).forEach((key) => {
-    if (key !== pKey) {
-      const rec = periodRecords[key];
-      if (rec && (rec.dailyRate === undefined || rec.dailyRate === 0)) {
-        const derivedRate = rec.actualWorkDays > 0 && rec.salaryByDays > 0
-          ? Math.round(rec.salaryByDays / rec.actualWorkDays)
-          : (worker.dailyRate || 0);
-        periodRecords[key] = {
-          ...rec,
-          dailyRate: derivedRate,
-        };
-      }
-    }
-  });
-
-  periodRecords[pKey] = periodRecord;
+  const periodRecords = syncPeriodRecordsDailyRate(
+    {
+      ...(worker.periodRecords || {}),
+      [pKey]: periodRecord,
+    },
+    periodDailyRate
+  );
 
   // Nếu người dùng xóa trắng kỳ Cả Tháng về 0 công, đồng bộ xóa luôn các kỳ tuần/đợt của tháng đó để không bị phục hồi lại công cũ
   if (!isPeriodParticipating && period.cycleType === '1_MONTH') {
