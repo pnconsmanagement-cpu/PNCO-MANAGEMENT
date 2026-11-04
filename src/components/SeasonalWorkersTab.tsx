@@ -447,19 +447,24 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         mealAllowance: 0,
         selectedForAttendance: false,
       });
-      // Xóa luôn các ngày trong monthlyAttendance[monthKey] nếu đang ở chế độ Cả tháng để Timeline 2.2 cũng về 0 công
-      if (currentPeriodOption.cycleType === '1_MONTH' && cleared.monthlyAttendance?.[monthKey]) {
-        cleared.monthlyAttendance = {
-          ...cleared.monthlyAttendance,
-          [monthKey]: {
-            monthKey,
-            month: currentMonth,
-            year: currentYear,
-            totalWorkDays: 0,
-            totalOtHours: 0,
-            days: {},
-          },
-        };
+      // Xóa luôn các ngày trong monthlyAttendance[monthKey] để Lịch di động & Timeline 2.2 cũng về 0 công
+      cleared.monthlyAttendance = {
+        ...(cleared.monthlyAttendance || {}),
+        [monthKey]: {
+          monthKey,
+          month: currentMonth,
+          year: currentYear,
+          totalWorkDays: 0,
+          totalOtHours: 0,
+          days: {},
+          lastSubmittedAt: new Date().toISOString(),
+          submittedBy: 'ADMIN',
+        },
+      };
+      if (typeof window !== 'undefined' && cleared.code) {
+        try {
+          localStorage.setItem(`pncons_mobile_days_${cleared.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
+        } catch {}
       }
       onUpdateWorker(cleared);
       showToast(`Đã chuyển ${worker.fullName} sang "Chưa chấm công" (0 công)`);
@@ -551,18 +556,23 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           advancePayment: 0,
           selectedForAttendance: false,
         });
-        if (currentPeriodOption.cycleType === '1_MONTH' && updated.monthlyAttendance?.[monthKey]) {
-          updated.monthlyAttendance = {
-            ...updated.monthlyAttendance,
-            [monthKey]: {
-              monthKey,
-              month: currentMonth,
-              year: currentYear,
-              totalWorkDays: 0,
-              totalOtHours: 0,
-              days: {},
-            },
-          };
+        updated.monthlyAttendance = {
+          ...(updated.monthlyAttendance || {}),
+          [monthKey]: {
+            monthKey,
+            month: currentMonth,
+            year: currentYear,
+            totalWorkDays: 0,
+            totalOtHours: 0,
+            days: {},
+            lastSubmittedAt: new Date().toISOString(),
+            submittedBy: 'ADMIN',
+          },
+        };
+        if (typeof window !== 'undefined' && updated.code) {
+          try {
+            localStorage.setItem(`pncons_mobile_days_${updated.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
+          } catch {}
         }
         onUpdateWorker(updated);
       }

@@ -149,26 +149,24 @@ export function getWorkerMonthlyAttendance(
   const monthKey = `${year}-${mStr}`;
 
   if (worker.monthlyAttendance && worker.monthlyAttendance[monthKey]) {
-    return worker.monthlyAttendance[monthKey];
-  }
-
-  // Nếu chưa có bản ghi tháng, tự động tạo mới (mặc định tất cả các ngày là 0 công để thợ/người dùng chấm từ đầu)
-  const daysInMonth = getDaysInMonth(year, month);
-  const days: { [dayNumber: number]: DailyAttendanceDetail } = {};
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dStr = String(d).padStart(2, '0');
-    const dateLabel = `${dStr}/${mStr}`;
-    const dayInfo = getDayOfWeekInfo(dateLabel, year, month);
-
-    days[d] = {
-      day: d,
-      dateStr: `${dStr}/${mStr}/${year}`,
-      workUnits: 0,
-      otHours: 0,
-      note: dayInfo.isSunday ? 'Nghỉ Chủ Nhật' : 'Chưa chấm công',
-      shiftType: 'DAY',
-      updatedAt: new Date().toISOString(),
+    const existing = worker.monthlyAttendance[monthKey];
+    const cleanDays: { [dayNumber: number]: DailyAttendanceDetail } = {};
+    Object.entries(existing.days || {}).forEach(([k, d]) => {
+      const dayNum = Number(k);
+      if (!d || isNaN(dayNum)) return;
+      const isFakeDefault =
+        Number(d.workUnits || 0) === 0 &&
+        Number(d.otHours || 0) === 0 &&
+        (!d.statusType ||
+          (d.statusType === 'ABSENT' &&
+            (d.note === 'Nghỉ ca' || d.note === 'Nghỉ Chủ Nhật' || d.note === 'Chưa chấm công')));
+      if (!isFakeDefault) {
+        cleanDays[dayNum] = d;
+      }
+    });
+    return {
+      ...existing,
+      days: cleanDays,
     };
   }
 
@@ -178,7 +176,7 @@ export function getWorkerMonthlyAttendance(
     year,
     totalWorkDays: 0,
     totalOtHours: 0,
-    days,
+    days: {},
     lastSubmittedAt: undefined,
   };
 }
@@ -196,16 +194,35 @@ export function updateWorkerMonthlyAttendance(
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
 
+  const cleanDays: { [dayNumber: number]: DailyAttendanceDetail } = {};
   let totalWorkDays = 0;
   let totalOtHours = 0;
 
-  Object.values(days).forEach((d) => {
-    totalWorkDays += Number(d.workUnits || 0);
+  Object.entries(days || {}).forEach(([k, d]) => {
+    const dayNum = Number(k);
+    if (!d || isNaN(dayNum)) return;
+    const isFakeDefault =
+      Number(d.workUnits || 0) === 0 &&
+      Number(d.otHours || 0) === 0 &&
+      (!d.statusType ||
+        (d.statusType === 'ABSENT' &&
+          (d.note === 'Nghỉ ca' || d.note === 'Nghỉ Chủ Nhật' || d.note === 'Chưa chấm công')));
+    if (isFakeDefault) return;
+
+    cleanDays[dayNum] = d;
+    const st = d.statusType;
+    const units = Number(d.workUnits || 0);
+    if (st === 'LATE') {
+      totalWorkDays += units > 0 ? units : 1;
+    } else if (st !== 'ABSENT' && st !== 'LEAVE' && units > 0) {
+      totalWorkDays += units;
+    }
     totalOtHours += Number(d.otHours || 0);
   });
 
   // Làm tròn công đến 1 chữ số thập phân (vd: 24.5)
   totalWorkDays = Math.round(totalWorkDays * 10) / 10;
+  const isMonthParticipating = totalWorkDays > 0 || totalOtHours > 0;
 
   const record: MonthlyAttendanceRecord = {
     monthKey,
@@ -213,7 +230,7 @@ export function updateWorkerMonthlyAttendance(
     year,
     totalWorkDays,
     totalOtHours,
-    days,
+    days: cleanDays,
     lastSubmittedAt: new Date().toISOString(),
     submittedBy,
   };
@@ -237,15 +254,28 @@ export function updateWorkerMonthlyAttendance(
     let pOtHours = 0;
 
     const timesheet: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
-      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      const parts = dateStr.split('/');
+      const dayNum = parseInt(parts[0], 10);
+      const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
       const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, year, month);
-      const d = days[dayNum];
-      const workUnits = d ? Number(d.workUnits || 0) : 0;
+      const d = itemMonth === month ? cleanDays[dayNum] : undefined;
+      const workUnits =
+        d && d.statusType !== 'ABSENT' && d.statusType !== 'LEAVE'
+          ? Number(d.workUnits || 0)
+          : 0;
       const otHours = d ? Number(d.otHours || 0) : 0;
       pWorkDays += workUnits;
       pOtHours += otHours;
       const shiftType = d?.shiftType || 'DAY';
-      const note = d?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công tại công trường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+      const note =
+        d?.note ||
+        (workUnits > 0
+          ? isSunday
+            ? 'Làm ca Chủ Nhật'
+            : 'Thi công tại công trường'
+          : isSunday
+          ? 'Nghỉ Chủ Nhật'
+          : 'Nghỉ ca');
 
       return {
         dayOfWeek,
@@ -259,6 +289,7 @@ export function updateWorkerMonthlyAttendance(
     });
 
     const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
+    const isPeriodRecorded = roundedPeriodDays > 0 || pOtHours > 0;
     const existingRec = worker.periodRecords?.[period.periodKey];
     const existingPeriodDailyRate = existingRec?.dailyRate ?? (
       existingRec && existingRec.actualWorkDays > 0 && existingRec.salaryByDays > 0
@@ -268,26 +299,28 @@ export function updateWorkerMonthlyAttendance(
     const periodDailyRate = (existingPeriodDailyRate !== undefined && existingPeriodDailyRate > 0)
       ? existingPeriodDailyRate
       : Math.max(0, worker.dailyRate || 0);
-    const salaryByDays = Math.round(periodDailyRate * roundedPeriodDays);
+    const salaryByDays = isPeriodRecorded ? Math.round(periodDailyRate * roundedPeriodDays) : 0;
     const hourlyRate = periodDailyRate / 8;
-    const overtimePay = Math.round(hourlyRate * pOtHours * 1.5);
-    const mealAllowance = Math.max(0, worker.mealAllowance || 0);
-    const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
-    const otherBonus = Math.max(0, worker.otherBonus || 0);
-    const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+    const overtimePay = isPeriodRecorded ? Math.round(hourlyRate * pOtHours * 1.5) : 0;
+    const mealAllowance = isPeriodRecorded ? Math.max(0, worker.mealAllowance || 0) : 0;
+    const travelSafetyAllowance = isPeriodRecorded ? Math.max(0, worker.travelSafetyAllowance || 0) : 0;
+    const otherBonus = isPeriodRecorded ? Math.max(0, worker.otherBonus || 0) : 0;
+    const totalIncome = isPeriodRecorded
+      ? salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus
+      : 0;
     let personalIncomeTax = 0;
-    if (!worker.hasTaxCommitment && totalIncome >= 2000000) {
+    if (isPeriodRecorded && !worker.hasTaxCommitment && totalIncome >= 2000000) {
       personalIncomeTax = Math.round(totalIncome * 0.1);
     }
     const advancePayment = Math.max(0, worker.advancePayment || 0);
     const totalDeductions = personalIncomeTax + advancePayment;
-    const netSalary = Math.max(0, totalIncome - totalDeductions);
+    const netSalary = isPeriodRecorded ? Math.max(0, totalIncome - totalDeductions) : 0;
 
     const pRec: SeasonalPeriodRecord = {
       periodKey: period.periodKey,
       periodLabel: period.label,
       cycleType: period.cycleType,
-      isRecorded: true,
+      isRecorded: isPeriodRecorded,
       dailyRate: periodDailyRate, // Giữ nguyên mức lương riêng của tuần / kỳ này
       actualWorkDays: roundedPeriodDays,
       salaryByDays,
@@ -314,25 +347,39 @@ export function updateWorkerMonthlyAttendance(
     ...worker,
     actualWorkDays: totalWorkDays,
     overtimeHours: totalOtHours,
+    selectedForAttendance: isMonthParticipating,
     monthlyAttendance,
     periodRecords,
     attendanceMonth: month,
     attendanceYear: year,
   });
 
-  // Nếu có weeklyTimesheet đang mở, đồng bộ lại các ngày trong tuần tương ứng
+  // Nếu có weeklyTimesheet đang mở, đồng bộ lại các ngày trong tuần tương ứng (bao gồm cả khi ngày đó đã bị xóa)
   if (updatedWorker.weeklyTimesheet && updatedWorker.weeklyTimesheet.length > 0) {
     const updatedTimesheet: WeeklyDayAttendance[] = updatedWorker.weeklyTimesheet.map((dayItem) => {
       if (dayItem.dateLabel) {
-        const dayNum = parseInt(dayItem.dateLabel.split('/')[0], 10);
-        if (days[dayNum]) {
-          return {
-            ...dayItem,
-            workUnits: days[dayNum].workUnits,
-            otHours: days[dayNum].otHours,
-            note: days[dayNum].note,
-            shiftType: days[dayNum].shiftType,
-          };
+        const parts = dayItem.dateLabel.split('/');
+        const dayNum = parseInt(parts[0], 10);
+        const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
+        if (itemMonth === month && !isNaN(dayNum)) {
+          const d = cleanDays[dayNum];
+          if (d) {
+            return {
+              ...dayItem,
+              workUnits: d.statusType !== 'ABSENT' && d.statusType !== 'LEAVE' ? d.workUnits : 0,
+              otHours: d.otHours,
+              note: d.note,
+              shiftType: d.shiftType,
+            };
+          } else {
+            return {
+              ...dayItem,
+              workUnits: 0,
+              otHours: 0,
+              note: dayItem.dayOfWeek === 'CN' ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca',
+              shiftType: 'DAY',
+            };
+          }
         }
       }
       return dayItem;

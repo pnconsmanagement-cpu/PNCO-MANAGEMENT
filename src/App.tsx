@@ -594,20 +594,21 @@ export default function App() {
               if (!exRec) {
                 mergedMonthly[mKey] = cRec;
               } else {
-                const mergedDays = {
-                  ...(exRec.days || {}),
-                  ...(cRec.days || {}),
-                };
+                const exTime = exRec.lastSubmittedAt ? new Date(exRec.lastSubmittedAt).getTime() : 0;
+                const cTime = cRec.lastSubmittedAt ? new Date(cRec.lastSubmittedAt).getTime() : 0;
+                // Chọn bản ghi mới hơn thay vì gộp nông { ...exRec.days, ...cRec.days } để các ngày đã xóa không bị phục hồi lại
+                const chosenRec = cTime >= exTime ? cRec : exRec;
+                const chosenDays = { ...(chosenRec.days || {}) };
                 let totDays = 0;
                 let totOt = 0;
-                Object.values(mergedDays).forEach((d: any) => {
+                Object.values(chosenDays).forEach((d: any) => {
                   totDays += Number(d.workUnits || 0);
                   totOt += Number(d.otHours || 0);
                 });
                 mergedMonthly[mKey] = {
                   ...exRec,
-                  ...cRec,
-                  days: mergedDays,
+                  ...chosenRec,
+                  days: chosenDays,
                   totalWorkDays: Math.round(totDays * 10) / 10,
                   totalOtHours: totOt,
                 };
@@ -1347,6 +1348,12 @@ export default function App() {
     const syncedList = list.map((w) => syncSeasonalWorkerForMonth(w, curM, curY));
     setSeasonalWorkers(syncedList);
     localStorage.setItem('payroll_seasonal_workers', JSON.stringify(syncedList));
+    saveAllToServer(config, employees, syncedList);
+    if (isSupabaseConfigured()) {
+      syncSeasonalWorkersToSupabase(syncedList, config.periodCode)
+        .then(() => notifyCrossTab())
+        .catch(() => {});
+    }
   };
 
   // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)

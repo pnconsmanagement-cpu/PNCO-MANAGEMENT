@@ -605,6 +605,41 @@ export const syncSeasonalWorkersToSupabase = async (
         error: error.message,
       };
     }
+
+    // Đồng bộ luôn bảng attendance_records cho các công nhân thời vụ để dữ liệu chấm công (kể cả khi xóa về 0 công) khớp 100%
+    try {
+      const attPayloads: any[] = [];
+      workers.forEach((w, idx) => {
+        const workerCode = String(w.code || w.id || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
+        if (w.monthlyAttendance) {
+          Object.entries(w.monthlyAttendance).forEach(([mKey, mRec]) => {
+            if (mRec && mRec.month && mRec.year) {
+              const mStr = String(mRec.month).padStart(2, '0');
+              attPayloads.push({
+                id: `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`,
+                worker_type: 'SEASONAL',
+                worker_code: workerCode,
+                worker_name: String(w.fullName || 'Công nhân'),
+                project_code: String(w.project || ''),
+                month: Number(mRec.month),
+                year: Number(mRec.year),
+                period_key: `${mStr}/${mRec.year}`,
+                total_work_days: Number(mRec.totalWorkDays || 0),
+                total_ot_hours: Number(mRec.totalOtHours || 0),
+                attendance_data: mRec.days || {},
+                updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
+              });
+            }
+          });
+        }
+      });
+      if (attPayloads.length > 0) {
+        await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
+      }
+    } catch (attErr) {
+      console.warn('[Supabase Sync] Sync seasonal attendance_records warning:', attErr);
+    }
+
     return {
       success: true,
       count: payload.length,
@@ -669,6 +704,7 @@ export const loadSeasonalWorkersFromSupabase = async (
       .filter((w) => w && (w.fullName || w.code));
 
     // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records vào monthlyAttendance của từng thợ
+    // Chỉ áp dụng bản ghi từ attendance_records nếu chưa có hoặc có thời gian cập nhật mới hơn bản ghi trong worker_data
     if (attRecords.length > 0) {
       list.forEach((w) => {
         const workerCode = w.code || w.id;
@@ -681,17 +717,24 @@ export const loadSeasonalWorkersFromSupabase = async (
           const mStr = String(mNum).padStart(2, '0');
           const monthKey = `${yNum}-${mStr}`;
           if (!w.monthlyAttendance) w.monthlyAttendance = {};
-          if (att.attendance_data && typeof att.attendance_data === 'object' && Object.keys(att.attendance_data).length > 0) {
-            w.monthlyAttendance[monthKey] = {
-              monthKey,
-              month: mNum,
-              year: yNum,
-              totalWorkDays: Number(att.total_work_days || 0),
-              totalOtHours: Number(att.total_ot_hours || 0),
-              days: att.attendance_data,
-              lastSubmittedAt: att.updated_at,
-              submittedBy: 'WORKER',
-            };
+
+          const existingRec = w.monthlyAttendance[monthKey];
+          const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+          const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
+
+          if (!existingRec || (attTs > 0 && attTs > existingTs)) {
+            if (att.attendance_data && typeof att.attendance_data === 'object') {
+              w.monthlyAttendance[monthKey] = {
+                monthKey,
+                month: mNum,
+                year: yNum,
+                totalWorkDays: Number(att.total_work_days || 0),
+                totalOtHours: Number(att.total_ot_hours || 0),
+                days: att.attendance_data,
+                lastSubmittedAt: att.updated_at,
+                submittedBy: 'WORKER',
+              };
+            }
           }
         });
       });
@@ -1376,12 +1419,13 @@ export const syncSingleSeasonalWorkerToSupabase = async (
     }
 
     // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase
-    // Đảm bảo dữ liệu chấm công từ điện thoại được lưu vào cả 2 bảng
+    // Đảm bảo dữ liệu chấm công từ điện thoại được lưu vào cả 2 bảng và xóa bỏ các bản ghi trùng lặp cũ
     if (mergedWorker.monthlyAttendance) {
       for (const [mKey, mRec] of Object.entries(mergedWorker.monthlyAttendance)) {
         if (mRec && mRec.month && mRec.year) {
           const mStr = String(mRec.month).padStart(2, '0');
           const attId = `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
+          const nowIso = mRec.lastSubmittedAt || new Date().toISOString();
           const attPayload = {
             id: attId,
             worker_type: 'SEASONAL',
@@ -1394,9 +1438,17 @@ export const syncSingleSeasonalWorkerToSupabase = async (
             total_work_days: Number(mRec.totalWorkDays || 0),
             total_ot_hours: Number(mRec.totalOtHours || 0),
             attendance_data: mRec.days || {},
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso,
           };
           try {
+            // Xóa các dòng attendance_records cũ có id khác của cùng worker_code, month, year để không bị bóng ma dữ liệu cũ
+            await client
+              .from('attendance_records')
+              .delete()
+              .eq('worker_code', workerCode)
+              .eq('month', Number(mRec.month))
+              .eq('year', Number(mRec.year))
+              .neq('id', attId);
             await client.from('attendance_records').upsert(attPayload, { onConflict: 'id' });
           } catch (e) {
             console.warn('[Supabase Sync] Upsert attendance_records warning:', e);

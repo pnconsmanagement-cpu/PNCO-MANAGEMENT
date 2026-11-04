@@ -586,6 +586,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           });
           const recalcTotals = calculateRowTotalsFromDays(finalMap);
 
+          if (typeof window !== 'undefined' && w.code) {
+            try {
+              localStorage.setItem(
+                `pncons_mobile_days_${w.code}_${currentYear}_${currentMonth}`,
+                JSON.stringify(finalMap)
+              );
+            } catch {}
+          }
+
           const updatedMonthRecord: MonthlyAttendanceRecord = {
             monthKey,
             month: currentMonth,
@@ -597,10 +606,36 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             submittedBy: 'ADMIN',
           };
 
+          const mStr = String(currentMonth).padStart(2, '0');
+          const monthPeriodId = `${currentYear}-${mStr}_M1`;
+          const nextPeriodRecords = { ...(syncedW.periodRecords || {}) };
+          if (recalcTotals.totalCong === 0 && recalcTotals.totalOT === 0) {
+            ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1'].forEach((suffix) => {
+              const pid = `${currentYear}-${mStr}_${suffix}`;
+              if (nextPeriodRecords[pid]) {
+                nextPeriodRecords[pid] = {
+                  ...nextPeriodRecords[pid],
+                  actualWorkDays: 0,
+                  overtimeHours: 0,
+                  isRecorded: false,
+                };
+              }
+            });
+          } else if (nextPeriodRecords[monthPeriodId]) {
+            nextPeriodRecords[monthPeriodId] = {
+              ...nextPeriodRecords[monthPeriodId],
+              actualWorkDays: recalcTotals.totalCong,
+              overtimeHours: recalcTotals.totalOT,
+              isRecorded: true,
+            };
+          }
+
           const nextWorker: SeasonalWorker = {
             ...syncedW,
             actualWorkDays: recalcTotals.totalCong,
             overtimeHours: recalcTotals.totalOT,
+            selectedForAttendance: recalcTotals.totalCong > 0 || recalcTotals.totalOT > 0,
+            periodRecords: nextPeriodRecords,
             monthlyAttendance: {
               ...(syncedW.monthlyAttendance || {}),
               [monthKey]: updatedMonthRecord,
@@ -729,12 +764,32 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       setModifiedEmployees(updatedList);
       onBatchUpdate(updatedList);
     } else {
+      const mStr = String(currentMonth).padStart(2, '0');
       const updatedList = modifiedSeasonal.map((w) => {
         if (w.code === workerCode) {
+          if (typeof window !== 'undefined' && w.code) {
+            try {
+              localStorage.setItem(`pncons_mobile_days_${w.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
+            } catch {}
+          }
+          const nextPeriodRecords = { ...(w.periodRecords || {}) };
+          ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1'].forEach((suffix) => {
+            const pid = `${currentYear}-${mStr}_${suffix}`;
+            if (nextPeriodRecords[pid]) {
+              nextPeriodRecords[pid] = {
+                ...nextPeriodRecords[pid],
+                actualWorkDays: 0,
+                overtimeHours: 0,
+                isRecorded: false,
+              };
+            }
+          });
           return recomputeSeasonalWorkerPayroll({
             ...w,
             actualWorkDays: 0,
             overtimeHours: 0,
+            selectedForAttendance: false,
+            periodRecords: nextPeriodRecords,
             monthlyAttendance: {
               ...(w.monthlyAttendance || {}),
               [monthKey]: {
@@ -744,6 +799,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 totalWorkDays: 0,
                 totalOtHours: 0,
                 days: {},
+                lastSubmittedAt: new Date().toISOString(),
+                submittedBy: 'ADMIN',
               },
             },
           });

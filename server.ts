@@ -167,26 +167,28 @@ app.post('/api/attendance/mark', (req, res) => {
   const mergeMonthlyAttendance = (existingMonthly: Record<string, any> = {}, incomingMonthly: Record<string, any> = {}) => {
     const mergedMonthly: Record<string, any> = { ...existingMonthly };
     Object.entries(incomingMonthly).forEach(([mKey, incRec]: [string, any]) => {
-      if (!mergedMonthly[mKey]) {
-        mergedMonthly[mKey] = incRec;
-      } else {
-        const exDays = mergedMonthly[mKey].days || {};
-        const incDays = incRec.days || {};
-        const mergedDays = { ...exDays, ...incDays };
-        let tWork = 0;
-        let tOt = 0;
-        Object.values(mergedDays).forEach((d: any) => {
-          tWork += Number(d.workUnits || 0);
-          tOt += Number(d.otHours || 0);
-        });
-        mergedMonthly[mKey] = {
-          ...mergedMonthly[mKey],
-          ...incRec,
-          days: mergedDays,
-          totalWorkDays: Math.round(tWork * 10) / 10,
-          totalOtHours: tOt,
-        };
-      }
+      if (!incRec) return;
+      const incDays = incRec.days || {};
+      let tWork = 0;
+      let tOt = 0;
+      Object.values(incDays).forEach((d: any) => {
+        if (!d) return;
+        const st = d.statusType;
+        const units = Number(d.workUnits || 0);
+        if (st === 'LATE') {
+          tWork += units > 0 ? units : 1;
+        } else if (st !== 'ABSENT' && st !== 'LEAVE' && units > 0) {
+          tWork += units;
+        }
+        tOt += Number(d.otHours || 0);
+      });
+      mergedMonthly[mKey] = {
+        ...(mergedMonthly[mKey] || {}),
+        ...incRec,
+        days: incDays,
+        totalWorkDays: Math.round(tWork * 10) / 10,
+        totalOtHours: Math.round(tOt * 10) / 10,
+      };
     });
     return mergedMonthly;
   };

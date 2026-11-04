@@ -199,8 +199,14 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     autoApplyUrlConfig();
   }, []);
 
+  const lastLocalEditAtRef = React.useRef<number>(0);
+
   // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
   const syncLatestAttendance = async () => {
+    // Không ghi đè nếu người dùng vừa thao tác lưu/xóa cục bộ trong vòng 12 giây qua
+    if (Date.now() - lastLocalEditAtRef.current < 12000) {
+      return;
+    }
     try {
       let loadedWorker: SeasonalWorker | null = null;
 
@@ -234,7 +240,20 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         }
       }
 
-      if (loadedWorker) {
+      if (loadedWorker && Date.now() - lastLocalEditAtRef.current >= 12000) {
+        const mKey = `${year}-${String(month).padStart(2, '0')}`;
+        const localSubmittedAt = currentWorker?.monthlyAttendance?.[mKey]?.lastSubmittedAt;
+        const remoteSubmittedAt = loadedWorker.monthlyAttendance?.[mKey]?.lastSubmittedAt;
+
+        // Nếu đang ở chế độ xem thử từ Quản trị (isAdminPreview) hoặc dữ liệu trên máy (currentWorker) mới hơn bản từ xa, không ghi đè bằng bản cũ
+        if (localSubmittedAt && remoteSubmittedAt) {
+          if (new Date(localSubmittedAt).getTime() > new Date(remoteSubmittedAt).getTime()) {
+            return;
+          }
+        } else if (isAdminPreview && currentWorker?.monthlyAttendance?.[mKey] && !remoteSubmittedAt) {
+          return;
+        }
+
         const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
         setAttendanceDays(record.days);
         try {
@@ -247,17 +266,20 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   };
 
   useEffect(() => {
-    syncLatestAttendance();
+    if (!isAdminPreview) {
+      syncLatestAttendance();
+    }
 
     // 1. Tự động cập nhật khi có thay đổi trên Supabase Realtime (khi máy tính bấm chấm công)
     const unsubscribeSupabase = subscribeToSupabaseRealtime((table) => {
-      if (table === 'seasonal_workers') {
+      if (table === 'seasonal_workers' && Date.now() - lastLocalEditAtRef.current >= 12000) {
         syncLatestAttendance();
       }
     });
 
     // 2. Tự động cập nhật khi có tín hiệu từ server
     const unsubscribeServer = subscribeToSync((serverData) => {
+      if (Date.now() - lastLocalEditAtRef.current < 12000) return;
       if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
         const matched = serverData.seasonalWorkers.find(
           (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
@@ -271,7 +293,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
     // 3. Polling dự phòng chu kỳ 30 giây khi tab đang mở (thay vì 3s gây nghẽn)
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !isAdminPreview) {
         syncLatestAttendance();
       }
     }, 30000);
@@ -281,7 +303,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       unsubscribeServer();
       clearInterval(interval);
     };
-  }, [selectedWorkerCode, parsedWorkerInfo.code, year, month]);
+  }, [selectedWorkerCode, parsedWorkerInfo.code, year, month, isAdminPreview]);
 
   // Dữ liệu chấm công tháng của công nhân
   const [attendanceDays, setAttendanceDays] = useState<{ [dayNumber: number]: DailyAttendanceDetail }>({});
@@ -336,6 +358,21 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     if (!currentWorker) return;
     const workerCode = currentWorker.code || selectedWorkerCode;
     const cacheKey = `pncons_mobile_days_${workerCode}_${year}_${month}`;
+    const mKey = `${year}-${String(month).padStart(2, '0')}`;
+    const hasAuthoritativeMonthRecord = Boolean(currentWorker.monthlyAttendance && currentWorker.monthlyAttendance[mKey]);
+
+    const record = getWorkerMonthlyAttendance(currentWorker, year, month);
+
+    // Nếu currentWorker đã có bản ghi tháng chính thức (kể cả khi đã xóa trắng về {}) hoặc đang ở chế độ Admin xem thử:
+    // Sử dụng trực tiếp record.days từ currentWorker và đồng bộ ngược lại vào localStorage để xóa sạch cache cũ
+    if (hasAuthoritativeMonthRecord || isAdminPreview) {
+      setAttendanceDays(record.days);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(record.days));
+      } catch {}
+      return;
+    }
+
     const localCached = typeof window !== 'undefined' ? localStorage.getItem(cacheKey) : null;
     let cachedDays: any = null;
     if (localCached) {
@@ -347,7 +384,6 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       } catch {}
     }
 
-    const record = getWorkerMonthlyAttendance(currentWorker, year, month);
     if (cachedDays) {
       setAttendanceDays({
         ...record.days,
@@ -356,7 +392,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     } else {
       setAttendanceDays(record.days);
     }
-  }, [currentWorker?.code, currentWorker?.monthlyAttendance, month, year]);
+  }, [currentWorker, currentWorker?.code, currentWorker?.monthlyAttendance, month, year, isAdminPreview, selectedWorkerCode]);
 
   // Sinh lưới lịch tháng
   const calendarGrid = useMemo(() => {
@@ -465,6 +501,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   const handleSaveModal = () => {
     if (!editingCell || !editingCell.day) return;
     const dayNum = editingCell.day;
+    lastLocalEditAtRef.current = Date.now();
 
     let workUnits = 0;
     if (modalStatus === 'FULL') workUnits = 1;
@@ -534,9 +571,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   const handleDeleteStatus = () => {
     if (!editingCell || !editingCell.day) return;
     const dayNum = editingCell.day;
+    lastLocalEditAtRef.current = Date.now();
 
     const updated = { ...attendanceDays };
     delete updated[dayNum];
+    delete (updated as any)[String(dayNum)];
 
     setAttendanceDays(updated);
     if (currentWorker) {
@@ -574,6 +613,46 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       }
     }
 
+    setEditingCell(null);
+  };
+
+  // Xóa trắng toàn bộ ngày chấm công trong tháng của công nhân này
+  const handleClearAllMonthDays = () => {
+    lastLocalEditAtRef.current = Date.now();
+    const emptyDays: { [dayNumber: number]: DailyAttendanceDetail } = {};
+    setAttendanceDays(emptyDays);
+
+    if (currentWorker) {
+      const workerCode = currentWorker.code || selectedWorkerCode;
+      try {
+        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(emptyDays));
+      } catch {}
+
+      const updatedWorker = updateWorkerMonthlyAttendance(
+        currentWorker,
+        year,
+        month,
+        emptyDays,
+        'ADMIN'
+      );
+      onUpdateWorker(updatedWorker);
+      try {
+        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
+      } catch {}
+
+      saveAttendanceToServer(updatedWorker);
+      if (isSupabaseConfigured()) {
+        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
+          .then(() => {
+            showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year} của ${currentWorker.fullName}`);
+          })
+          .catch(() => {
+            showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year}`);
+          });
+      } else {
+        showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year} của ${currentWorker.fullName}`);
+      }
+    }
     setEditingCell(null);
   };
 
@@ -794,11 +873,21 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
               </div>
 
               {/* Thông báo trạng thái đồng bộ cho công nhân (Đã ẩn nút Chia sẻ link & Về Quản trị) */}
-              <div className="pt-3 border-t border-slate-100">
+              <div className="pt-3 border-t border-slate-100 space-y-2">
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-center text-xs text-emerald-900 font-medium flex items-center justify-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>Chạm vào ngày trên lịch để chấm công & lưu tự động</span>
                 </div>
+                {Object.keys(attendanceDays).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllMonthDays}
+                    className="w-full px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Xóa trắng chấm công tháng {month}/{year} (về 0 công)</span>
+                  </button>
+                )}
               </div>
             </div>
 
