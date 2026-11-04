@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import {
   CompanyConfig,
   Employee,
@@ -6,37 +7,26 @@ import {
   TeamWorker,
   MonthlyAttendanceRecord,
   DailyAttendanceDetail,
-  SeasonalCycleType,
 } from '../types';
 import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
-import { recomputeSeasonalWorkerPayroll } from '../data/mockSeasonalWorkers';
+import { recomputeSeasonalWorkerPayroll, getDayOfWeekInfo } from '../data/mockSeasonalWorkers';
 import {
   Calendar,
   Check,
-  Save,
-  RotateCcw,
-  Users,
-  Filter,
-  Eraser,
-  AlertCircle,
-  CheckCircle2,
   X,
-  HardHat,
-  Plus,
-  Minus,
-  CheckSquare,
-  Square,
-  Sparkles,
-  Clock,
-  Briefcase,
-  Building,
+  ChevronLeft,
+  ChevronRight,
+  Download,
   Smartphone,
   QrCode,
-  ChevronDown,
-  ChevronUp,
+  CheckCircle2,
+  Users,
+  HardHat,
+  Building,
+  RotateCcw,
+  Zap,
+  Clock,
 } from 'lucide-react';
-import { MonthYearPicker } from './MonthYearPicker';
-import { CompactDailyAttendancePanel } from './CompactDailyAttendancePanel';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 
 interface AttendanceTabProps {
@@ -55,6 +45,201 @@ interface AttendanceTabProps {
   forcedGroup?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
 }
 
+type DayStatusType = 'FULL' | 'HALF' | 'ABSENT' | 'LEAVE' | 'LATE' | 'NONE';
+
+interface DayMeta {
+  day: number;
+  dateStr: string;
+  dateLabel: string;
+  dayOfWeek: string;
+  isWeekend: boolean; // T7 or CN
+  isSunday: boolean;
+}
+
+/**
+ * Lấy chữ cái viết tắt từ Họ và Tên (VD: "Hán Văn Quang" -> "HVQ", "Hán Kiều Duy Phôn" -> "HKDP")
+ */
+function getInitials(fullName: string): string {
+  if (!fullName) return 'NV';
+  const parts = fullName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 3).toUpperCase();
+  return parts
+    .map((p) => p.charAt(0).toUpperCase())
+    .join('')
+    .slice(0, 4);
+}
+
+/**
+ * Nếu nhân sự đã có sẵn số công (actualWorkDays) hoặc giờ tăng ca (overtimeHours) nhưng chưa có chi tiết từng ngày
+ * trong tháng hiện tại, hàm này tự động khởi tạo lưới ngày khớp với tổng số công & giờ OT đó để hiển thị lên Timeline.
+ */
+function ensureMonthlyDaysForWorker(
+  existingRecord: MonthlyAttendanceRecord | undefined,
+  month: number,
+  year: number,
+  daysMeta: DayMeta[],
+  actualWorkDays: number,
+  overtimeHours: number,
+  paidLeaveDays: number = 0,
+  unpaidLeaveDays: number = 0
+): { [dayNumber: number]: DailyAttendanceDetail } {
+  if (existingRecord && existingRecord.days && Object.keys(existingRecord.days).length > 0) {
+    return existingRecord.days;
+  }
+
+  // Nếu nhân sự chưa có công và chưa có OT -> để trống toàn bộ (-)
+  if ((actualWorkDays || 0) <= 0 && (overtimeHours || 0) <= 0 && (paidLeaveDays || 0) <= 0 && (unpaidLeaveDays || 0) <= 0) {
+    return {};
+  }
+
+  const generated: { [dayNumber: number]: DailyAttendanceDetail } = {};
+  let remWork = Math.max(0, Number(actualWorkDays) || 0);
+  let remLeave = Math.max(0, Math.round(Number(paidLeaveDays) || 0));
+  let remAbsent = Math.max(0, Math.round(Number(unpaidLeaveDays) || 0));
+  let remOt = Math.max(0, Math.round(Number(overtimeHours) || 0));
+
+  // Phân bổ ngày phép (NP) và vắng mặt (VM) trước, sau đó phân bổ ngày công (T2 -> T7)
+  for (const dm of daysMeta) {
+    if (dm.isSunday) {
+      if (remAbsent > 0) {
+        generated[dm.day] = {
+          day: dm.day,
+          dateStr: dm.dateStr,
+          workUnits: 0,
+          statusType: 'ABSENT',
+          otHours: 0,
+        };
+        remAbsent -= 1;
+      }
+      continue;
+    }
+
+    if (remWork >= 1) {
+      generated[dm.day] = {
+        day: dm.day,
+        dateStr: dm.dateStr,
+        workUnits: 1,
+        statusType: 'FULL',
+        otHours: 0,
+      };
+      remWork -= 1;
+    } else if (remWork >= 0.5) {
+      generated[dm.day] = {
+        day: dm.day,
+        dateStr: dm.dateStr,
+        workUnits: 0.5,
+        statusType: 'HALF',
+        otHours: 0,
+      };
+      remWork = 0;
+    } else if (remLeave > 0) {
+      generated[dm.day] = {
+        day: dm.day,
+        dateStr: dm.dateStr,
+        workUnits: 0,
+        statusType: 'LEAVE',
+        otHours: 0,
+      };
+      remLeave -= 1;
+    } else if (remAbsent > 0) {
+      generated[dm.day] = {
+        day: dm.day,
+        dateStr: dm.dateStr,
+        workUnits: 0,
+        statusType: 'ABSENT',
+        otHours: 0,
+      };
+      remAbsent -= 1;
+    }
+  }
+
+  // Nếu vẫn còn công lẻ (do làm cả Chủ Nhật)
+  if (remWork > 0) {
+    for (const dm of daysMeta) {
+      if (remWork <= 0) break;
+      if (!generated[dm.day] || generated[dm.day].workUnits === 0) {
+        const addUnit = remWork >= 1 ? 1 : 0.5;
+        generated[dm.day] = {
+          day: dm.day,
+          dateStr: dm.dateStr,
+          workUnits: addUnit,
+          statusType: addUnit === 1 ? 'FULL' : 'HALF',
+          otHours: generated[dm.day]?.otHours || 0,
+        };
+        remWork -= addUnit;
+      }
+    }
+  }
+
+  // Phân bổ giờ tăng ca (OT) đều lên các ngày đi làm (tối đa 3h-4h/ngày thường, hoặc 8h Chủ Nhật)
+  const workingDayNums = Object.keys(generated)
+    .map(Number)
+    .filter((d) => (generated[d]?.workUnits || 0) > 0);
+
+  let pass = 0;
+  while (remOt > 0 && workingDayNums.length > 0 && pass < 10) {
+    for (const dNum of workingDayNums) {
+      if (remOt <= 0) break;
+      const addOt = Math.min(remOt, pass === 0 ? 3 : 1);
+      generated[dNum] = {
+        ...generated[dNum],
+        otHours: (generated[dNum].otHours || 0) + addOt,
+      };
+      remOt -= addOt;
+    }
+    pass++;
+  }
+
+  return generated;
+}
+
+/**
+ * Tính toán 5 chỉ số tổng hợp từ danh sách ngày trong tháng:
+ * - Công (totalWorkDays)
+ * - VM (Vắng mặt / Nghỉ không lương)
+ * - ĐM (Đi muộn)
+ * - NP (Nghỉ phép)
+ * - Giờ TC (Tổng giờ tăng ca OT)
+ */
+function calculateRowTotalsFromDays(daysMap: { [dayNumber: number]: DailyAttendanceDetail }) {
+  let totalCong = 0;
+  let totalVM = 0;
+  let totalDM = 0;
+  let totalNP = 0;
+  let totalOT = 0;
+
+  Object.values(daysMap || {}).forEach((d) => {
+    if (!d) return;
+    const status = d.statusType;
+    const units = Number(d.workUnits || 0);
+    const ot = Number(d.otHours || 0);
+
+    totalOT += ot;
+
+    if (status === 'LEAVE') {
+      totalNP += 1;
+    } else if (status === 'ABSENT') {
+      totalVM += 1;
+    } else if (status === 'LATE') {
+      totalDM += 1;
+      totalCong += units > 0 ? units : 1;
+    } else if (units > 0) {
+      totalCong += units;
+    }
+  });
+
+  return {
+    totalCong: Math.round(totalCong * 10) / 10,
+    totalVM,
+    totalDM,
+    totalNP,
+    totalOT: Math.round(totalOT * 10) / 10,
+  };
+}
+
 export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   employees,
   seasonalWorkers = [],
@@ -63,11 +248,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onChangeMonthYear,
   onBatchUpdate,
   onBatchUpdateSeasonal,
-  onBatchUpdateTeam,
-  onGoToEmployeeList,
-  onGoToSeasonalAttendance,
   onOpenMobileView,
-  seasonalCount = 12,
   forcedGroup,
 }) => {
   const [attendanceGroup, setAttendanceGroup] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>(
@@ -79,41 +260,22 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       setAttendanceGroup(forcedGroup);
     }
   }, [forcedGroup]);
+
   const [modifiedEmployees, setModifiedEmployees] = useState<Employee[]>(employees);
   const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(seasonalWorkers);
-  const [modifiedTeam, setModifiedTeam] = useState<TeamWorker[]>(teamWorkers);
-  const [onlySelected, setOnlySelected] = useState(true);
-  const [expandedDailyCode, setExpandedDailyCode] = useState<string | null>(null);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
   const [shareModalTargetId, setShareModalTargetId] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [confirmModal, setConfirmModal] = useState<{
-    title: string;
-    message: string;
-    actionLabel?: string;
-    onConfirm: () => void;
-  } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Bộ đệm chuỗi nhập liệu tạm thời để việc gõ phím, xóa backspace, gõ số thập phân 25.5 không bị giật hoặc reset về 0
-  const [localInputs, setLocalInputs] = useState<
-    Record<
-      string,
-      {
-        actualWorkDays?: string;
-        overtimeHours?: string;
-        paidLeaveDays?: string;
-        unpaidLeaveDays?: string;
-      }
-    >
-  >({});
-
-  const [lastSavedCode, setLastSavedCode] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => setToastMessage(null), 3500);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
+  // Ô ngày đang được mở Popover chỉnh sửa nhanh
+  const [editingCell, setEditingCell] = useState<{
+    workerCode: string;
+    workerName: string;
+    day: number;
+    dateStr: string;
+    dayOfWeek: string;
+  } | null>(null);
 
   useEffect(() => {
     setModifiedEmployees(employees);
@@ -124,1484 +286,1188 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   }, [seasonalWorkers]);
 
   useEffect(() => {
-    setModifiedTeam(teamWorkers);
-  }, [teamWorkers]);
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
 
-  // Cập nhật chấm công từng ngày (Lịch ngày thu gọn) cho NV Chính thức
-  const handlePermanentDailyCalendarUpdate = (
-    code: string,
-    payload: {
-      monthlyAttendance: { [monthKey: string]: MonthlyAttendanceRecord };
-      actualWorkDays: number;
-      overtimeHours: number;
-      cycleType: SeasonalCycleType;
-      periodKey: string;
-    }
-  ) => {
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const item: Employee = {
-          ...emp,
-          monthlyAttendance: payload.monthlyAttendance,
-          actualWorkDays: payload.actualWorkDays,
-          overtimeHours: payload.overtimeHours,
-          payrollCycleType: payload.cycleType,
-          currentPeriodKey: payload.periodKey,
-        };
-        return recomputeEmployeePayroll(item);
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
-  };
+  const currentMonth = config.month || 11;
+  const currentYear = config.year || 2026;
+  const monthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
 
-  // Cập nhật chấm công từng ngày (Lịch ngày thu gọn) cho NV Thời vụ
-  const handleSeasonalDailyCalendarUpdate = (
-    code: string,
-    payload: {
-      monthlyAttendance: { [monthKey: string]: MonthlyAttendanceRecord };
-      actualWorkDays: number;
-      overtimeHours: number;
-      cycleType: SeasonalCycleType;
-      periodKey: string;
-    }
-  ) => {
-    const updated = modifiedSeasonal.map((w) => {
-      if (w.code === code) {
-        const nextWorker: SeasonalWorker = {
-          ...w,
-          monthlyAttendance: payload.monthlyAttendance,
-          actualWorkDays: payload.actualWorkDays,
-          overtimeHours: payload.overtimeHours,
-          payrollCycleType: payload.cycleType,
-          currentPeriodKey: payload.periodKey,
-        };
-        return recomputeSeasonalWorkerPayroll(nextWorker);
-      }
-      return w;
-    });
-    setModifiedSeasonal(updated);
-    if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
-  };
-
-  // Cập nhật số ngày công thực tế cho NV Chính thức
-  const handleWorkDaysChange = (code: string, newDays: number) => {
-    const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const item = { ...emp, actualWorkDays: validDays };
-        return recomputeEmployeePayroll(item);
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
-  };
-
-  // Cập nhật công cho Thời vụ
-  const handleSeasonalWorkDaysChange = (code: string, newDays: number) => {
-    const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
-    const updated = modifiedSeasonal.map((w) => {
-      if (w.code === code) {
-        const salaryByDays = Math.round(validDays * (w.dailyRate || 0));
-        const totalIncome = salaryByDays + (w.overtimePay || 0) + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0);
-        const pit = w.hasTaxCommitment ? 0 : Math.round(totalIncome * 0.1);
-        const totalDeductions = pit + (w.advancePayment || 0);
-        const netSalary = Math.max(0, totalIncome - totalDeductions);
-        return {
-          ...w,
-          actualWorkDays: validDays,
-          salaryByDays,
-          totalIncome,
-          personalIncomeTax: pit,
-          totalDeductions,
-          netSalary,
-        };
-      }
-      return w;
-    });
-    setModifiedSeasonal(updated);
-    if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
-  };
-
-  // Cập nhật công cho Tổ đội
-  const handleTeamWorkDaysChange = (code: string, newDays: number) => {
-    const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
-    const updated = modifiedTeam.map((t) => {
-      if (t.code === code) {
-        const salaryByDays = Math.round(validDays * (t.unitRate || 0));
-        const totalIncome = salaryByDays + (t.overtimePay || 0) + (t.mealAllowance || 0) + (t.otherBonus || 0);
-        const totalDeductions = t.advancePayment || 0;
-        const netSalary = Math.max(0, totalIncome - totalDeductions);
-        return {
-          ...t,
-          actualWorkDays: validDays,
-          salaryByDays,
-          totalIncome,
-          totalDeductions,
-          netSalary,
-        };
-      }
-      return t;
-    });
-    setModifiedTeam(updated);
-    if (onBatchUpdateTeam) onBatchUpdateTeam(updated);
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
-  };
-
-  // Tăng giảm nhanh số ngày công (+/- 0.5 công)
-  const handleStepWorkDays = (code: string, delta: number) => {
-    if (attendanceGroup === 'PERMANENT') {
-      const current = modifiedEmployees.find((e) => e.code === code)?.actualWorkDays || 0;
-      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
-      setLocalInputs((prev) => {
-        const next = { ...prev };
-        if (next[code]) delete next[code].actualWorkDays;
-        return next;
+  // Danh sách các ngày thực tế của tháng đang chọn (1 -> 28/29/30/31)
+  const daysInMonthMeta: DayMeta[] = useMemo(() => {
+    const totalDays = new Date(currentYear, currentMonth, 0).getDate();
+    const mStr = String(currentMonth).padStart(2, '0');
+    const list: DayMeta[] = [];
+    for (let d = 1; d <= totalDays; d++) {
+      const dStr = String(d).padStart(2, '0');
+      const dateLabel = `${dStr}/${mStr}`;
+      const info = getDayOfWeekInfo(dateLabel, currentYear, currentMonth);
+      list.push({
+        day: d,
+        dateStr: `${dStr}/${mStr}/${currentYear}`,
+        dateLabel,
+        dayOfWeek: info.dayOfWeek,
+        isWeekend: info.dayOfWeek === 'T7' || info.dayOfWeek === 'CN',
+        isSunday: info.isSunday,
       });
-      handleWorkDaysChange(code, nextVal);
-    } else if (attendanceGroup === 'SEASONAL') {
-      const current = modifiedSeasonal.find((w) => w.code === code)?.actualWorkDays || 0;
-      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
-      handleSeasonalWorkDaysChange(code, nextVal);
-    } else {
-      const current = modifiedTeam.find((t) => t.code === code)?.actualWorkDays || 0;
-      const nextVal = Math.max(0, Math.min(31, Number((current + delta).toFixed(1))));
-      handleTeamWorkDaysChange(code, nextVal);
     }
-  };
+    return list;
+  }, [currentMonth, currentYear]);
 
-  // Cập nhật giờ tăng ca OT
-  const handleOtChange = (code: string, hours: number) => {
-    const validOT = Math.max(0, Math.min(200, Number(hours) || 0));
+  // Chỉ lấy nhân sự có trạng thái Đang làm việc (ACTIVE)
+  const activeEmployees = useMemo(() => {
+    return modifiedEmployees.filter((e) => (e.status || 'ACTIVE') === 'ACTIVE');
+  }, [modifiedEmployees]);
+
+  const activeSeasonal = useMemo(() => {
+    return modifiedSeasonal.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+  }, [modifiedSeasonal]);
+
+  // Danh sách Phòng ban / Bộ phận (hoặc Dự án / Tổ đội cho Thời vụ)
+  const departmentList = useMemo(() => {
+    const set = new Set<string>();
     if (attendanceGroup === 'PERMANENT') {
-      const updated = modifiedEmployees.map((emp) => {
-        if (emp.code === code) {
-          const item = { ...emp, overtimeHours: validOT };
-          return recomputeEmployeePayroll(item);
+      activeEmployees.forEach((e) => {
+        if (e.department) set.add(e.department);
+      });
+    } else {
+      activeSeasonal.forEach((w) => {
+        set.add(w.project || w.teamName || w.trade || 'Công trình thi công');
+      });
+    }
+    return Array.from(set);
+  }, [attendanceGroup, activeEmployees, activeSeasonal]);
+
+  // Nhóm nhân sự theo Phòng ban / Dự án giống hệt giao diện Timeline
+  const groupedSections = useMemo(() => {
+    if (attendanceGroup === 'PERMANENT') {
+      const filtered =
+        selectedDepartment === 'ALL'
+          ? activeEmployees
+          : activeEmployees.filter((e) => e.department === selectedDepartment);
+
+      const groupsMap = new Map<string, Employee[]>();
+      filtered.forEach((emp) => {
+        const dept = emp.department || 'Phòng ban chung';
+        if (!groupsMap.has(dept)) groupsMap.set(dept, []);
+        groupsMap.get(dept)!.push(emp);
+      });
+
+      return Array.from(groupsMap.entries()).map(([groupName, items]) => ({
+        groupName,
+        items: items.map((e) => {
+          const daysMap = ensureMonthlyDaysForWorker(
+            e.monthlyAttendance?.[monthKey],
+            currentMonth,
+            currentYear,
+            daysInMonthMeta,
+            e.actualWorkDays || 0,
+            e.overtimeHours || 0,
+            e.paidLeaveDays || 0,
+            e.unpaidLeaveDays || 0
+          );
+          const totals = calculateRowTotalsFromDays(daysMap);
+          return {
+            id: e.id,
+            code: e.code,
+            fullName: e.fullName,
+            group: e.department,
+            daysMap,
+            totals,
+            rawEmployee: e,
+          };
+        }),
+      }));
+    } else {
+      const filtered =
+        selectedDepartment === 'ALL'
+          ? activeSeasonal
+          : activeSeasonal.filter(
+              (w) => (w.project || w.teamName || w.trade || 'Công trình thi công') === selectedDepartment
+            );
+
+      const groupsMap = new Map<string, SeasonalWorker[]>();
+      filtered.forEach((w) => {
+        const grp = w.project || w.teamName || w.trade || 'Công trình thi công';
+        if (!groupsMap.has(grp)) groupsMap.set(grp, []);
+        groupsMap.get(grp)!.push(w);
+      });
+
+      return Array.from(groupsMap.entries()).map(([groupName, items]) => ({
+        groupName,
+        items: items.map((w) => {
+          const daysMap = ensureMonthlyDaysForWorker(
+            w.monthlyAttendance?.[monthKey],
+            currentMonth,
+            currentYear,
+            daysInMonthMeta,
+            w.actualWorkDays || 0,
+            w.overtimeHours || 0,
+            0,
+            0
+          );
+          const totals = calculateRowTotalsFromDays(daysMap);
+          return {
+            id: w.id,
+            code: w.code,
+            fullName: w.fullName,
+            group: grpNameOrTrade(w),
+            daysMap,
+            totals,
+            rawSeasonal: w,
+          };
+        }),
+      }));
+    }
+  }, [
+    attendanceGroup,
+    selectedDepartment,
+    activeEmployees,
+    activeSeasonal,
+    monthKey,
+    currentMonth,
+    currentYear,
+    daysInMonthMeta,
+  ]);
+
+  function grpNameOrTrade(w: SeasonalWorker) {
+    return w.project || w.trade || 'Thời vụ';
+  }
+
+  // Cập nhật dữ liệu 1 dòng nhân sự (Lưu vào monthlyAttendance VÀ cập nhật trực tiếp Công + Giờ TC sang Bản Lương)
+  const applyWorkerDaysMapUpdate = (
+    workerCode: string,
+    nextDaysMap: { [dayNumber: number]: DailyAttendanceDetail }
+  ) => {
+    const totals = calculateRowTotalsFromDays(nextDaysMap);
+    const updatedMonthRecord: MonthlyAttendanceRecord = {
+      monthKey,
+      month: currentMonth,
+      year: currentYear,
+      totalWorkDays: totals.totalCong,
+      totalOtHours: totals.totalOT,
+      days: nextDaysMap,
+      lastSubmittedAt: new Date().toISOString(),
+      submittedBy: 'ADMIN',
+    };
+
+    if (attendanceGroup === 'PERMANENT') {
+      const updatedList = modifiedEmployees.map((emp) => {
+        if (emp.code === workerCode) {
+          const currentBaseMap = ensureMonthlyDaysForWorker(
+            emp.monthlyAttendance?.[monthKey],
+            currentMonth,
+            currentYear,
+            daysInMonthMeta,
+            emp.actualWorkDays || 0,
+            emp.overtimeHours || 0,
+            emp.paidLeaveDays || 0,
+            emp.unpaidLeaveDays || 0
+          );
+          const finalMap = { ...currentBaseMap, ...nextDaysMap };
+          // Xóa những ngày bị đặt về NONE và 0h OT
+          Object.keys(finalMap).forEach((k) => {
+            const dNum = Number(k);
+            const item = finalMap[dNum];
+            if (!item || (item.workUnits === 0 && !item.statusType && (item.otHours || 0) === 0)) {
+              delete finalMap[dNum];
+            }
+          });
+          const recalcTotals = calculateRowTotalsFromDays(finalMap);
+
+          const nextEmp: Employee = {
+            ...emp,
+            actualWorkDays: recalcTotals.totalCong,
+            overtimeHours: recalcTotals.totalOT,
+            paidLeaveDays: recalcTotals.totalNP,
+            unpaidLeaveDays: recalcTotals.totalVM,
+            monthlyAttendance: {
+              ...(emp.monthlyAttendance || {}),
+              [monthKey]: {
+                ...updatedMonthRecord,
+                totalWorkDays: recalcTotals.totalCong,
+                totalOtHours: recalcTotals.totalOT,
+                days: finalMap,
+              },
+            },
+          };
+          return recomputeEmployeePayroll(nextEmp);
         }
         return emp;
       });
-      setModifiedEmployees(updated);
-      onBatchUpdate(updated);
-    } else if (attendanceGroup === 'SEASONAL') {
-      const updated = modifiedSeasonal.map((w) => {
-        if (w.code === code) {
-          const hourlyRate = (w.dailyRate || 0) / 8;
-          const otPay = Math.round(hourlyRate * validOT * 1.5);
-          const totalIncome = (w.salaryByDays || 0) + otPay + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0);
-          const pit = w.hasTaxCommitment ? 0 : Math.round(totalIncome * 0.1);
-          const netSalary = Math.max(0, totalIncome - pit - (w.advancePayment || 0));
-          return {
+      setModifiedEmployees(updatedList);
+      onBatchUpdate(updatedList);
+    } else {
+      const updatedList = modifiedSeasonal.map((w) => {
+        if (w.code === workerCode) {
+          const currentBaseMap = ensureMonthlyDaysForWorker(
+            w.monthlyAttendance?.[monthKey],
+            currentMonth,
+            currentYear,
+            daysInMonthMeta,
+            w.actualWorkDays || 0,
+            w.overtimeHours || 0,
+            0,
+            0
+          );
+          const finalMap = { ...currentBaseMap, ...nextDaysMap };
+          Object.keys(finalMap).forEach((k) => {
+            const dNum = Number(k);
+            const item = finalMap[dNum];
+            if (!item || (item.workUnits === 0 && !item.statusType && (item.otHours || 0) === 0)) {
+              delete finalMap[dNum];
+            }
+          });
+          const recalcTotals = calculateRowTotalsFromDays(finalMap);
+
+          const nextWorker: SeasonalWorker = {
             ...w,
-            overtimeHours: validOT,
-            overtimePay: otPay,
-            totalIncome,
-            personalIncomeTax: pit,
-            netSalary,
+            actualWorkDays: recalcTotals.totalCong,
+            overtimeHours: recalcTotals.totalOT,
+            monthlyAttendance: {
+              ...(w.monthlyAttendance || {}),
+              [monthKey]: {
+                ...updatedMonthRecord,
+                totalWorkDays: recalcTotals.totalCong,
+                totalOtHours: recalcTotals.totalOT,
+                days: finalMap,
+              },
+            },
           };
+          return recomputeSeasonalWorkerPayroll(nextWorker);
         }
         return w;
       });
-      setModifiedSeasonal(updated);
-      if (onBatchUpdateSeasonal) onBatchUpdateSeasonal(updated);
-    } else {
-      const updated = modifiedTeam.map((t) => {
-        if (t.code === code) {
-          const hourlyRate = (t.unitRate || 0) / 8;
-          const otPay = Math.round(hourlyRate * validOT * 1.5);
-          const totalIncome = (t.salaryByDays || 0) + otPay + (t.mealAllowance || 0) + (t.otherBonus || 0);
-          const netSalary = Math.max(0, totalIncome - (t.advancePayment || 0));
-          return {
-            ...t,
-            overtimeHours: validOT,
-            overtimePay: otPay,
-            totalIncome,
-            netSalary,
-          };
-        }
-        return t;
-      });
-      setModifiedTeam(updated);
-      if (onBatchUpdateTeam) onBatchUpdateTeam(updated);
+      setModifiedSeasonal(updatedList);
+      onBatchUpdateSeasonal?.(updatedList);
     }
-    setLastSavedCode(code);
-    setTimeout(() => setLastSavedCode(null), 1500);
   };
 
-  // Tăng giảm nhanh giờ tăng ca OT (+/- 1h)
-  const handleStepOT = (code: string, delta: number) => {
-    let current = 0;
+  // Lấy bản đồ ngày hiện tại của 1 nhân sự
+  const getCurrentDaysMapForWorker = (workerCode: string): { [dayNumber: number]: DailyAttendanceDetail } => {
+    for (const sec of groupedSections) {
+      const found = sec.items.find((it) => it.code === workerCode);
+      if (found) return { ...found.daysMap };
+    }
+    return {};
+  };
+
+  // Thay đổi trạng thái ngày (Đủ công, Nửa công, Vắng mặt, Nghỉ phép, Đi muộn, Xóa trống)
+  const handleSelectDayStatus = (workerCode: string, day: number, dateStr: string, status: DayStatusType) => {
+    const baseMap = getCurrentDaysMapForWorker(workerCode);
+    const prev = baseMap[day];
+
+    if (status === 'NONE') {
+      delete baseMap[day];
+    } else {
+      const workUnits =
+        status === 'FULL' || status === 'LATE' ? 1 : status === 'HALF' ? 0.5 : 0;
+      baseMap[day] = {
+        day,
+        dateStr,
+        workUnits,
+        statusType: status,
+        otHours: prev?.otHours || 0,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    applyWorkerDaysMapUpdate(workerCode, baseMap);
+  };
+
+  // Thay đổi giờ tăng ca (OT) của 1 ngày
+  const handleSelectDayOtHours = (workerCode: string, day: number, dateStr: string, otHours: number) => {
+    const baseMap = getCurrentDaysMapForWorker(workerCode);
+    const prev = baseMap[day];
+    const validOt = Math.max(0, Math.min(24, Number(otHours) || 0));
+
+    // Nếu ngày đó chưa được chấm công mà nhập OT -> mặc định là Đi làm đủ công (1.0)
+    const statusType = prev?.statusType || (validOt > 0 ? 'FULL' : undefined);
+    const workUnits =
+      prev?.workUnits !== undefined
+        ? prev.workUnits
+        : statusType === 'FULL'
+        ? 1
+        : 0;
+
+    if (!statusType && validOt === 0) {
+      delete baseMap[day];
+    } else {
+      baseMap[day] = {
+        day,
+        dateStr,
+        workUnits,
+        statusType,
+        otHours: validOt,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    applyWorkerDaysMapUpdate(workerCode, baseMap);
+  };
+
+  // Chấm nhanh đủ công cả tháng (T2 -> T7) cho 1 nhân sự
+  const handleFillFullMonthForWorker = (workerCode: string) => {
+    const nextMap: { [dayNumber: number]: DailyAttendanceDetail } = {};
+    const prevMap = getCurrentDaysMapForWorker(workerCode);
+    daysInMonthMeta.forEach((dm) => {
+      if (!dm.isSunday) {
+        nextMap[dm.day] = {
+          day: dm.day,
+          dateStr: dm.dateStr,
+          workUnits: 1,
+          statusType: 'FULL',
+          otHours: prevMap[dm.day]?.otHours || 0,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    });
+    applyWorkerDaysMapUpdate(workerCode, nextMap);
+    setEditingCell(null);
+    setToastMessage(`Đã chấm đủ công tháng ${currentMonth}/${currentYear} cho ${workerCode} và cập nhật Bản Lương!`);
+  };
+
+  // Xóa trắng toàn bộ ngày trong tháng của 1 nhân sự
+  const handleClearMonthForWorker = (workerCode: string) => {
     if (attendanceGroup === 'PERMANENT') {
-      current = modifiedEmployees.find((e) => e.code === code)?.overtimeHours || 0;
-    } else if (attendanceGroup === 'SEASONAL') {
-      current = modifiedSeasonal.find((w) => w.code === code)?.overtimeHours || 0;
-    } else {
-      current = modifiedTeam.find((t) => t.code === code)?.overtimeHours || 0;
-    }
-    const nextVal = Math.max(0, Math.min(200, current + delta));
-    setLocalInputs((prev) => {
-      const next = { ...prev };
-      if (next[code]) delete next[code].overtimeHours;
-      return next;
-    });
-    handleOtChange(code, nextVal);
-  };
-
-  // Cập nhật số ngày nghỉ phép có hưởng lương
-  const handlePaidLeaveChange = (code: string, days: number) => {
-    const validDays = Math.max(0, Math.min(31, Number(days) || 0));
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const item = { ...emp, paidLeaveDays: validDays };
-        return recomputeEmployeePayroll(item);
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
-  };
-
-  // Cập nhật số ngày nghỉ không lương
-  const handleUnpaidLeaveChange = (code: string, days: number) => {
-    const validDays = Math.max(0, Math.min(31, Number(days) || 0));
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const item = { ...emp, unpaidLeaveDays: validDays };
-        return recomputeEmployeePayroll(item);
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
-  };
-
-  // Bật/tắt chọn nhân viên vào bảng chấm công
-  const handleToggleSelectAttendance = (code: string) => {
-    const updated = modifiedEmployees.map((emp) => {
-      if (emp.code === code) {
-        const isCurrent = emp.selectedForAttendance !== false;
-        return { ...emp, selectedForAttendance: !isCurrent };
-      }
-      return emp;
-    });
-    setModifiedEmployees(updated);
-    onBatchUpdate(updated);
-  };
-
-  // Đặt công chuẩn cho toàn bộ danh sách
-  const handleFillFullWorkDays = () => {
-    const std = config.standardWorkDays || 26;
-    setConfirmModal({
-      title: 'Xác nhận đặt công chuẩn',
-      message: `Đặt công thực tế bằng công chuẩn (${std} ngày) cho toàn bộ nhân viên được chọn chấm công?`,
-      actionLabel: 'Đặt công chuẩn',
-      onConfirm: () => {
-        const updated = modifiedEmployees.map((emp) => {
-          if (onlySelected && emp.selectedForAttendance === false) return emp;
-          return recomputeEmployeePayroll({ ...emp, actualWorkDays: std, unpaidLeaveDays: 0 });
-        });
-        setLocalInputs({});
-        setModifiedEmployees(updated);
-        onBatchUpdate(updated);
-        setToastMessage(`Đã đặt công chuẩn (${std} ngày) cho toàn bộ nhân viên!`);
-      },
-    });
-  };
-
-  // Xóa trắng toàn bộ để nhập mới
-  const handleClearAttendance = () => {
-    setConfirmModal({
-      title: 'Xác nhận xóa trắng chấm công',
-      message: 'Bạn có chắc muốn để trống Công thực tế và Giờ OT để nhập mới từ đầu cho kỳ này?',
-      actionLabel: 'Xóa trắng',
-      onConfirm: () => {
-        const updated = modifiedEmployees.map((emp) => {
-          if (onlySelected && emp.selectedForAttendance === false) return emp;
+      const updatedList = modifiedEmployees.map((emp) => {
+        if (emp.code === workerCode) {
           return recomputeEmployeePayroll({
             ...emp,
             actualWorkDays: 0,
             overtimeHours: 0,
             paidLeaveDays: 0,
             unpaidLeaveDays: 0,
+            monthlyAttendance: {
+              ...(emp.monthlyAttendance || {}),
+              [monthKey]: {
+                monthKey,
+                month: currentMonth,
+                year: currentYear,
+                totalWorkDays: 0,
+                totalOtHours: 0,
+                days: {},
+              },
+            },
           });
+        }
+        return emp;
+      });
+      setModifiedEmployees(updatedList);
+      onBatchUpdate(updatedList);
+    } else {
+      const updatedList = modifiedSeasonal.map((w) => {
+        if (w.code === workerCode) {
+          return recomputeSeasonalWorkerPayroll({
+            ...w,
+            actualWorkDays: 0,
+            overtimeHours: 0,
+            monthlyAttendance: {
+              ...(w.monthlyAttendance || {}),
+              [monthKey]: {
+                monthKey,
+                month: currentMonth,
+                year: currentYear,
+                totalWorkDays: 0,
+                totalOtHours: 0,
+                days: {},
+              },
+            },
+          });
+        }
+        return w;
+      });
+      setModifiedSeasonal(updatedList);
+      onBatchUpdateSeasonal?.(updatedList);
+    }
+    setEditingCell(null);
+    setToastMessage(`Đã xóa trắng công tháng ${currentMonth}/${currentYear} của ${workerCode}!`);
+  };
+
+  // Xuất file Excel Bảng Chấm Công Timeline
+  const handleExportExcel = () => {
+    const rows: Record<string, any>[] = [];
+    groupedSections.forEach((sec) => {
+      sec.items.forEach((item) => {
+        const rowObj: Record<string, any> = {
+          'Phòng ban / Bộ phận': sec.groupName,
+          'Mã NV': item.code,
+          'Họ và tên': item.fullName,
+        };
+        daysInMonthMeta.forEach((dm) => {
+          const dRec = item.daysMap[dm.day];
+          let cellText = '-';
+          if (dRec) {
+            if (dRec.statusType === 'LEAVE') cellText = 'NP';
+            else if (dRec.statusType === 'ABSENT') cellText = 'VM';
+            else if (dRec.statusType === 'LATE') cellText = 'ĐM';
+            else if (dRec.workUnits === 1) cellText = '1';
+            else if (dRec.workUnits === 0.5) cellText = '0.5';
+            if ((dRec.otHours || 0) > 0) {
+              cellText += ` (+${dRec.otHours}h)`;
+            }
+          }
+          rowObj[`${dm.day} (${dm.dayOfWeek})`] = cellText;
         });
-        setLocalInputs({});
-        setModifiedEmployees(updated);
-        onBatchUpdate(updated);
-        setToastMessage('Đã xóa trắng công thực tế và OT để nhập mới!');
-      },
+        rowObj['Công'] = item.totals.totalCong;
+        rowObj['VM'] = item.totals.totalVM;
+        rowObj['ĐM'] = item.totals.totalDM;
+        rowObj['NP'] = item.totals.totalNP;
+        rowObj['Giờ TC'] = item.totals.totalOT;
+        rows.push(rowObj);
+      });
     });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Timeline_T${currentMonth}_${currentYear}`);
+    XLSX.writeFile(
+      wb,
+      `Bang_Cham_Cong_Timeline_Thang_${currentMonth}_${currentYear}.xlsx`
+    );
+    setToastMessage('Đã tải file Excel Bảng Chấm Công Timeline thành công!');
   };
 
-  // Lưu và đồng bộ
-  const handleSaveAttendance = () => {
-    onBatchUpdate(modifiedEmployees);
-    setToastMessage('Đã lưu & đồng bộ toàn bộ bảng chấm công và tính lại bảng lương!');
-  };
-
-  const monthFormatted = (config.month || 11) < 10 ? `0${config.month || 11}` : config.month || 11;
-  const yearFormatted = config.year || 2026;
-  const currentMonthKey = `${yearFormatted}-${String(config.month || 11).padStart(2, '0')}`;
-
-  // Danh sách hiển thị - CHỈ HIỂN THỊ NHÂN SỰ CÓ TRẠNG THÁI 'ACTIVE' (Đang làm việc)
-  const displayedEmployees = useMemo(() => {
-    const list = modifiedEmployees.filter((e) => {
-      if ((e.status || 'ACTIVE') !== 'ACTIVE') return false;
-      if (onlySelected && e.selectedForAttendance === false) return false;
-      return true;
-    });
-    return [...list].sort((a, b) => {
-      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
-        return a.sortOrder - b.sortOrder;
-      }
-      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
-    });
-  }, [modifiedEmployees, onlySelected]);
-
-  const displayedSeasonal = useMemo(() => {
-    return modifiedSeasonal.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
-  }, [modifiedSeasonal]);
-
-  const displayedTeam = useMemo(() => {
-    return modifiedTeam.filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
-  }, [modifiedTeam]);
-
-  // Danh sách nhân sự để truyền vào Modal tạo Link Chấm Công Di Động (hỗ trợ cả NV Chính Thức & Thời Vụ, key duy nhất theo mã)
+  // Danh sách nhân sự để truyền vào Modal tạo Link Chấm Công Di Động (hỗ trợ cả NV Chính Thức & Thời Vụ)
   const shareableWorkers: SeasonalWorker[] = useMemo(() => {
-    const permMapped: SeasonalWorker[] = displayedEmployees.map((e) => ({
-      id: e.code || `PERM_${e.id}`,
-      code: e.code,
-      fullName: e.fullName,
-      trade: e.title || 'Nhân viên chính thức',
-      skillLevel: e.department || 'Chính thức',
-      project: e.department || 'Văn phòng / Dự án',
-      teamName: e.department || 'Phòng ban',
-      teamLeader: '',
-      phone: e.phone || '',
-      idCard: e.idCard || '',
-      bankAccount: e.bankAccount || '',
-      bankName: e.bankName || '',
-      paymentMethod: 'BANK',
-      joinDate: e.joinDate || '',
-      dailyRate:
-        e.salaryType === 'DAILY'
-          ? e.baseSalary
-          : Math.round((e.baseSalary || 0) / (e.standardWorkDays || config.standardWorkDays || 26)),
-      actualWorkDays: e.actualWorkDays || 0,
-      salaryByDays: e.salaryByActualDays || 0,
-      overtimeHours: e.overtimeHours || 0,
-      overtimePay: e.overtimePay || 0,
-      mealAllowance: e.mealAllowance || 0,
-      travelSafetyAllowance: e.phoneTravelAllowance || 0,
-      otherBonus: e.kpiBonus || 0,
-      totalIncome: e.totalIncome || 0,
-      hasTaxCommitment: true,
-      personalIncomeTax: e.personalIncomeTax || 0,
-      advancePayment: e.advancePayment || 0,
-      totalDeductions: e.totalDeductions || 0,
-      netSalary: e.netSalary || 0,
-      status: 'ACTIVE',
-      monthlyAttendance: e.monthlyAttendance,
-      periodRecords: e.periodRecords,
-      payrollCycleType: e.payrollCycleType || '1_MONTH',
-      currentPeriodKey: e.currentPeriodKey,
-    }));
-
-    const seasMapped: SeasonalWorker[] = displayedSeasonal.map((w) => ({
+    if (attendanceGroup === 'PERMANENT') {
+      return activeEmployees.map((e) => ({
+        id: e.code || `PERM_${e.id}`,
+        code: e.code,
+        fullName: e.fullName,
+        trade: e.title || 'Nhân viên chính thức',
+        skillLevel: e.department || 'Chính thức',
+        project: e.department || 'Văn phòng / Dự án',
+        teamName: e.department || 'Phòng ban',
+        teamLeader: '',
+        phone: e.phone || '',
+        idCard: e.idCard || '',
+        bankAccount: e.bankAccount || '',
+        bankName: e.bankName || '',
+        paymentMethod: 'BANK',
+        joinDate: e.joinDate || '',
+        dailyRate:
+          e.salaryType === 'DAILY'
+            ? e.baseSalary
+            : Math.round((e.baseSalary || 0) / (e.standardWorkDays || config.standardWorkDays || 26)),
+        actualWorkDays: e.actualWorkDays || 0,
+        salaryByDays: e.salaryByActualDays || 0,
+        overtimeHours: e.overtimeHours || 0,
+        overtimePay: e.overtimePay || 0,
+        mealAllowance: e.mealAllowance || 0,
+        travelSafetyAllowance: e.phoneTravelAllowance || 0,
+        otherBonus: e.kpiBonus || 0,
+        totalIncome: e.totalIncome || 0,
+        hasTaxCommitment: true,
+        personalIncomeTax: e.personalIncomeTax || 0,
+        advancePayment: e.advancePayment || 0,
+        totalDeductions: e.totalDeductions || 0,
+        netSalary: e.netSalary || 0,
+        status: 'ACTIVE',
+        monthlyAttendance: e.monthlyAttendance,
+        periodRecords: e.periodRecords,
+        payrollCycleType: e.payrollCycleType || '1_MONTH',
+        currentPeriodKey: e.currentPeriodKey,
+      }));
+    }
+    return activeSeasonal.map((w) => ({
       ...w,
       id: w.code || `SEAS_${w.id}`,
     }));
+  }, [activeEmployees, activeSeasonal, attendanceGroup, config.standardWorkDays]);
 
-    if (attendanceGroup === 'PERMANENT') {
-      return permMapped;
-    }
-    return seasMapped;
-  }, [displayedEmployees, displayedSeasonal, attendanceGroup, config.standardWorkDays]);
-
-  const selectedCount = displayedEmployees.length;
+  const activeEditingDayDetail = useMemo(() => {
+    if (!editingCell) return null;
+    const map = getCurrentDaysMapForWorker(editingCell.workerCode);
+    return map[editingCell.day] || null;
+  }, [editingCell, groupedSections]);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-4">
-      {/* Bộ chuyển đổi 3 nhóm nhân sự chấm công (chỉ hiện khi không bị ép nhóm) */}
-      {!forcedGroup ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              id="tab-att-permanent"
-              onClick={() => setAttendanceGroup('PERMANENT')}
-              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-                attendanceGroup === 'PERMANENT'
-                  ? 'bg-[#0f3d64] text-white shadow-md font-black ring-2 ring-[#0f3d64]/20'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <Users className={`w-4 h-4 ${attendanceGroup === 'PERMANENT' ? 'text-sky-300' : 'text-slate-500'}`} />
-              <span>1. Nhân Viên Chính Thức</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                attendanceGroup === 'PERMANENT' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {displayedEmployees.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              id="tab-att-seasonal"
-              onClick={() => setAttendanceGroup('SEASONAL')}
-              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-                attendanceGroup === 'SEASONAL'
-                  ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <HardHat className={`w-4 h-4 ${attendanceGroup === 'SEASONAL' ? 'text-amber-200' : 'text-slate-500'}`} />
-              <span>2. Nhân Lực Thời Vụ</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                attendanceGroup === 'SEASONAL' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {displayedSeasonal.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              id="tab-att-team"
-              onClick={() => setAttendanceGroup('TEAM')}
-              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer shadow-xs ${
-                attendanceGroup === 'TEAM'
-                  ? 'bg-indigo-700 text-white shadow-md font-black ring-2 ring-indigo-700/20'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <Building className={`w-4 h-4 ${attendanceGroup === 'TEAM' ? 'text-indigo-200' : 'text-slate-500'}`} />
-              <span>3. Nhân Viên Tổ Đội</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                attendanceGroup === 'TEAM' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {displayedTeam.length}
-              </span>
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-          <div className="flex items-center gap-3">
-            {forcedGroup === 'PERMANENT' ? (
-              <div className="p-2.5 bg-[#0f3d64] text-white rounded-lg shadow-xs">
-                <Users className="w-5 h-5 text-sky-300" />
-              </div>
-            ) : (
-              <div className="p-2.5 bg-amber-600 text-white rounded-lg shadow-xs">
-                <HardHat className="w-5 h-5 text-amber-200" />
-              </div>
-            )}
-            <div>
-              <h2 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-wide">
-                {forcedGroup === 'PERMANENT' ? 'Bản Chấm Công Nhân Viên Chính Thức' : 'Bản Chấm Công Nhân Viên Thời Vụ'}
-              </h2>
-              <p className="text-xs text-slate-500">
-                Chỉ hiển thị các nhân sự đang làm việc trong danh sách ({forcedGroup === 'PERMANENT' ? displayedEmployees.length : displayedSeasonal.length} nhân sự)
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const firstCode =
-                  forcedGroup === 'PERMANENT'
-                    ? displayedEmployees[0]?.code
-                    : displayedSeasonal[0]?.code;
-                setShareModalTargetId(firstCode ? String(firstCode) : null);
-                setIsShareModalOpen(true);
-              }}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer transition"
-              title="Lấy Link & Mã QR gửi cho mọi người tự chấm công trên điện thoại (tự động hiện số công & giờ tăng ca)"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>Gửi Link Chấm Công (Hiện Công & OT)</span>
-            </button>
-            <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full border border-emerald-300">
-              {forcedGroup === 'PERMANENT' ? displayedEmployees.length : displayedSeasonal.length} người đang làm việc
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Banner phân loại & liên kết bảng chấm công */}
-      <div className="bg-gradient-to-r from-sky-50 via-slate-50 to-sky-50/50 border border-sky-200/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 bg-[#0f3d64] text-white rounded-lg shadow-xs">
-            <Calendar className="w-5 h-5 text-amber-300" />
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+      {/* ===================================================================== */}
+      {/* THANH TIÊU ĐỀ TIMELINE (GIỐNG HỆT MẪU TIMELINE CHẤM CÔNG) */}
+      {/* ===================================================================== */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-100">
+        {/* Bên trái: Icon Lịch Cam + Chữ Timeline */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-[#e85d2a] shadow-2xs">
+            <Calendar className="w-5 h-5 stroke-[2.2]" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                BẢNG CHẤM CÔNG THÁNG {monthFormatted}/{yearFormatted}
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-xl sm:text-2xl font-extrabold text-[#e85d2a] tracking-tight">
+                Timeline
               </h2>
-              <span className="px-2 py-0.5 bg-sky-100 text-sky-900 border border-sky-300 font-bold rounded-full text-[10px]">
-                {attendanceGroup === 'PERMANENT' && `Nhân viên chính thức (${selectedCount}/${modifiedEmployees.length})`}
-                {attendanceGroup === 'SEASONAL' && `Nhân lực thời vụ (${displayedSeasonal.length} thợ)`}
-                {attendanceGroup === 'TEAM' && `Nhân viên tổ đội (${displayedTeam.length} tổ)`}
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                {attendanceGroup === 'PERMANENT'
+                  ? `Nhân Viên Chính Thức (${activeEmployees.length})`
+                  : `Nhân Viên Thời Vụ (${activeSeasonal.length})`}
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Bấm biểu tượng <strong className="text-[#0f3d64]">📅 Lịch ngày</strong> trên từng dòng để mở lịch chấm công từng ngày (icon nhỏ gọn) hoặc <strong className="text-emerald-700">📱 Link</strong> để gửi link chấm công tự động đồng bộ Số công & Giờ tăng ca OT.
+            <p className="text-[11px] text-slate-500">
+              Nhấn vào từng ô ngày để chấm công / nhập giờ tăng ca (OT) — Tự động cộng tổng <strong className="text-slate-700">Công</strong> và <strong className="text-slate-700">Giờ TC</strong> cập nhật sang <strong className="text-[#e85d2a]">Bản Lương</strong>
             </p>
           </div>
         </div>
 
-        {/* Nút chuyển nhanh sang chấm công Thợ thời vụ (nếu người dùng cần chấm công thời vụ) */}
-        {onGoToSeasonalAttendance && (
-          <button
-            type="button"
-            id="btn-switch-to-seasonal-attendance"
-            onClick={onGoToSeasonalAttendance}
-            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-            title="Chuyển sang Chấm công theo tuần / công trình cho Nhân lực thời vụ"
+        {/* Bên phải: Lọc Phòng Ban + Điều hướng Tháng/Năm + Link Chấm Công + Tải Excel */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {!forcedGroup && (
+            <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setAttendanceGroup('PERMANENT');
+                  setSelectedDepartment('ALL');
+                }}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${
+                  attendanceGroup === 'PERMANENT'
+                    ? 'bg-[#0f3d64] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                NV Chính Thức ({activeEmployees.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAttendanceGroup('SEASONAL');
+                  setSelectedDepartment('ALL');
+                }}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${
+                  attendanceGroup === 'SEASONAL'
+                    ? 'bg-amber-600 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                NV Thời Vụ ({activeSeasonal.length})
+              </button>
+            </div>
+          )}
+
+          {/* Dropdown lọc Tất cả phòng ban */}
+          <select
+            value={selectedDepartment}
+            onChange={(e) => setSelectedDepartment(e.target.value)}
+            className="px-3.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 cursor-pointer min-w-[160px]"
           >
-            <HardHat className="w-4 h-4 text-amber-600" />
-            <span>Xem chi tiết Tuần Thợ Thời Vụ →</span>
-          </button>
-        )}
-      </div>
+            <option value="ALL">
+              {attendanceGroup === 'PERMANENT' ? 'Tất cả phòng ban' : 'Tất cả dự án / tổ đội'}
+            </option>
+            {departmentList.map((dept) => (
+              <option key={dept} value={dept}>
+                {dept}
+              </option>
+            ))}
+          </select>
 
-      {/* Thanh công cụ điều khiển kỳ & tác vụ */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Bộ chọn tháng năm */}
-          <MonthYearPicker
-            month={config.month || 11}
-            year={config.year || 2026}
-            onChange={onChangeMonthYear}
-            label="Kỳ chấm công:"
-          />
-
-          {/* Lọc chỉ hiện nhân viên chọn chấm công */}
-          {attendanceGroup === 'PERMANENT' && (
+          {/* Bộ chuyển đổi < tháng MM năm YYYY > */}
+          <div className="inline-flex items-center bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 gap-1">
             <button
               type="button"
-              onClick={() => setOnlySelected(!onlySelected)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
-                onlySelected
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs'
-                  : 'bg-slate-100 text-slate-700 border-slate-300'
-              }`}
+              onClick={() => {
+                if (currentMonth === 1) onChangeMonthYear(12, currentYear - 1);
+                else onChangeMonthYear(currentMonth - 1, currentYear);
+              }}
+              className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
+              title="Tháng trước"
             >
-              <Filter className="w-3.5 h-3.5" />
-              <span>{onlySelected ? `Chỉ hiện NV chấm công (${selectedCount})` : `Hiện tất cả đang làm việc`}</span>
+              <ChevronLeft className="w-4 h-4" />
             </button>
-          )}
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 px-2 text-xs font-semibold text-slate-800">
+              <span>tháng</span>
+              <select
+                value={currentMonth}
+                onChange={(e) => onChangeMonthYear(Number(e.target.value), currentYear)}
+                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {m < 10 ? `0${m}` : m}
+                  </option>
+                ))}
+              </select>
+              <span>năm</span>
+              <select
+                value={currentYear}
+                onChange={(e) => onChangeMonthYear(currentMonth, Number(e.target.value))}
+                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+              >
+                {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (currentMonth === 12) onChangeMonthYear(1, currentYear + 1);
+                else onChangeMonthYear(currentMonth + 1, currentYear);
+              }}
+              className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
+              title="Tháng sau"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Nút gửi Link Chấm Công Điện Thoại */}
           <button
             type="button"
             onClick={() => {
               const firstCode =
                 attendanceGroup === 'PERMANENT'
-                  ? displayedEmployees[0]?.code
-                  : displayedSeasonal[0]?.code;
+                  ? activeEmployees[0]?.code
+                  : activeSeasonal[0]?.code;
               setShareModalTargetId(firstCode ? String(firstCode) : null);
               setIsShareModalOpen(true);
             }}
-            className="px-3 py-1.5 border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-            title="Tạo Link & Mã QR gửi cho nhân viên chấm công trên điện thoại"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
+            title="Lấy Link & Mã QR gửi cho mọi người chấm công trên điện thoại"
           >
-            <QrCode className="w-3.5 h-3.5 text-emerald-700" />
-            <span>Link Chấm Công Điện Thoại</span>
+            <QrCode className="w-3.5 h-3.5" />
+            <span>Link Chấm Công</span>
           </button>
 
-          {onGoToEmployeeList && (
-            <button
-              type="button"
-              onClick={onGoToEmployeeList}
-              className="px-2.5 py-1.5 border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-              title="Quản lý nhân sự trong Danh sách nhân viên"
-            >
-              <Users className="w-3.5 h-3.5 text-sky-700" />
-              <span>Quản lý hồ sơ nhân viên</span>
-            </button>
-          )}
-
+          {/* Nút Tải Excel màu cam giống mẫu */}
           <button
             type="button"
-            onClick={handleClearAttendance}
-            className="px-2.5 py-1.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-            title="Đặt lại 0 công và 0 OT để nhập mới"
+            onClick={handleExportExcel}
+            className="px-3.5 py-1.5 bg-[#e85d2a] hover:bg-[#d14e1f] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
           >
-            <Eraser className="w-3.5 h-3.5 text-amber-700" />
-            <span>Xóa trắng nhập mới</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleFillFullWorkDays}
-            className="px-3 py-1.5 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-2xs"
-            title="Chấm đủ công chuẩn (26 ngày) cho tất cả nhân viên"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Chấm đủ công tất cả ({config.standardWorkDays || 26} công)</span>
-          </button>
-
-          <button
-            onClick={handleSaveAttendance}
-            className="px-4 py-1.5 bg-[#0f3d64] hover:bg-sky-800 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-          >
-            <Save className="w-3.5 h-3.5 text-amber-300" />
-            <span>Lưu & Đồng bộ bảng lương</span>
+            <Download className="w-3.5 h-3.5" />
+            <span>Tải Excel</span>
           </button>
         </div>
       </div>
 
-      {/* Bảng chấm công chi tiết theo từng nhóm */}
-      <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[680px] text-xs shadow-xs">
-        {attendanceGroup === 'PERMANENT' && (
-        <table className="w-full border-collapse text-left whitespace-nowrap">
-          <thead className="bg-[#0f3d64] text-white sticky top-0 z-20 text-[11px] select-none">
+      {/* Chú thích nhanh các ký hiệu icon nhỏ */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50/80 px-3 py-1.5 rounded-xl border border-slate-200/80">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-bold text-slate-700">Ký hiệu:</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-4 h-4 rounded bg-[#4caf50] text-white inline-flex items-center justify-center text-[9px] font-bold">
+              ✓
+            </span>
+            <span>Đủ công (1.0)</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-4 h-4 rounded bg-[#4caf50] text-white inline-flex items-center justify-center text-[9px] font-bold">
+              ½
+            </span>
+            <span>Nửa công (0.5)</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-4 h-4 rounded bg-[#ef5350] text-white inline-flex items-center justify-center text-[9px] font-bold">
+              ✕
+            </span>
+            <span>Vắng mặt (VM)</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-4 h-4 rounded bg-[#2196f3] text-white inline-flex items-center justify-center text-[9px] font-bold">
+              📅
+            </span>
+            <span>Nghỉ phép (NP)</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-4 h-4 rounded bg-amber-500 text-white inline-flex items-center justify-center text-[8px] font-bold">
+              ĐM
+            </span>
+            <span>Đi muộn (ĐM)</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="px-1 py-0.2 rounded-full bg-[#f57c00] text-white text-[9px] font-bold">
+              3h
+            </span>
+            <span>Giờ tăng ca (Giờ TC)</span>
+          </span>
+        </div>
+        <div className="text-[11px] font-semibold text-emerald-700">
+          ✓ Tổng Công & Giờ TC tự động cập nhật sang Bản Lương
+        </div>
+      </div>
+
+      {/* ===================================================================== */}
+      {/* BẢNG MA TRẬN TIMELINE CHẤM CÔNG THEO NGÀY (1 -> 30/31) */}
+      {/* ===================================================================== */}
+      <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[680px] shadow-2xs bg-white">
+        <table className="w-full border-collapse text-left select-none">
+          <thead className="sticky top-0 z-30 bg-[#f8fafc] border-b border-slate-200 text-[11px]">
             <tr>
-              <th className="p-2.5 border-r border-sky-800 text-center w-12 font-bold">STT</th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-16 font-bold bg-[#144d7d]" title="Tích chọn để tính vào bảng lương">
-                Chấm công
+              {/* Cột Nhân sự cố định bên trái */}
+              <th className="py-2.5 px-3 sticky left-0 z-40 bg-[#f8fafc] min-w-[215px] text-center font-bold text-slate-700 border-r border-slate-200/80">
+                Nhân sự
               </th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-20 font-bold">Mã NV</th>
-              <th className="p-2.5 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[170px] font-bold">
-                Họ và tên
+
+              {/* Các cột ngày 1 -> 30/31 */}
+              {daysInMonthMeta.map((dm) => (
+                <th
+                  key={dm.day}
+                  className="py-1.5 px-0.5 text-center min-w-[32px] w-8 font-normal"
+                >
+                  <div className="font-bold text-slate-700 text-[11px] leading-tight">
+                    {dm.day}
+                  </div>
+                  <div
+                    className={`text-[10px] leading-tight mt-0.5 ${
+                      dm.isWeekend ? 'text-red-500 font-semibold' : 'text-slate-400'
+                    }`}
+                  >
+                    {dm.dayOfWeek}
+                  </div>
+                </th>
+              ))}
+
+              {/* 5 Cột Tổng Hợp Bên Phải: Công | VM | ĐM | NP | Giờ TC */}
+              <th className="py-2 px-1 text-center min-w-[44px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
+                  Công
+                </span>
               </th>
-              <th className="p-2.5 border-r border-sky-800 min-w-[120px]">Bộ phận</th>
-              <th className="p-2.5 border-r border-sky-800 text-center min-w-[195px] bg-[#144d7d]">
-                <div className="font-bold text-emerald-300">Chấm Từng Ngày & Link</div>
-                <div className="text-[9px] text-sky-200 font-normal">Lịch icon nhỏ + Link điện thoại</div>
+              <th className="py-2 px-1 text-center min-w-[40px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
+                  VM
+                </span>
               </th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-20">Công chuẩn</th>
-              <th className="p-2.5 border-r border-sky-800 text-center min-w-[180px] bg-[#144d7d]">
-                <div className="font-bold text-amber-200">Công thực tế *</div>
-                <div className="text-[9px] text-sky-200 font-normal">Tự đồng bộ từ lịch/link</div>
+              <th className="py-2 px-1 text-center min-w-[40px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
+                  ĐM
+                </span>
               </th>
-              <th className="p-2.5 border-r border-sky-800 text-center min-w-[145px]">
-                <div>Giờ OT (h)</div>
-                <div className="text-[9px] text-amber-200 font-normal">Hệ số 150%</div>
+              <th className="py-2 px-1 text-center min-w-[40px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
+                  NP
+                </span>
               </th>
-              <th className="p-2.5 border-r border-sky-800 text-right w-28 bg-[#144d7d]">
-                <div>Tiền tăng ca</div>
-                <div className="text-[9px] text-amber-200 font-normal">Lương giờ × 1.5</div>
-              </th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-24">Nghỉ phép</th>
-              <th className="p-2.5 border-r border-sky-800 text-center w-24">Nghỉ không lương</th>
-              <th className="p-2.5 text-right min-w-[140px] bg-[#144d7d] font-bold">
-                <div>Lương theo công</div>
-                <div className="text-[9px] text-amber-200 font-normal">Thực nhận theo ngày công</div>
+              <th className="py-2 px-1.5 text-center min-w-[52px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
+                  Giờ TC
+                </span>
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200 text-[12px]">
-            {displayedEmployees.map((emp, index) => {
-              const isSelectedForAttendance = emp.selectedForAttendance !== false;
-              const stdDays = emp.standardWorkDays || config.standardWorkDays || 26;
-              const isExpanded = expandedDailyCode === emp.code;
-              const monthRec = emp.monthlyAttendance?.[currentMonthKey];
-              const checkedDayEntries = (Object.values(monthRec?.days || {}) as DailyAttendanceDetail[]).filter(
-                (d) => (d.workUnits || 0) > 0 || (d.otHours || 0) > 0
-              );
 
-              // Lấy giá trị chuỗi nhập liệu tạm thời (nếu người dùng đang gõ)
-              const rawDaysValue =
-                localInputs[emp.code]?.actualWorkDays !== undefined
-                  ? localInputs[emp.code]?.actualWorkDays
-                  : emp.actualWorkDays !== undefined
-                  ? String(emp.actualWorkDays)
-                  : '';
-
-              const rawOtValue =
-                localInputs[emp.code]?.overtimeHours !== undefined
-                  ? localInputs[emp.code]?.overtimeHours
-                  : emp.overtimeHours !== undefined
-                  ? String(emp.overtimeHours)
-                  : '';
-
-              const rawPaidLeaveValue =
-                localInputs[emp.code]?.paidLeaveDays !== undefined
-                  ? localInputs[emp.code]?.paidLeaveDays
-                  : emp.paidLeaveDays !== undefined
-                  ? String(emp.paidLeaveDays)
-                  : '';
-
-              const rawUnpaidLeaveValue =
-                localInputs[emp.code]?.unpaidLeaveDays !== undefined
-                  ? localInputs[emp.code]?.unpaidLeaveDays
-                  : emp.unpaidLeaveDays !== undefined
-                  ? String(emp.unpaidLeaveDays)
-                  : '';
-
-              const isRecentlySaved = lastSavedCode === emp.code;
-
-              return (
-                <React.Fragment key={emp.code}>
-                  <tr
-                    className={`hover:bg-sky-50/60 transition-colors ${
-                      !isSelectedForAttendance ? 'bg-slate-50/70 opacity-60' : ''
-                    } ${isExpanded ? 'bg-sky-50/80' : ''}`}
+          <tbody className="divide-y divide-slate-100 text-xs">
+            {groupedSections.map((section) => (
+              <React.Fragment key={section.groupName}>
+                {/* DÒNG TIÊU ĐỀ PHÒNG BAN / BỘ PHẬN */}
+                <tr className="bg-white">
+                  <td
+                    colSpan={daysInMonthMeta.length + 6}
+                    className="pt-4 pb-1.5 px-3 font-extrabold text-xs sm:text-sm text-slate-800 uppercase tracking-wide border-b-2 border-[#e86c3a]"
                   >
-                    {/* STT */}
-                    <td className="p-2 border-r border-slate-200 text-center text-slate-500 font-mono">
-                      {index + 1}
-                    </td>
+                    {section.groupName}
+                  </td>
+                </tr>
 
-                    {/* Checkbox Chấm công */}
-                    <td className="p-2 border-r border-slate-200 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleSelectAttendance(emp.code)}
-                        className="cursor-pointer inline-flex items-center justify-center p-1 rounded hover:bg-slate-200/60 transition"
-                        title={isSelectedForAttendance ? 'Đang chọn chấm công. Nhấn để bỏ chọn.' : 'Đã bỏ chọn. Nhấn để chọn chấm công.'}
-                      >
-                        {isSelectedForAttendance ? (
-                          <CheckSquare className="w-4 h-4 text-emerald-600" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-400" />
-                        )}
-                      </button>
-                    </td>
+                {/* CÁC DÒNG NHÂN SỰ TRONG PHÒNG BAN */}
+                {section.items.map((worker, wIdx) => {
+                  const initials = getInitials(worker.fullName);
 
-                    {/* Mã NV */}
-                    <td className="p-2 border-r border-slate-200 font-mono font-bold text-[#0f3d64] text-center">
-                      {emp.code}
-                    </td>
-
-                    {/* Họ và tên (Cố định cột trái khi scroll) */}
-                    <td className="p-2 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50 font-bold text-slate-900 z-10">
-                      <div className="flex items-center justify-between gap-2">
-                        <span>{emp.fullName}</span>
-                        {isRecentlySaved && (
-                          <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded font-bold animate-in fade-in">
-                            ✓ Đã lưu
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Bộ phận */}
-                    <td className="p-2 border-r border-slate-200 text-slate-600">
-                      {emp.department}
-                    </td>
-
-                    {/* CHẤM TỪNG NGÀY (ICON NHỎ) & LINK CHẤM CÔNG */}
-                    <td className="p-1.5 border-r border-slate-200 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedDailyCode(isExpanded ? null : emp.code)
-                          }
-                          className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 cursor-pointer transition border ${
-                            isExpanded
-                              ? 'bg-[#0f3d64] text-white border-[#0f3d64] shadow-xs'
-                              : checkedDayEntries.length > 0
-                              ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
-                              : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-sky-50 hover:border-sky-300'
-                          }`}
-                          title="Mở / Đóng bảng chấm công từng ngày (icon nhỏ gọn)"
-                        >
-                          <Calendar className="w-3 h-3 shrink-0" />
-                          <span>
-                            {checkedDayEntries.length > 0
-                              ? `${checkedDayEntries.length} ngày`
-                              : 'Lịch ngày'}
-                          </span>
-                          {isExpanded ? (
-                            <ChevronUp className="w-3 h-3" />
-                          ) : (
-                            <ChevronDown className="w-3 h-3" />
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShareModalTargetId(String(emp.code));
-                            setIsShareModalOpen(true);
-                          }}
-                          className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
-                          title={`Lấy Link chấm công gửi cho ${emp.fullName} (khi chấm sẽ tự hiện số công & giờ tăng ca)`}
-                        >
-                          <Smartphone className="w-3 h-3" />
-                          <span>Link</span>
-                        </button>
-                      </div>
-                      {/* Hiển thị mini-icons các ngày đã chấm (nếu có) */}
-                      {checkedDayEntries.length > 0 && (
-                        <div className="flex items-center justify-center gap-0.5 mt-1 flex-wrap max-w-[180px] mx-auto">
-                          {checkedDayEntries.slice(0, 6).map((d) => (
-                            <span
-                              key={d.day}
-                              className={`text-[8px] font-mono font-bold px-1 rounded ${
-                                d.workUnits === 1
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                  : 'bg-amber-100 text-amber-800 border border-amber-300'
-                              }`}
-                              title={`Ngày ${d.dateStr}: ${d.workUnits} công${d.otHours ? ` + ${d.otHours}h OT` : ''}`}
-                            >
-                              {d.day < 10 ? `0${d.day}` : d.day}
-                              {d.otHours > 0 ? `+${d.otHours}h` : ''}
-                            </span>
-                          ))}
-                          {checkedDayEntries.length > 6 && (
-                            <span className="text-[8px] font-bold text-slate-500">
-                              +{checkedDayEntries.length - 6}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Công chuẩn */}
-                    <td className="p-2 border-r border-slate-200 text-center font-bold text-slate-700 font-mono">
-                      {stdDays}
-                    </td>
-
-                    {/* CÔNG THỰC TẾ */}
-                    <td className="p-1.5 border-r border-slate-200 text-center bg-sky-50/40">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleStepWorkDays(emp.code, -0.5)}
-                          className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                          title="Giảm 0.5 ngày công"
-                        >
-                          -
-                        </button>
-
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0"
-                          value={rawDaysValue}
-                          onChange={(e) => {
-                            const valStr = e.target.value;
-                            if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                              setLocalInputs((prev) => ({
-                                ...prev,
-                                [emp.code]: {
-                                  ...(prev[emp.code] || {}),
-                                  actualWorkDays: valStr,
-                                },
-                              }));
-
-                              if (valStr !== '' && !valStr.endsWith('.')) {
-                                const parsed = parseFloat(valStr);
-                                if (!isNaN(parsed) && parsed >= 0 && parsed <= 31) {
-                                  handleWorkDaysChange(emp.code, parsed);
-                                }
-                              }
-                            }
-                          }}
-                          onBlur={() => {
-                            const currentStr = localInputs[emp.code]?.actualWorkDays;
-                            if (currentStr !== undefined) {
-                              const parsed = parseFloat(currentStr);
-                              const finalDays = isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed));
-                              handleWorkDaysChange(emp.code, finalDays);
-                              setLocalInputs((prev) => {
-                                const next = { ...prev };
-                                if (next[emp.code]) {
-                                  delete next[emp.code].actualWorkDays;
-                                }
-                                return next;
-                              });
-                            }
-                          }}
-                          className="w-14 px-1.5 py-1 border border-sky-400 focus:border-sky-600 focus:ring-1 focus:ring-sky-500 rounded text-center font-mono font-black text-xs text-slate-900 bg-white shadow-2xs"
-                          title="Nhập số ngày công làm việc (VD: 26, 25.5, 24)"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => handleStepWorkDays(emp.code, 0.5)}
-                          className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                          title="Tăng 0.5 ngày công"
-                        >
-                          +
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleWorkDaysChange(emp.code, stdDays)}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 cursor-pointer transition"
-                          title={`Đặt nhanh đủ công chuẩn (${stdDays} ngày)`}
-                        >
-                          Đủ {stdDays}
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* GIỜ TĂNG CA (OT) */}
-                    <td className="p-1.5 border-r border-slate-200 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleStepOT(emp.code, -1)}
-                          className="w-4.5 h-5.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                          title="Giảm 1 giờ OT"
-                        >
-                          -
-                        </button>
-
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0"
-                          value={rawOtValue}
-                          onChange={(e) => {
-                            const valStr = e.target.value;
-                            if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                              setLocalInputs((prev) => ({
-                                ...prev,
-                                [emp.code]: {
-                                  ...(prev[emp.code] || {}),
-                                  overtimeHours: valStr,
-                                },
-                              }));
-                              if (valStr !== '' && !valStr.endsWith('.')) {
-                                const parsed = parseFloat(valStr);
-                                if (!isNaN(parsed) && parsed >= 0) {
-                                  handleOtChange(emp.code, parsed);
-                                }
-                              }
-                            }
-                          }}
-                          onBlur={() => {
-                            const currentStr = localInputs[emp.code]?.overtimeHours;
-                            if (currentStr !== undefined) {
-                              const parsed = parseFloat(currentStr);
-                              const finalOT = isNaN(parsed) ? 0 : Math.max(0, parsed);
-                              handleOtChange(emp.code, finalOT);
-                              setLocalInputs((prev) => {
-                                const next = { ...prev };
-                                if (next[emp.code]) delete next[emp.code].overtimeHours;
-                                return next;
-                              });
-                            }
-                          }}
-                          className="w-11 px-1 py-0.5 border border-slate-300 focus:border-sky-500 rounded text-center font-mono font-bold text-xs text-amber-900 bg-white"
-                          title="Nhập giờ làm thêm OT"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => handleStepOT(emp.code, 1)}
-                          className="w-4.5 h-5.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                          title="Tăng 1 giờ OT"
-                        >
-                          +
-                        </button>
-                        <span className="text-[10px] text-slate-400">h</span>
-                      </div>
-                    </td>
-
-                    {/* Tiền làm thêm giờ (1.5x) */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-amber-900 bg-amber-50/20">
-                      {(emp.overtimePay || 0) > 0 ? (
-                        `${new Intl.NumberFormat('vi-VN').format(emp.overtimePay)} đ`
-                      ) : (
-                        <span className="text-slate-400 font-normal">—</span>
-                      )}
-                    </td>
-
-                    {/* Nghỉ phép có lương */}
-                    <td className="p-1.5 border-r border-slate-200 text-center">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0"
-                        value={rawPaidLeaveValue}
-                        onChange={(e) => {
-                          const valStr = e.target.value;
-                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                            setLocalInputs((prev) => ({
-                              ...prev,
-                              [emp.code]: {
-                                ...(prev[emp.code] || {}),
-                                paidLeaveDays: valStr,
-                              },
-                            }));
-                            if (valStr !== '' && !valStr.endsWith('.')) {
-                              const parsed = parseFloat(valStr);
-                              if (!isNaN(parsed)) handlePaidLeaveChange(emp.code, parsed);
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const currentStr = localInputs[emp.code]?.paidLeaveDays;
-                          if (currentStr !== undefined) {
-                            const parsed = parseFloat(currentStr);
-                            handlePaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                            setLocalInputs((prev) => {
-                              const next = { ...prev };
-                              if (next[emp.code]) delete next[emp.code].paidLeaveDays;
-                              return next;
-                            });
-                          }
-                        }}
-                        className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                        title="Số ngày nghỉ phép hưởng nguyên lương"
-                      />
-                    </td>
-
-                    {/* Nghỉ không lương */}
-                    <td className="p-1.5 border-r border-slate-200 text-center">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0"
-                        value={rawUnpaidLeaveValue}
-                        onChange={(e) => {
-                          const valStr = e.target.value;
-                          if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                            setLocalInputs((prev) => ({
-                              ...prev,
-                              [emp.code]: {
-                                ...(prev[emp.code] || {}),
-                                unpaidLeaveDays: valStr,
-                              },
-                            }));
-                            if (valStr !== '' && !valStr.endsWith('.')) {
-                              const parsed = parseFloat(valStr);
-                              if (!isNaN(parsed)) handleUnpaidLeaveChange(emp.code, parsed);
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const currentStr = localInputs[emp.code]?.unpaidLeaveDays;
-                          if (currentStr !== undefined) {
-                            const parsed = parseFloat(currentStr);
-                            handleUnpaidLeaveChange(emp.code, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                            setLocalInputs((prev) => {
-                              const next = { ...prev };
-                              if (next[emp.code]) delete next[emp.code].unpaidLeaveDays;
-                              return next;
-                            });
-                          }
-                        }}
-                        className="w-11 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                        title="Số ngày nghỉ không lương"
-                      />
-                    </td>
-
-                    {/* Lương theo công */}
-                    <td className="p-2 text-right font-mono font-bold text-[#0f3d64]">
-                      {emp.actualWorkDays === 0 ? (
-                        <span className="text-slate-400 font-normal italic text-[11px]">Chưa nhập công (0đ)</span>
-                      ) : (
-                        <div>
-                          <div>{new Intl.NumberFormat('vi-VN').format(emp.salaryByActualDays)} đ</div>
-                          <div className="text-[9px] text-slate-500 font-normal">
-                            {emp.salaryType === 'DAILY' ? '(Đơn giá × công)' : '(=Lương/26 × công)'}
+                  return (
+                    <tr
+                      key={`${worker.code || worker.id}_${wIdx}`}
+                      className="hover:bg-orange-50/30 transition-colors group"
+                    >
+                      {/* Cột Nhân Sự (Sticky Left) */}
+                      <td className="py-2 px-2.5 sticky left-0 z-20 bg-white group-hover:bg-orange-50/40 border-r border-slate-100">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-7 h-7 rounded-full bg-[#e86c3a] text-white font-bold text-[10px] flex items-center justify-center shrink-0 shadow-2xs">
+                              {initials}
+                            </div>
+                            <div className="truncate">
+                              <span className="font-bold text-slate-800 text-[12px]">
+                                {worker.fullName}
+                              </span>{' '}
+                              <span className="text-slate-500 font-medium text-[11px]">
+                                ({worker.code})
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
 
-                  {/* BẢNG CHẤM CÔNG TỪNG NGÀY DẠNG ICON NHỎ GỌN (MỞ RỘNG NGAY DƯỚI DÒNG) */}
-                  {isExpanded && (
-                    <tr>
-                      <td colSpan={13} className="p-2.5 bg-sky-50/50 border-b border-sky-200 whitespace-normal">
-                        <CompactDailyAttendancePanel
-                          workerCode={emp.code}
-                          workerName={emp.fullName}
-                          month={config.month || 11}
-                          year={config.year || 2026}
-                          standardWorkDays={stdDays}
-                          dailyRate={
-                            emp.salaryType === 'DAILY'
-                              ? emp.baseSalary
-                              : Math.round((emp.baseSalary || 0) / stdDays)
-                          }
-                          monthlyAttendance={emp.monthlyAttendance}
-                          initialCycleType={emp.payrollCycleType || '1_MONTH'}
-                          onChangeMonthYear={onChangeMonthYear}
-                          onUpdateAttendance={(payload) =>
-                            handlePermanentDailyCalendarUpdate(emp.code, payload)
-                          }
-                          onOpenShareLink={() => {
-                            setShareModalTargetId(String(emp.code));
-                            setIsShareModalOpen(true);
-                          }}
-                          onClose={() => setExpandedDailyCode(null)}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-        )}
-
-        {/* BẢNG CHẤM CÔNG NHÂN LỰC THỜI VỤ */}
-        {attendanceGroup === 'SEASONAL' && (
-          <table className="w-full border-collapse text-left whitespace-nowrap">
-            <thead className="bg-amber-700 text-white sticky top-0 z-20 text-[11px] select-none">
-              <tr>
-                <th className="p-2.5 border-r border-amber-800 text-center w-12 font-bold">STT</th>
-                <th className="p-2.5 border-r border-amber-800 text-center w-20 font-bold">Mã thợ</th>
-                <th className="p-2.5 border-r border-amber-800 sticky left-0 bg-amber-700 z-30 min-w-[170px] font-bold">
-                  Họ tên thợ kỹ thuật
-                </th>
-                <th className="p-2.5 border-r border-amber-800 min-w-[130px]">Nghề & Tay nghề</th>
-                <th className="p-2.5 border-r border-amber-800 text-center min-w-[195px] bg-amber-800">
-                  <div className="font-bold text-amber-200">Chấm Từng Ngày & Link</div>
-                  <div className="text-[9px] text-amber-100/90 font-normal">Lịch icon nhỏ + Link điện thoại</div>
-                </th>
-                <th className="p-2.5 border-r border-amber-800 text-right w-28">Đơn giá ngày</th>
-                <th className="p-2.5 border-r border-amber-800 text-center min-w-[180px] bg-amber-800">
-                  <div className="font-bold text-amber-200">Công thực tế *</div>
-                  <div className="text-[9px] text-amber-200/80 font-normal">Tự đồng bộ từ lịch/link</div>
-                </th>
-                <th className="p-2.5 border-r border-amber-800 text-center min-w-[130px]">
-                  <div>Tăng ca (OT)</div>
-                  <div className="text-[9px] text-amber-200/80 font-normal">Hệ số 150%</div>
-                </th>
-                <th className="p-2.5 border-r border-amber-800 text-right w-28">Phụ cấp ăn ca</th>
-                <th className="p-2.5 border-r border-amber-800 text-right w-24">Tạm ứng</th>
-                <th className="p-2.5 text-right min-w-[130px] bg-amber-800 font-bold">
-                  <div>Thực nhận kỳ này</div>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 text-[12px]">
-              {displayedSeasonal.map((w, index) => {
-                const isExpanded = expandedDailyCode === w.code;
-                const monthRec = w.monthlyAttendance?.[currentMonthKey];
-                const checkedDayEntries = (Object.values(monthRec?.days || {}) as DailyAttendanceDetail[]).filter(
-                  (d) => (d.workUnits || 0) > 0 || (d.otHours || 0) > 0
-                );
-
-                return (
-                  <React.Fragment key={`${w.code || w.id}_${index}`}>
-                    <tr className={`hover:bg-amber-50/50 transition-colors ${isExpanded ? 'bg-amber-50/70' : ''}`}>
-                      <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
-                        {index + 1}
-                      </td>
-                      <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-amber-900">
-                        {w.code}
-                      </td>
-                      <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
-                        <div>{w.fullName}</div>
-                        <div className="text-[10px] text-slate-500 font-normal">{w.phone || 'SĐT: Chưa có'}</div>
-                      </td>
-                      <td className="p-2 border-r border-slate-200 text-slate-700">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                          {w.trade}
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">{w.project || w.skillLevel}</div>
-                      </td>
-
-                      {/* CHẤM TỪNG NGÀY (ICON NHỎ) & LINK CHẤM CÔNG */}
-                      <td className="p-1.5 border-r border-slate-200 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedDailyCode(isExpanded ? null : w.code)}
-                            className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 cursor-pointer transition border ${
-                              isExpanded
-                                ? 'bg-amber-700 text-white border-amber-700 shadow-xs'
-                                : checkedDayEntries.length > 0
-                                ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
-                                : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-amber-50 hover:border-amber-300'
-                            }`}
-                            title="Mở / Đóng bảng chấm công từng ngày (icon nhỏ gọn)"
-                          >
-                            <Calendar className="w-3 h-3 shrink-0" />
-                            <span>
-                              {checkedDayEntries.length > 0
-                                ? `${checkedDayEntries.length} ngày`
-                                : 'Lịch ngày'}
-                            </span>
-                            {isExpanded ? (
-                              <ChevronUp className="w-3 h-3" />
-                            ) : (
-                              <ChevronDown className="w-3 h-3" />
-                            )}
-                          </button>
-
+                          {/* Nút lấy link chấm công cá nhân nhanh khi rê chuột */}
                           <button
                             type="button"
                             onClick={() => {
-                              setShareModalTargetId(String(w.code));
+                              setShareModalTargetId(String(worker.code));
                               setIsShareModalOpen(true);
                             }}
-                            className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
-                            title={`Lấy Link chấm công gửi cho ${w.fullName} (khi chấm sẽ tự hiện số công & giờ tăng ca)`}
+                            className="opacity-60 group-hover:opacity-100 p-1 rounded hover:bg-emerald-50 text-emerald-600 transition cursor-pointer shrink-0"
+                            title={`Gửi link chấm công cá nhân cho ${worker.fullName}`}
                           >
-                            <Smartphone className="w-3 h-3" />
-                            <span>Link</span>
+                            <Smartphone className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        {checkedDayEntries.length > 0 && (
-                          <div className="flex items-center justify-center gap-0.5 mt-1 flex-wrap max-w-[180px] mx-auto">
-                            {checkedDayEntries.slice(0, 6).map((d) => (
-                              <span
-                                key={d.day}
-                                className={`text-[8px] font-mono font-bold px-1 rounded ${
-                                  d.workUnits === 1
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
-                                }`}
-                                title={`Ngày ${d.dateStr}: ${d.workUnits} công${d.otHours ? ` + ${d.otHours}h OT` : ''}`}
-                              >
-                                {d.day < 10 ? `0${d.day}` : d.day}
-                                {d.otHours > 0 ? `+${d.otHours}h` : ''}
-                              </span>
-                            ))}
-                            {checkedDayEntries.length > 6 && (
-                              <span className="text-[8px] font-bold text-slate-500">
-                                +{checkedDayEntries.length - 6}
-                              </span>
-                            )}
-                          </div>
-                        )}
                       </td>
 
-                      <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                        {new Intl.NumberFormat('vi-VN').format(w.dailyRate || 0)} đ
-                      </td>
-                      <td className="p-1.5 border-r border-slate-200 text-center bg-amber-50/40">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleStepWorkDays(w.code, -0.5)}
-                            className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
+                      {/* Các ô ngày 1 -> 30/31 (Icon nhỏ gọn giống mẫu Timeline) */}
+                      {daysInMonthMeta.map((dm) => {
+                        const dRec = worker.daysMap[dm.day];
+                        const status: DayStatusType = dRec
+                          ? dRec.statusType === 'LEAVE'
+                            ? 'LEAVE'
+                            : dRec.statusType === 'ABSENT'
+                            ? 'ABSENT'
+                            : dRec.statusType === 'LATE'
+                            ? 'LATE'
+                            : dRec.workUnits === 1
+                            ? 'FULL'
+                            : dRec.workUnits === 0.5
+                            ? 'HALF'
+                            : 'NONE'
+                          : 'NONE';
+
+                        const otHours = Number(dRec?.otHours || 0);
+                        const isSelectedCell =
+                          editingCell?.workerCode === worker.code &&
+                          editingCell?.day === dm.day;
+
+                        return (
+                          <td
+                            key={dm.day}
+                            className="p-0.5 text-center align-middle relative"
                           >
-                            -
-                          </button>
-                          <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            max="31"
-                            value={w.actualWorkDays || 0}
-                            onChange={(e) => handleSeasonalWorkDaysChange(w.code, parseFloat(e.target.value) || 0)}
-                            className="w-14 px-1 py-1 border border-amber-400 focus:border-amber-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleStepWorkDays(w.code, 0.5)}
-                            className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                          >
-                            +
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSeasonalWorkDaysChange(w.code, 26)}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer"
-                          >
-                            26c
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditingCell({
+                                  workerCode: worker.code,
+                                  workerName: worker.fullName,
+                                  day: dm.day,
+                                  dateStr: dm.dateStr,
+                                  dayOfWeek: dm.dayOfWeek,
+                                })
+                              }
+                              title={`${worker.fullName} - Ngày ${dm.dateStr} (${dm.dayOfWeek}): ${
+                                status === 'FULL'
+                                  ? '1.0 công'
+                                  : status === 'HALF'
+                                  ? '0.5 công'
+                                  : status === 'ABSENT'
+                                  ? 'Vắng mặt (VM)'
+                                  : status === 'LEAVE'
+                                  ? 'Nghỉ phép (NP)'
+                                  : status === 'LATE'
+                                  ? 'Đi muộn (ĐM)'
+                                  : 'Chưa chấm'
+                              }${otHours > 0 ? ` + ${otHours}h tăng ca` : ''}`}
+                              className={`w-7 h-7 mx-auto rounded-md flex items-center justify-center relative cursor-pointer transition-all ${
+                                isSelectedCell
+                                  ? 'ring-2 ring-[#e85d2a] scale-110 z-20'
+                                  : 'hover:scale-105'
+                              } ${
+                                status === 'FULL' || status === 'HALF'
+                                  ? 'bg-[#4caf50] text-white shadow-2xs'
+                                  : status === 'ABSENT'
+                                  ? 'bg-[#ef5350] text-white shadow-2xs'
+                                  : status === 'LEAVE'
+                                  ? 'bg-[#2196f3] text-white shadow-2xs'
+                                  : status === 'LATE'
+                                  ? 'bg-amber-500 text-white shadow-2xs'
+                                  : dm.isWeekend
+                                  ? 'bg-slate-100/90 text-slate-400 hover:bg-slate-200/70'
+                                  : 'bg-slate-50/90 text-slate-400 hover:bg-slate-100'
+                              }`}
+                            >
+                              {status === 'FULL' && (
+                                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              )}
+                              {status === 'HALF' && (
+                                <span className="text-[11px] font-extrabold leading-none">
+                                  ½
+                                </span>
+                              )}
+                              {status === 'ABSENT' && (
+                                <X className="w-3.5 h-3.5 stroke-[3]" />
+                              )}
+                              {status === 'LEAVE' && (
+                                <Calendar className="w-3.5 h-3.5 stroke-[2.5]" />
+                              )}
+                              {status === 'LATE' && (
+                                <span className="text-[9px] font-black leading-none">
+                                  ĐM
+                                </span>
+                              )}
+                              {status === 'NONE' && (
+                                <span className="text-[11px] font-bold text-slate-400 leading-none">
+                                  ·
+                                </span>
+                              )}
+
+                              {/* Badge số giờ tăng ca (OT) màu cam ở góc trên bên phải */}
+                              {otHours > 0 && (
+                                <span className="absolute -top-1.5 -right-1 bg-[#f57c00] text-white text-[8px] font-extrabold px-1 py-0 rounded-full leading-tight shadow-2xs border border-white/60">
+                                  {otHours}h
+                                </span>
+                              )}
+                            </button>
+                          </td>
+                        );
+                      })}
+
+                      {/* 5 Cột Tổng Hợp Cuối Dòng: Công | VM | ĐM | NP | Giờ TC */}
+                      <td className="py-1.5 px-1 text-center">
+                        <span className="inline-block w-full py-1 px-1 rounded-md bg-emerald-50 text-emerald-600 font-extrabold text-[11px]">
+                          {worker.totals.totalCong}
+                        </span>
                       </td>
-                      <td className="p-1.5 border-r border-slate-200 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleStepOT(w.code, -1)}
-                            className="w-4 h-5 rounded bg-slate-200 text-xs font-bold cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="font-mono font-bold text-amber-900">{w.overtimeHours || 0}h</span>
-                          <button
-                            type="button"
-                            onClick={() => handleStepOT(w.code, 1)}
-                            className="w-4 h-5 rounded bg-amber-200 text-xs font-bold text-amber-900 cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
+                      <td className="py-1.5 px-1 text-center">
+                        <span className="inline-block w-full py-1 px-1 rounded-md bg-rose-50 text-rose-600 font-extrabold text-[11px]">
+                          {worker.totals.totalVM}
+                        </span>
                       </td>
-                      <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                        {new Intl.NumberFormat('vi-VN').format(w.mealAllowance || 0)} đ
+                      <td className="py-1.5 px-1 text-center">
+                        <span className="inline-block w-full py-1 px-1 rounded-md bg-amber-50 text-amber-600 font-extrabold text-[11px]">
+                          {worker.totals.totalDM}
+                        </span>
                       </td>
-                      <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
-                        {(w.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(w.advancePayment)} đ` : '0 đ'}
+                      <td className="py-1.5 px-1 text-center">
+                        <span className="inline-block w-full py-1 px-1 rounded-md bg-sky-50 text-sky-600 font-extrabold text-[11px]">
+                          {worker.totals.totalNP}
+                        </span>
                       </td>
-                      <td className="p-2 text-right font-mono font-black text-amber-900 bg-amber-50/50">
-                        {new Intl.NumberFormat('vi-VN').format(w.netSalary || 0)} đ
+                      <td className="py-1.5 px-1.5 text-center">
+                        <span className="inline-block w-full py-1 px-1 rounded-md bg-orange-50 text-orange-600 font-extrabold text-[11px]">
+                          {worker.totals.totalOT}
+                        </span>
                       </td>
                     </tr>
-
-                    {/* BẢNG CHẤM CÔNG TỪNG NGÀY DẠNG ICON NHỎ GỌN (MỞ RỘNG NGAY DƯỚI DÒNG) */}
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={11} className="p-2.5 bg-amber-50/40 border-b border-amber-200 whitespace-normal">
-                          <CompactDailyAttendancePanel
-                            workerCode={w.code}
-                            workerName={w.fullName}
-                            month={config.month || 11}
-                            year={config.year || 2026}
-                            standardWorkDays={config.standardWorkDays || 26}
-                            dailyRate={w.dailyRate || 0}
-                            monthlyAttendance={w.monthlyAttendance}
-                            initialCycleType={w.payrollCycleType || '1_MONTH'}
-                            onChangeMonthYear={onChangeMonthYear}
-                            onUpdateAttendance={(payload) =>
-                              handleSeasonalDailyCalendarUpdate(w.code, payload)
-                            }
-                            onOpenShareLink={() => {
-                              setShareModalTargetId(String(w.code));
-                              setIsShareModalOpen(true);
-                            }}
-                            onClose={() => setExpandedDailyCode(null)}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-
-        {/* BẢNG CHẤM CÔNG NHÂN VIÊN TỔ ĐỘI */}
-        {attendanceGroup === 'TEAM' && (
-          <table className="w-full border-collapse text-left whitespace-nowrap">
-            <thead className="bg-indigo-800 text-white sticky top-0 z-20 text-[11px] select-none">
-              <tr>
-                <th className="p-2.5 border-r border-indigo-900 text-center w-12 font-bold">STT</th>
-                <th className="p-2.5 border-r border-indigo-900 text-center w-20 font-bold">Mã tổ</th>
-                <th className="p-2.5 border-r border-indigo-900 sticky left-0 bg-indigo-800 z-30 min-w-[180px] font-bold">
-                  Tên tổ đội thi công
-                </th>
-                <th className="p-2.5 border-r border-indigo-900 min-w-[140px]">Đội trưởng & SĐT</th>
-                <th className="p-2.5 border-r border-indigo-900 min-w-[150px]">Dự án phụ trách</th>
-                <th className="p-2.5 border-r border-indigo-900 text-center w-20">Quân số</th>
-                <th className="p-2.5 border-r border-indigo-900 text-right w-28">Đơn giá ngày/khoán</th>
-                <th className="p-2.5 border-r border-indigo-900 text-center min-w-[180px] bg-indigo-900">
-                  <div className="font-bold text-amber-200">Công thực tế *</div>
-                  <div className="text-[9px] text-indigo-200 font-normal">Nhập số hoặc bấm +/-</div>
-                </th>
-                <th className="p-2.5 border-r border-indigo-900 text-center min-w-[130px]">
-                  <div>Tăng ca (OT)</div>
-                </th>
-                <th className="p-2.5 border-r border-indigo-900 text-right w-28">Phụ cấp ăn ca</th>
-                <th className="p-2.5 border-r border-indigo-900 text-right w-24">Tạm ứng</th>
-                <th className="p-2.5 text-right min-w-[130px] bg-indigo-900 font-bold">
-                  <div>Thực lĩnh tổ đội</div>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 text-[12px]">
-              {displayedTeam.map((t, index) => (
-                <tr key={t.id} className="hover:bg-indigo-50/50 transition-colors">
-                  <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
-                    {index + 1}
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-indigo-900">
-                    {t.code}
-                  </td>
-                  <td className="p-2 border-r border-slate-200 sticky left-0 bg-white z-10 font-bold text-slate-900 shadow-xs">
-                    <div>{t.teamName}</div>
-                    <div className="text-[10px] text-slate-500 font-normal">{t.rateType === 'PIECEWORK' ? 'Khoán khối lượng' : 'Lương ngày công'}</div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-slate-700">
-                    <div className="font-medium text-slate-900">{t.leaderName}</div>
-                    <div className="text-[10px] text-slate-500 font-mono">{t.phone}</div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-slate-700">
-                    <span className="font-medium text-slate-800">{t.project}</span>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-slate-700">
-                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 font-black">
-                      {t.workerCount || 1} thợ
-                    </span>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                    {new Intl.NumberFormat('vi-VN').format(t.unitRate || 0)} đ
-                  </td>
-                  <td className="p-1.5 border-r border-slate-200 text-center bg-indigo-50/40">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(t.code, -0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                      >
-                        -
-                      </button>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="0"
-                        max="31"
-                        value={t.actualWorkDays || 0}
-                        onChange={(e) => handleTeamWorkDaysChange(t.code, parseFloat(e.target.value) || 0)}
-                        className="w-14 px-1 py-1 border border-indigo-400 focus:border-indigo-600 rounded text-center font-mono font-black text-xs text-slate-900 bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleStepWorkDays(t.code, 0.5)}
-                        className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleTeamWorkDaysChange(t.code, 26)}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 border border-indigo-300 cursor-pointer"
-                      >
-                        26c
-                      </button>
-                    </div>
-                  </td>
-                  <td className="p-1.5 border-r border-slate-200 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(t.code, -1)}
-                        className="w-4 h-5 rounded bg-slate-200 text-xs font-bold"
-                      >
-                        -
-                      </button>
-                      <span className="font-mono font-bold text-indigo-900">{t.overtimeHours || 0}h</span>
-                      <button
-                        type="button"
-                        onClick={() => handleStepOT(t.code, 1)}
-                        className="w-4 h-5 rounded bg-indigo-200 text-xs font-bold text-indigo-900"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                    {new Intl.NumberFormat('vi-VN').format(t.mealAllowance || 0)} đ
-                  </td>
-                  <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-600">
-                    {(t.advancePayment || 0) > 0 ? `-${new Intl.NumberFormat('vi-VN').format(t.advancePayment)} đ` : '0 đ'}
-                  </td>
-                  <td className="p-2 text-right font-mono font-black text-indigo-900 bg-indigo-50/50">
-                    {new Intl.NumberFormat('vi-VN').format(t.netSalary || 0)} đ
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {/* Modal Chia sẻ Link & QR Chấm Công Di Động (cho cả NV Chính Thức & Thời Vụ) */}
+      {/* ===================================================================== */}
+      {/* HỘP THOẠI NHỎ (MINI POPOVER MODAL) KHI BẤM VÀO 1 Ô NGÀY TRÊN TIMELINE */}
+      {/* ===================================================================== */}
+      {editingCell && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/30 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => setEditingCell(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm p-4 space-y-3.5 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <div className="text-xs font-extrabold text-slate-900">
+                  {editingCell.workerName} ({editingCell.workerCode})
+                </div>
+                <div className="text-[11px] font-semibold text-[#e85d2a]">
+                  Ngày {editingCell.dateStr} ({editingCell.dayOfWeek})
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCell(null)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 1. Chọn trạng thái ngày công */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-600 block">
+                1. Chấm công ngày {editingCell.day}/{currentMonth}:
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'FULL'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.workUnits === 1 &&
+                    activeEditingDayDetail?.statusType !== 'LATE'
+                      ? 'bg-[#4caf50] text-white border-[#4caf50] shadow-xs'
+                      : 'bg-emerald-50/70 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  <span>Đủ công (1)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'HALF'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.workUnits === 0.5
+                      ? 'bg-[#4caf50] text-white border-[#4caf50] shadow-xs'
+                      : 'bg-emerald-50/70 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                >
+                  <span className="font-black">½</span>
+                  <span>Nửa ca (0.5)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'ABSENT'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.statusType === 'ABSENT'
+                      ? 'bg-[#ef5350] text-white border-[#ef5350] shadow-xs'
+                      : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                  }`}
+                >
+                  <X className="w-3.5 h-3.5 stroke-[3]" />
+                  <span>Vắng (VM)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'LEAVE'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.statusType === 'LEAVE'
+                      ? 'bg-[#2196f3] text-white border-[#2196f3] shadow-xs'
+                      : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Nghỉ phép (NP)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'LATE'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.statusType === 'LATE'
+                      ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                      : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                  }`}
+                >
+                  <span>Đi muộn (ĐM)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
+                      'NONE'
+                    )
+                  }
+                  className="py-2 px-2 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition"
+                >
+                  <span>Xóa trống (-)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 2. Chọn nhanh số giờ tăng ca (Giờ TC / OT) */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-[#f57c00]" />
+                  <span>2. Giờ tăng ca (Giờ TC):</span>
+                </label>
+                <span className="text-xs font-extrabold text-[#f57c00]">
+                  {activeEditingDayDetail?.otHours || 0} giờ
+                </span>
+              </div>
+
+              <div className="grid grid-cols-6 gap-1">
+                {[0, 1, 2, 3, 4, 8].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() =>
+                      handleSelectDayOtHours(
+                        editingCell.workerCode,
+                        editingCell.day,
+                        editingCell.dateStr,
+                        h
+                      )
+                    }
+                    className={`py-1.5 rounded-lg text-xs font-extrabold border cursor-pointer transition ${
+                      (activeEditingDayDetail?.otHours || 0) === h
+                        ? 'bg-[#f57c00] text-white border-[#f57c00] shadow-2xs'
+                        : 'bg-orange-50/60 text-orange-800 border-orange-200 hover:bg-orange-100'
+                    }`}
+                  >
+                    {h}h
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Thao tác nhanh cho cả dòng nhân sự này */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => handleFillFullMonthForWorker(editingCell.workerCode)}
+                className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition"
+              >
+                <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Chấm đủ tháng (T2-T7)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleClearMonthForWorker(editingCell.workerCode)}
+                className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Xóa dòng</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEditingCell(null)}
+                className="py-1.5 px-3 rounded-lg bg-[#0f3d64] hover:bg-sky-900 text-white text-[11px] font-bold cursor-pointer transition"
+              >
+                Xong
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Chia sẻ Link & QR Chấm Công Di Động */}
       <MobileAttendanceShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
@@ -1610,42 +1476,6 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         selectedWorkerId={shareModalTargetId}
         onOpenMobileView={onOpenMobileView}
       />
-
-      {/* Confirmation Modal */}
-      {confirmModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-sky-50 border-b border-sky-200 p-4 flex items-center gap-3 text-sky-950">
-              <div className="p-2 bg-sky-100 rounded-full shrink-0">
-                <AlertCircle className="w-5 h-5 text-sky-700" />
-              </div>
-              <h3 className="font-bold text-sm uppercase">{confirmModal.title}</h3>
-            </div>
-            <div className="p-5 text-xs text-slate-700">
-              <p>{confirmModal.message}</p>
-            </div>
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmModal(null)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition cursor-pointer"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  confirmModal.onConfirm();
-                  setConfirmModal(null);
-                }}
-                className="px-4 py-1.5 text-xs font-bold text-white bg-[#0f3d64] hover:bg-[#1a5b94] rounded-lg shadow-sm transition cursor-pointer"
-              >
-                {confirmModal.actionLabel || 'Xác nhận'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Toast Notification */}
       {toastMessage && (
