@@ -474,27 +474,65 @@ export const loadEmployeesFromSupabase = async (
   if (!client) return null;
 
   try {
-    let query = client.from('employees').select('employee_data');
-    if (periodCode) {
-      query = query.eq('period_code', periodCode);
-    }
-
-    let { data, error } = await query;
-
-    // Nếu lọc theo periodCode không có, lấy toàn bộ nhân sự hiện có
-    if (!error && (!data || data.length === 0)) {
-      const allRes = await client.from('employees').select('employee_data');
-      data = allRes.data;
-      error = allRes.error;
-    }
+    const { data, error } = await client
+      .from('employees')
+      .select('id, code, name, department, position, employee_data');
 
     if (error || !data || data.length === 0) return null;
 
+    let attRecords: any[] = [];
+    try {
+      const { data: attData } = await client.from('attendance_records').select('*');
+      if (attData && Array.isArray(attData)) {
+        attRecords = attData;
+      }
+    } catch {}
+
     const list = data
-      .map((item) => item.employee_data as Employee)
+      .map((item) => {
+        const emp = (item.employee_data || {}) as Employee;
+        return {
+          ...emp,
+          id: String(item.id || emp.id),
+          code: String(item.code || emp.code),
+          fullName: emp.fullName || item.name || 'Nhân viên',
+          department: emp.department || item.department || 'Phòng ban',
+          title: emp.title || item.position || 'Nhân viên',
+        };
+      })
       .filter((emp) => emp && emp.fullName);
 
-    // Sắp xếp nhất quán tuyệt đối giữa tất cả các máy tính:
+    if (attRecords.length > 0) {
+      list.forEach((emp) => {
+        const matchingAtts = attRecords.filter(
+          (a) => a.worker_code === emp.code || a.worker_code === emp.id
+        );
+        matchingAtts.forEach((att) => {
+          const mNum = Number(att.month);
+          const yNum = Number(att.year);
+          const mStr = String(mNum).padStart(2, '0');
+          const monthKey = `${yNum}-${mStr}`;
+          if (!emp.monthlyAttendance) emp.monthlyAttendance = {};
+          if (
+            att.attendance_data &&
+            typeof att.attendance_data === 'object' &&
+            Object.keys(att.attendance_data).length > 0
+          ) {
+            emp.monthlyAttendance[monthKey] = {
+              monthKey,
+              month: mNum,
+              year: yNum,
+              totalWorkDays: Number(att.total_work_days || 0),
+              totalOtHours: Number(att.total_ot_hours || 0),
+              days: att.attendance_data,
+              lastSubmittedAt: att.updated_at,
+              submittedBy: 'WORKER',
+            };
+          }
+        });
+      });
+    }
+
     return list.sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
         return a.sortOrder - b.sortOrder;

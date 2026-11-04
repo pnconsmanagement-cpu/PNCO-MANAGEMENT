@@ -1,13 +1,23 @@
 import { CompanyConfig, Employee } from '../types';
-import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
+import {
+  recomputeEmployeePayroll,
+  getRealCurrentDateInfo,
+  ensureEmployeeHistoricalMonths,
+  syncEmployeeForMonth,
+} from '../utils/payrollCalculator';
 import { ensureEmployeeContract } from '../utils/contractHelper';
 
-const realNow = new Date();
-const currentRealMonth = realNow.getMonth() + 1;
-const currentRealYear = realNow.getFullYear();
-const nextRealMonth = currentRealMonth === 12 ? '01' : (currentRealMonth + 1 < 10 ? `0${currentRealMonth + 1}` : `${currentRealMonth + 1}`);
+const realInfo = getRealCurrentDateInfo();
+const currentRealMonth = realInfo.realMonth;
+const currentRealYear = realInfo.realYear;
+const nextRealMonth =
+  currentRealMonth === 12
+    ? '01'
+    : currentRealMonth + 1 < 10
+    ? `0${currentRealMonth + 1}`
+    : `${currentRealMonth + 1}`;
 const nextRealYear = currentRealMonth === 12 ? currentRealYear + 1 : currentRealYear;
-const curMonthStr = currentRealMonth < 10 ? `0${currentRealMonth}` : `${currentRealMonth}`;
+const curMonthStr = realInfo.realMonthPadded;
 
 export const initialCompanyConfig: CompanyConfig = {
   name: 'CÔNG TY TNHH XÂY DỰNG- CƠ ĐIỆN PHÚC NGUYÊN',
@@ -568,5 +578,6 @@ export const initialEmployees: Employee[] = rawEmployees.map((e) => {
   };
 
   const empWithContract = ensureEmployeeContract(fullEmp);
-  return recomputeEmployeePayroll(empWithContract);
+  const empWithHistory = ensureEmployeeHistoricalMonths(empWithContract);
+  return syncEmployeeForMonth(empWithHistory, currentRealMonth, currentRealYear, 26);
 });

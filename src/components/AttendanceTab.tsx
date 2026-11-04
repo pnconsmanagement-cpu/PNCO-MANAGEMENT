@@ -8,8 +8,17 @@ import {
   MonthlyAttendanceRecord,
   DailyAttendanceDetail,
 } from '../types';
-import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
-import { recomputeSeasonalWorkerPayroll, getDayOfWeekInfo } from '../data/mockSeasonalWorkers';
+import {
+  recomputeEmployeePayroll,
+  syncEmployeeForMonth,
+  getRealCurrentDateInfo,
+} from '../utils/payrollCalculator';
+import {
+  recomputeSeasonalWorkerPayroll,
+  syncSeasonalWorkerForMonth,
+  getDayOfWeekInfo,
+} from '../data/mockSeasonalWorkers';
+import { formatNumberOnly } from '../utils/numberToVietnameseWords';
 import {
   Calendar,
   Check,
@@ -20,9 +29,6 @@ import {
   Smartphone,
   QrCode,
   CheckCircle2,
-  Users,
-  HardHat,
-  Building,
   RotateCcw,
   Zap,
   Clock,
@@ -54,6 +60,7 @@ interface DayMeta {
   dayOfWeek: string;
   isWeekend: boolean; // T7 or CN
   isSunday: boolean;
+  isToday: boolean;
 }
 
 /**
@@ -91,7 +98,12 @@ function ensureMonthlyDaysForWorker(
   }
 
   // Nếu nhân sự chưa có công và chưa có OT -> để trống toàn bộ (-)
-  if ((actualWorkDays || 0) <= 0 && (overtimeHours || 0) <= 0 && (paidLeaveDays || 0) <= 0 && (unpaidLeaveDays || 0) <= 0) {
+  if (
+    (actualWorkDays || 0) <= 0 &&
+    (overtimeHours || 0) <= 0 &&
+    (paidLeaveDays || 0) <= 0 &&
+    (unpaidLeaveDays || 0) <= 0
+  ) {
     return {};
   }
 
@@ -101,7 +113,6 @@ function ensureMonthlyDaysForWorker(
   let remAbsent = Math.max(0, Math.round(Number(unpaidLeaveDays) || 0));
   let remOt = Math.max(0, Math.round(Number(overtimeHours) || 0));
 
-  // Phân bổ ngày phép (NP) và vắng mặt (VM) trước, sau đó phân bổ ngày công (T2 -> T7)
   for (const dm of daysMeta) {
     if (dm.isSunday) {
       if (remAbsent > 0) {
@@ -156,7 +167,6 @@ function ensureMonthlyDaysForWorker(
     }
   }
 
-  // Nếu vẫn còn công lẻ (do làm cả Chủ Nhật)
   if (remWork > 0) {
     for (const dm of daysMeta) {
       if (remWork <= 0) break;
@@ -174,7 +184,6 @@ function ensureMonthlyDaysForWorker(
     }
   }
 
-  // Phân bổ giờ tăng ca (OT) đều lên các ngày đi làm (tối đa 3h-4h/ngày thường, hoặc 8h Chủ Nhật)
   const workingDayNums = Object.keys(generated)
     .map(Number)
     .filter((d) => (generated[d]?.workUnits || 0) > 0);
@@ -243,7 +252,6 @@ function calculateRowTotalsFromDays(daysMap: { [dayNumber: number]: DailyAttenda
 export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   employees,
   seasonalWorkers = [],
-  teamWorkers = [],
   config,
   onChangeMonthYear,
   onBatchUpdate,
@@ -251,6 +259,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onOpenMobileView,
   forcedGroup,
 }) => {
+  const realDateInfo = useMemo(() => getRealCurrentDateInfo(), []);
+
   const [attendanceGroup, setAttendanceGroup] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>(
     forcedGroup || 'PERMANENT'
   );
@@ -261,8 +271,18 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     }
   }, [forcedGroup]);
 
-  const [modifiedEmployees, setModifiedEmployees] = useState<Employee[]>(employees);
-  const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(seasonalWorkers);
+  const currentMonth = config.month || realDateInfo.realMonth;
+  const currentYear = config.year || realDateInfo.realYear;
+  const monthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+  const isViewingRealCurrentMonth =
+    currentMonth === realDateInfo.realMonth && currentYear === realDateInfo.realYear;
+
+  const [modifiedEmployees, setModifiedEmployees] = useState<Employee[]>(() =>
+    employees.map((e) => syncEmployeeForMonth(e, currentMonth, currentYear, config.standardWorkDays || 26))
+  );
+  const [modifiedSeasonal, setModifiedSeasonal] = useState<SeasonalWorker[]>(() =>
+    seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear))
+  );
   const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
   const [shareModalTargetId, setShareModalTargetId] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -278,22 +298,24 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   } | null>(null);
 
   useEffect(() => {
-    setModifiedEmployees(employees);
-  }, [employees]);
+    setModifiedEmployees(
+      employees.map((e) =>
+        syncEmployeeForMonth(e, currentMonth, currentYear, config.standardWorkDays || 26)
+      )
+    );
+  }, [employees, currentMonth, currentYear, config.standardWorkDays]);
 
   useEffect(() => {
-    setModifiedSeasonal(seasonalWorkers);
-  }, [seasonalWorkers]);
+    setModifiedSeasonal(
+      seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear))
+    );
+  }, [seasonalWorkers, currentMonth, currentYear]);
 
   useEffect(() => {
     if (!toastMessage) return;
     const timer = setTimeout(() => setToastMessage(null), 3000);
     return () => clearTimeout(timer);
   }, [toastMessage]);
-
-  const currentMonth = config.month || 11;
-  const currentYear = config.year || 2026;
-  const monthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
 
   // Danh sách các ngày thực tế của tháng đang chọn (1 -> 28/29/30/31)
   const daysInMonthMeta: DayMeta[] = useMemo(() => {
@@ -311,10 +333,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         dayOfWeek: info.dayOfWeek,
         isWeekend: info.dayOfWeek === 'T7' || info.dayOfWeek === 'CN',
         isSunday: info.isSunday,
+        isToday: isViewingRealCurrentMonth && d === realDateInfo.realDay,
       });
     }
     return list;
-  }, [currentMonth, currentYear]);
+  }, [currentMonth, currentYear, isViewingRealCurrentMonth, realDateInfo.realDay]);
 
   // Chỉ lấy nhân sự có trạng thái Đang làm việc (ACTIVE)
   const activeEmployees = useMemo(() => {
@@ -358,25 +381,46 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       return Array.from(groupsMap.entries()).map(([groupName, items]) => ({
         groupName,
         items: items.map((e) => {
+          const syncedEmp = syncEmployeeForMonth(
+            e,
+            currentMonth,
+            currentYear,
+            config.standardWorkDays || 26
+          );
           const daysMap = ensureMonthlyDaysForWorker(
-            e.monthlyAttendance?.[monthKey],
+            syncedEmp.monthlyAttendance?.[monthKey],
             currentMonth,
             currentYear,
             daysInMonthMeta,
-            e.actualWorkDays || 0,
-            e.overtimeHours || 0,
-            e.paidLeaveDays || 0,
-            e.unpaidLeaveDays || 0
+            syncedEmp.actualWorkDays || 0,
+            syncedEmp.overtimeHours || 0,
+            syncedEmp.paidLeaveDays || 0,
+            syncedEmp.unpaidLeaveDays || 0
           );
           const totals = calculateRowTotalsFromDays(daysMap);
+          const isParticipating =
+            totals.totalCong > 0 ||
+            totals.totalOT > 0 ||
+            totals.totalNP > 0 ||
+            syncedEmp.selectedForAttendance === true;
+          const livePayrollEmp = recomputeEmployeePayroll({
+            ...syncedEmp,
+            actualWorkDays: totals.totalCong,
+            overtimeHours: totals.totalOT,
+            paidLeaveDays: totals.totalNP,
+            unpaidLeaveDays: totals.totalVM,
+            selectedForAttendance: isParticipating,
+          });
           return {
-            id: e.id,
-            code: e.code,
-            fullName: e.fullName,
-            group: e.department,
+            id: syncedEmp.id,
+            code: syncedEmp.code,
+            fullName: syncedEmp.fullName,
+            group: syncedEmp.department,
             daysMap,
             totals,
-            rawEmployee: e,
+            isParticipating,
+            netSalary: livePayrollEmp.netSalary || 0,
+            rawEmployee: livePayrollEmp,
           };
         }),
       }));
@@ -398,25 +442,34 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       return Array.from(groupsMap.entries()).map(([groupName, items]) => ({
         groupName,
         items: items.map((w) => {
+          const syncedW = syncSeasonalWorkerForMonth(w, currentMonth, currentYear);
           const daysMap = ensureMonthlyDaysForWorker(
-            w.monthlyAttendance?.[monthKey],
+            syncedW.monthlyAttendance?.[monthKey],
             currentMonth,
             currentYear,
             daysInMonthMeta,
-            w.actualWorkDays || 0,
-            w.overtimeHours || 0,
+            syncedW.actualWorkDays || 0,
+            syncedW.overtimeHours || 0,
             0,
             0
           );
           const totals = calculateRowTotalsFromDays(daysMap);
+          const isParticipating = totals.totalCong > 0 || totals.totalOT > 0;
+          const livePayrollW = recomputeSeasonalWorkerPayroll({
+            ...syncedW,
+            actualWorkDays: totals.totalCong,
+            overtimeHours: totals.totalOT,
+          });
           return {
-            id: w.id,
-            code: w.code,
-            fullName: w.fullName,
-            group: grpNameOrTrade(w),
+            id: syncedW.id,
+            code: syncedW.code,
+            fullName: syncedW.fullName,
+            group: grpNameOrTrade(syncedW),
             daysMap,
             totals,
-            rawSeasonal: w,
+            isParticipating,
+            netSalary: livePayrollW.netSalary || 0,
+            rawSeasonal: livePayrollW,
           };
         }),
       }));
@@ -430,44 +483,41 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     currentMonth,
     currentYear,
     daysInMonthMeta,
+    config.standardWorkDays,
   ]);
 
   function grpNameOrTrade(w: SeasonalWorker) {
     return w.project || w.trade || 'Thời vụ';
   }
 
-  // Cập nhật dữ liệu 1 dòng nhân sự (Lưu vào monthlyAttendance VÀ cập nhật trực tiếp Công + Giờ TC sang Bản Lương)
+  // Cập nhật dữ liệu 1 dòng nhân sự (Lưu vào monthlyAttendance VÀ cập nhật trực tiếp Công + Giờ TC + Trạng thái Tham gia chấm công sang Bản Lương)
   const applyWorkerDaysMapUpdate = (
     workerCode: string,
-    nextDaysMap: { [dayNumber: number]: DailyAttendanceDetail }
+    nextDaysMap: { [dayNumber: number]: DailyAttendanceDetail },
+    explicitReplacement: boolean = false
   ) => {
-    const totals = calculateRowTotalsFromDays(nextDaysMap);
-    const updatedMonthRecord: MonthlyAttendanceRecord = {
-      monthKey,
-      month: currentMonth,
-      year: currentYear,
-      totalWorkDays: totals.totalCong,
-      totalOtHours: totals.totalOT,
-      days: nextDaysMap,
-      lastSubmittedAt: new Date().toISOString(),
-      submittedBy: 'ADMIN',
-    };
-
     if (attendanceGroup === 'PERMANENT') {
       const updatedList = modifiedEmployees.map((emp) => {
         if (emp.code === workerCode) {
-          const currentBaseMap = ensureMonthlyDaysForWorker(
-            emp.monthlyAttendance?.[monthKey],
+          const syncedEmp = syncEmployeeForMonth(
+            emp,
             currentMonth,
             currentYear,
-            daysInMonthMeta,
-            emp.actualWorkDays || 0,
-            emp.overtimeHours || 0,
-            emp.paidLeaveDays || 0,
-            emp.unpaidLeaveDays || 0
+            config.standardWorkDays || 26
           );
+          const currentBaseMap = explicitReplacement
+            ? {}
+            : ensureMonthlyDaysForWorker(
+                syncedEmp.monthlyAttendance?.[monthKey],
+                currentMonth,
+                currentYear,
+                daysInMonthMeta,
+                syncedEmp.actualWorkDays || 0,
+                syncedEmp.overtimeHours || 0,
+                syncedEmp.paidLeaveDays || 0,
+                syncedEmp.unpaidLeaveDays || 0
+              );
           const finalMap = { ...currentBaseMap, ...nextDaysMap };
-          // Xóa những ngày bị đặt về NONE và 0h OT
           Object.keys(finalMap).forEach((k) => {
             const dNum = Number(k);
             const item = finalMap[dNum];
@@ -476,21 +526,32 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             }
           });
           const recalcTotals = calculateRowTotalsFromDays(finalMap);
+          const hasAttendance =
+            recalcTotals.totalCong > 0 ||
+            recalcTotals.totalOT > 0 ||
+            recalcTotals.totalNP > 0;
+
+          const updatedMonthRecord: MonthlyAttendanceRecord = {
+            monthKey,
+            month: currentMonth,
+            year: currentYear,
+            totalWorkDays: recalcTotals.totalCong,
+            totalOtHours: recalcTotals.totalOT,
+            days: finalMap,
+            lastSubmittedAt: new Date().toISOString(),
+            submittedBy: 'ADMIN',
+          };
 
           const nextEmp: Employee = {
-            ...emp,
+            ...syncedEmp,
             actualWorkDays: recalcTotals.totalCong,
             overtimeHours: recalcTotals.totalOT,
             paidLeaveDays: recalcTotals.totalNP,
             unpaidLeaveDays: recalcTotals.totalVM,
+            selectedForAttendance: hasAttendance,
             monthlyAttendance: {
-              ...(emp.monthlyAttendance || {}),
-              [monthKey]: {
-                ...updatedMonthRecord,
-                totalWorkDays: recalcTotals.totalCong,
-                totalOtHours: recalcTotals.totalOT,
-                days: finalMap,
-              },
+              ...(syncedEmp.monthlyAttendance || {}),
+              [monthKey]: updatedMonthRecord,
             },
           };
           return recomputeEmployeePayroll(nextEmp);
@@ -502,16 +563,19 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     } else {
       const updatedList = modifiedSeasonal.map((w) => {
         if (w.code === workerCode) {
-          const currentBaseMap = ensureMonthlyDaysForWorker(
-            w.monthlyAttendance?.[monthKey],
-            currentMonth,
-            currentYear,
-            daysInMonthMeta,
-            w.actualWorkDays || 0,
-            w.overtimeHours || 0,
-            0,
-            0
-          );
+          const syncedW = syncSeasonalWorkerForMonth(w, currentMonth, currentYear);
+          const currentBaseMap = explicitReplacement
+            ? {}
+            : ensureMonthlyDaysForWorker(
+                syncedW.monthlyAttendance?.[monthKey],
+                currentMonth,
+                currentYear,
+                daysInMonthMeta,
+                syncedW.actualWorkDays || 0,
+                syncedW.overtimeHours || 0,
+                0,
+                0
+              );
           const finalMap = { ...currentBaseMap, ...nextDaysMap };
           Object.keys(finalMap).forEach((k) => {
             const dNum = Number(k);
@@ -522,18 +586,24 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           });
           const recalcTotals = calculateRowTotalsFromDays(finalMap);
 
+          const updatedMonthRecord: MonthlyAttendanceRecord = {
+            monthKey,
+            month: currentMonth,
+            year: currentYear,
+            totalWorkDays: recalcTotals.totalCong,
+            totalOtHours: recalcTotals.totalOT,
+            days: finalMap,
+            lastSubmittedAt: new Date().toISOString(),
+            submittedBy: 'ADMIN',
+          };
+
           const nextWorker: SeasonalWorker = {
-            ...w,
+            ...syncedW,
             actualWorkDays: recalcTotals.totalCong,
             overtimeHours: recalcTotals.totalOT,
             monthlyAttendance: {
-              ...(w.monthlyAttendance || {}),
-              [monthKey]: {
-                ...updatedMonthRecord,
-                totalWorkDays: recalcTotals.totalCong,
-                totalOtHours: recalcTotals.totalOT,
-                days: finalMap,
-              },
+              ...(syncedW.monthlyAttendance || {}),
+              [monthKey]: updatedMonthRecord,
             },
           };
           return recomputeSeasonalWorkerPayroll(nextWorker);
@@ -573,7 +643,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         updatedAt: new Date().toISOString(),
       };
     }
-    applyWorkerDaysMapUpdate(workerCode, baseMap);
+    applyWorkerDaysMapUpdate(workerCode, baseMap, true);
   };
 
   // Thay đổi giờ tăng ca (OT) của 1 ngày
@@ -603,10 +673,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         updatedAt: new Date().toISOString(),
       };
     }
-    applyWorkerDaysMapUpdate(workerCode, baseMap);
+    applyWorkerDaysMapUpdate(workerCode, baseMap, true);
   };
 
-  // Chấm nhanh đủ công cả tháng (T2 -> T7) cho 1 nhân sự
+  // Chấm nhanh đủ công cả tháng (T2 -> T7) cho 1 nhân sự -> Trạng thái "Tham gia chấm công" và tự động nhảy lương
   const handleFillFullMonthForWorker = (workerCode: string) => {
     const nextMap: { [dayNumber: number]: DailyAttendanceDetail } = {};
     const prevMap = getCurrentDaysMapForWorker(workerCode);
@@ -622,12 +692,14 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         };
       }
     });
-    applyWorkerDaysMapUpdate(workerCode, nextMap);
+    applyWorkerDaysMapUpdate(workerCode, nextMap, true);
     setEditingCell(null);
-    setToastMessage(`Đã chấm đủ công tháng ${currentMonth}/${currentYear} cho ${workerCode} và cập nhật Bản Lương!`);
+    setToastMessage(
+      `Đã bật "Tham gia chấm công" & chấm đủ công tháng ${currentMonth}/${currentYear} cho ${workerCode} — Bản Lương đã tự động nhảy lương!`
+    );
   };
 
-  // Xóa trắng toàn bộ ngày trong tháng của 1 nhân sự
+  // Xóa trắng toàn bộ ngày trong tháng của 1 nhân sự -> Trạng thái "Chưa chấm công" (0 đ)
   const handleClearMonthForWorker = (workerCode: string) => {
     if (attendanceGroup === 'PERMANENT') {
       const updatedList = modifiedEmployees.map((emp) => {
@@ -638,6 +710,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             overtimeHours: 0,
             paidLeaveDays: 0,
             unpaidLeaveDays: 0,
+            selectedForAttendance: false,
             monthlyAttendance: {
               ...(emp.monthlyAttendance || {}),
               [monthKey]: {
@@ -681,7 +754,54 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       onBatchUpdateSeasonal?.(updatedList);
     }
     setEditingCell(null);
-    setToastMessage(`Đã xóa trắng công tháng ${currentMonth}/${currentYear} của ${workerCode}!`);
+    setToastMessage(`Đã đặt về "Chưa chấm công" (0 công) tháng ${currentMonth}/${currentYear} của ${workerCode}!`);
+  };
+
+  // Chấm nhanh toàn bộ nhân viên trong tháng hiện tại (T2 -> T7) để tất cả tham gia chấm công & nhảy lương
+  const handleFillAllWorkersInMonth = () => {
+    if (attendanceGroup === 'PERMANENT') {
+      const updatedList = modifiedEmployees.map((emp) => {
+        if ((emp.status || 'ACTIVE') !== 'ACTIVE') return emp;
+        const nextMap: { [dayNumber: number]: DailyAttendanceDetail } = {};
+        daysInMonthMeta.forEach((dm) => {
+          if (!dm.isSunday) {
+            nextMap[dm.day] = {
+              day: dm.day,
+              dateStr: dm.dateStr,
+              workUnits: 1,
+              statusType: 'FULL',
+              otHours: emp.monthlyAttendance?.[monthKey]?.days?.[dm.day]?.otHours || 0,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        });
+        const totals = calculateRowTotalsFromDays(nextMap);
+        return recomputeEmployeePayroll({
+          ...emp,
+          actualWorkDays: totals.totalCong,
+          overtimeHours: totals.totalOT,
+          paidLeaveDays: 0,
+          unpaidLeaveDays: 0,
+          selectedForAttendance: true,
+          monthlyAttendance: {
+            ...(emp.monthlyAttendance || {}),
+            [monthKey]: {
+              monthKey,
+              month: currentMonth,
+              year: currentYear,
+              totalWorkDays: totals.totalCong,
+              totalOtHours: totals.totalOT,
+              days: nextMap,
+            },
+          },
+        });
+      });
+      setModifiedEmployees(updatedList);
+      onBatchUpdate(updatedList);
+      setToastMessage(
+        `Đã chấm đủ công tháng ${currentMonth}/${currentYear} cho toàn bộ ${activeEmployees.length} nhân viên — Bản Lương đã tự động nhảy lương!`
+      );
+    }
   };
 
   // Xuất file Excel Bảng Chấm Công Timeline
@@ -782,6 +902,16 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     return map[editingCell.day] || null;
   }, [editingCell, groupedSections]);
 
+  const participatingCount = useMemo(() => {
+    let count = 0;
+    groupedSections.forEach((sec) => {
+      sec.items.forEach((item) => {
+        if (item.isParticipating) count++;
+      });
+    });
+    return count;
+  }, [groupedSections]);
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
       {/* ===================================================================== */}
@@ -794,24 +924,29 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             <Calendar className="w-5 h-5 stroke-[2.2]" />
           </div>
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl sm:text-2xl font-extrabold text-[#e85d2a] tracking-tight">
                 Timeline
               </h2>
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 {attendanceGroup === 'PERMANENT'
-                  ? `Nhân Viên Chính Thức (${activeEmployees.length})`
-                  : `Nhân Viên Thời Vụ (${activeSeasonal.length})`}
+                  ? `Nhân Viên Chính Thức (${participatingCount}/${activeEmployees.length} tham gia chấm công)`
+                  : `Nhân Viên Thời Vụ (${participatingCount}/${activeSeasonal.length} tham gia chấm công)`}
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-[#0f3d64] border border-sky-200">
+                Hôm nay: {realDateInfo.realDateStr}
               </span>
             </div>
-            <p className="text-[11px] text-slate-500">
-              Nhấn vào từng ô ngày để chấm công / nhập giờ tăng ca (OT) — Tự động cộng tổng <strong className="text-slate-700">Công</strong> và <strong className="text-slate-700">Giờ TC</strong> cập nhật sang <strong className="text-[#e85d2a]">Bản Lương</strong>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Nhấn vào ô ngày để chấm công / nhập giờ tăng ca (OT) — Khi trạng thái là{' '}
+              <strong className="text-emerald-700">🟢 Tham gia chấm công</strong>,{' '}
+              <strong className="text-[#e85d2a]">Bản Lương</strong> tự động nhảy lương ngay lập tức!
             </p>
           </div>
         </div>
 
-        {/* Bên phải: Lọc Phòng Ban + Điều hướng Tháng/Năm + Link Chấm Công + Tải Excel */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        {/* Bên phải: Lọc Phòng Ban + Điều hướng Tháng/Năm + Chọn nhanh Tháng 9 / Tháng 10 + Link Chấm Công + Tải Excel */}
+        <div className="flex flex-wrap items-center gap-2">
           {!forcedGroup && (
             <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
               <button
@@ -849,7 +984,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           <select
             value={selectedDepartment}
             onChange={(e) => setSelectedDepartment(e.target.value)}
-            className="px-3.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 cursor-pointer min-w-[160px]"
+            className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 cursor-pointer min-w-[150px]"
           >
             <option value="ALL">
               {attendanceGroup === 'PERMANENT' ? 'Tất cả phòng ban' : 'Tất cả dự án / tổ đội'}
@@ -860,6 +995,47 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               </option>
             ))}
           </select>
+
+          {/* Nút chọn nhanh Tháng 9 | Tháng 10 | Tháng hiện tại */}
+          <div className="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <button
+              type="button"
+              onClick={() => onChangeMonthYear(9, currentYear)}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                currentMonth === 9
+                  ? 'bg-[#0f3d64] text-white shadow-2xs'
+                  : 'text-slate-600 hover:bg-white hover:text-slate-900'
+              }`}
+              title="Xem Bản Chấm Công & Bản Lương Tháng 09"
+            >
+              Tháng 9
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeMonthYear(10, currentYear)}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                currentMonth === 10
+                  ? 'bg-[#0f3d64] text-white shadow-2xs'
+                  : 'text-slate-600 hover:bg-white hover:text-slate-900'
+              }`}
+              title="Xem Bản Chấm Công & Bản Lương Tháng 10"
+            >
+              Tháng 10
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
+                isViewingRealCurrentMonth
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-emerald-700 hover:bg-emerald-50'
+              }`}
+              title={`Quay về tháng hiện tại (${realDateInfo.realMonthPadded}/${realDateInfo.realYear})`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              <span>Hiện tại (T{realDateInfo.realMonth})</span>
+            </button>
+          </div>
 
           {/* Bộ chuyển đổi < tháng MM năm YYYY > */}
           <div className="inline-flex items-center bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 gap-1">
@@ -914,6 +1090,18 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
+
+          {attendanceGroup === 'PERMANENT' && (
+            <button
+              type="button"
+              onClick={handleFillAllWorkersInMonth}
+              className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-[#0f3d64] border border-sky-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition"
+              title="Chấm đủ công chuẩn cho toàn bộ nhân viên đang làm việc trong tháng này để nhảy lương"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-500" />
+              <span>Chấm đủ tất cả</span>
+            </button>
+          )}
 
           {/* Nút gửi Link Chấm Công Điện Thoại */}
           <button
@@ -987,7 +1175,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           </span>
         </div>
         <div className="text-[11px] font-semibold text-emerald-700">
-          ✓ Tổng Công & Giờ TC tự động cập nhật sang Bản Lương
+          ✓ Trạng thái <strong className="underline">Tham gia chấm công</strong> sẽ tự động nhảy lương trực tiếp sang Bản Lương
         </div>
       </div>
 
@@ -999,22 +1187,33 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           <thead className="sticky top-0 z-30 bg-[#f8fafc] border-b border-slate-200 text-[11px]">
             <tr>
               {/* Cột Nhân sự cố định bên trái */}
-              <th className="py-2.5 px-3 sticky left-0 z-40 bg-[#f8fafc] min-w-[215px] text-center font-bold text-slate-700 border-r border-slate-200/80">
-                Nhân sự
+              <th className="py-2.5 px-3 sticky left-0 z-40 bg-[#f8fafc] min-w-[235px] text-left font-bold text-slate-700 border-r border-slate-200/80">
+                Nhân sự &amp; Trạng thái chấm công
               </th>
 
               {/* Các cột ngày 1 -> 30/31 */}
               {daysInMonthMeta.map((dm) => (
                 <th
                   key={dm.day}
-                  className="py-1.5 px-0.5 text-center min-w-[32px] w-8 font-normal"
+                  className={`py-1.5 px-0.5 text-center min-w-[32px] w-8 font-normal ${
+                    dm.isToday ? 'bg-amber-100/80 ring-1 ring-amber-400' : ''
+                  }`}
+                  title={dm.isToday ? `Hôm nay: ${dm.dateStr}` : dm.dateStr}
                 >
-                  <div className="font-bold text-slate-700 text-[11px] leading-tight">
+                  <div
+                    className={`font-bold text-[11px] leading-tight ${
+                      dm.isToday ? 'text-[#e85d2a] font-black underline' : 'text-slate-700'
+                    }`}
+                  >
                     {dm.day}
                   </div>
                   <div
                     className={`text-[10px] leading-tight mt-0.5 ${
-                      dm.isWeekend ? 'text-red-500 font-semibold' : 'text-slate-400'
+                      dm.isToday
+                        ? 'text-[#e85d2a] font-bold'
+                        : dm.isWeekend
+                        ? 'text-red-500 font-semibold'
+                        : 'text-slate-400'
                     }`}
                   >
                     {dm.dayOfWeek}
@@ -1022,7 +1221,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 </th>
               ))}
 
-              {/* 5 Cột Tổng Hợp Bên Phải: Công | VM | ĐM | NP | Giờ TC */}
+              {/* 6 Cột Tổng Hợp Bên Phải: Công | VM | ĐM | NP | Giờ TC | Thực lĩnh (Bản Lương) */}
               <th className="py-2 px-1 text-center min-w-[44px]">
                 <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#e85d2a] text-white font-bold text-[10px] shadow-2xs">
                   Công
@@ -1048,6 +1247,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                   Giờ TC
                 </span>
               </th>
+              <th className="py-2 px-2 text-right min-w-[105px]">
+                <span className="inline-block w-full py-0.5 px-1.5 rounded bg-[#0f3d64] text-white font-bold text-[10px] shadow-2xs text-center">
+                  Lương (Bản Lương)
+                </span>
+              </th>
             </tr>
           </thead>
 
@@ -1057,7 +1261,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 {/* DÒNG TIÊU ĐỀ PHÒNG BAN / BỘ PHẬN */}
                 <tr className="bg-white">
                   <td
-                    colSpan={daysInMonthMeta.length + 6}
+                    colSpan={daysInMonthMeta.length + 7}
                     className="pt-4 pb-1.5 px-3 font-extrabold text-xs sm:text-sm text-slate-800 uppercase tracking-wide border-b-2 border-[#e86c3a]"
                   >
                     {section.groupName}
@@ -1073,20 +1277,59 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                       key={`${worker.code || worker.id}_${wIdx}`}
                       className="hover:bg-orange-50/30 transition-colors group"
                     >
-                      {/* Cột Nhân Sự (Sticky Left) */}
-                      <td className="py-2 px-2.5 sticky left-0 z-20 bg-white group-hover:bg-orange-50/40 border-r border-slate-100">
+                      {/* Cột Nhân Sự + Trạng thái Tham gia chấm công (Sticky Left) */}
+                      <td className="py-1.5 px-2.5 sticky left-0 z-20 bg-white group-hover:bg-orange-50/40 border-r border-slate-100">
                         <div className="flex items-center justify-between gap-1.5">
                           <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-7 h-7 rounded-full bg-[#e86c3a] text-white font-bold text-[10px] flex items-center justify-center shrink-0 shadow-2xs">
+                            <div
+                              className={`w-7 h-7 rounded-full text-white font-bold text-[10px] flex items-center justify-center shrink-0 shadow-2xs ${
+                                worker.isParticipating ? 'bg-[#e86c3a]' : 'bg-slate-400'
+                              }`}
+                            >
                               {initials}
                             </div>
-                            <div className="truncate">
-                              <span className="font-bold text-slate-800 text-[12px]">
-                                {worker.fullName}
-                              </span>{' '}
-                              <span className="text-slate-500 font-medium text-[11px]">
-                                ({worker.code})
-                              </span>
+                            <div className="min-w-0">
+                              <div className="truncate leading-tight">
+                                <span className="font-bold text-slate-800 text-[12px]">
+                                  {worker.fullName}
+                                </span>{' '}
+                                <span className="text-slate-500 font-medium text-[10px]">
+                                  ({worker.code})
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (worker.isParticipating && worker.totals.totalCong > 0) {
+                                      handleClearMonthForWorker(worker.code);
+                                    } else {
+                                      handleFillFullMonthForWorker(worker.code);
+                                    }
+                                  }}
+                                  className={`px-1.5 py-0.2 rounded text-[9px] font-bold transition cursor-pointer inline-flex items-center gap-1 ${
+                                    worker.isParticipating
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                      : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
+                                  }`}
+                                  title={
+                                    worker.isParticipating
+                                      ? 'Nhân viên đang tham gia chấm công (Đã tự động nhảy lương bên Bản Lương). Bấm để xóa trắng công.'
+                                      : 'Nhân viên chưa chấm công. Bấm vào đây để bật Tham gia chấm công (đủ công chuẩn) và nhảy lương ngay!'
+                                  }
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      worker.isParticipating ? 'bg-emerald-500' : 'bg-slate-400'
+                                    }`}
+                                  />
+                                  <span>
+                                    {worker.isParticipating
+                                      ? 'Tham gia chấm công'
+                                      : 'Chưa chấm công (Bấm để chấm)'}
+                                  </span>
+                                </button>
+                              </div>
                             </div>
                           </div>
 
@@ -1130,7 +1373,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                         return (
                           <td
                             key={dm.day}
-                            className="p-0.5 text-center align-middle relative"
+                            className={`p-0.5 text-center align-middle relative ${
+                              dm.isToday ? 'bg-amber-50/50' : ''
+                            }`}
                           >
                             <button
                               type="button"
@@ -1210,7 +1455,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                         );
                       })}
 
-                      {/* 5 Cột Tổng Hợp Cuối Dòng: Công | VM | ĐM | NP | Giờ TC */}
+                      {/* 6 Cột Tổng Hợp Cuối Dòng: Công | VM | ĐM | NP | Giờ TC | Thực lĩnh (Bản Lương) */}
                       <td className="py-1.5 px-1 text-center">
                         <span className="inline-block w-full py-1 px-1 rounded-md bg-emerald-50 text-emerald-600 font-extrabold text-[11px]">
                           {worker.totals.totalCong}
@@ -1234,6 +1479,18 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                       <td className="py-1.5 px-1.5 text-center">
                         <span className="inline-block w-full py-1 px-1 rounded-md bg-orange-50 text-orange-600 font-extrabold text-[11px]">
                           {worker.totals.totalOT}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2 text-right">
+                        <span
+                          className={`inline-block w-full py-1 px-1.5 rounded-md font-extrabold text-[11px] font-mono ${
+                            worker.netSalary > 0
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-slate-50 text-slate-400'
+                          }`}
+                          title="Lương thực lĩnh tự động đồng bộ sang Bản Lương"
+                        >
+                          {worker.netSalary > 0 ? `${formatNumberOnly(worker.netSalary)} đ` : '0 đ'}
                         </span>
                       </td>
                     </tr>

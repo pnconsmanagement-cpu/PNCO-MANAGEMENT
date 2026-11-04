@@ -41,10 +41,20 @@ import {
   getLastSyncedTime,
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
-import { initialSeasonalWorkers, recomputeSeasonalWorkerPayroll as recomputeSeasonal } from './data/mockSeasonalWorkers';
+import {
+  initialSeasonalWorkers,
+  recomputeSeasonalWorkerPayroll as recomputeSeasonal,
+  syncSeasonalWorkerForMonth,
+} from './data/mockSeasonalWorkers';
 import { initialProjects, initialTeamWorkers, initialSalaryAdvances } from './data/mockProjectsAndTeams';
 import { CompanyConfig, Employee, SeasonalWorker, Project, TeamWorker, SalaryAdvance } from './types';
-import { recomputeEmployeePayroll } from './utils/payrollCalculator';
+import {
+  recomputeEmployeePayroll,
+  getRealCurrentDateInfo,
+  ensureEmployeeHistoricalMonths,
+  syncEmployeeForMonth,
+  buildMonthlyAttendanceRecord,
+} from './utils/payrollCalculator';
 import { ensureEmployeeContract } from './utils/contractHelper';
 import {
   fetchServerData,
@@ -57,6 +67,98 @@ import {
 
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
+
+// Hàm gộp cấu hình từ Cloud/Server nhưng LUÔN GIỮ NGUYÊN tháng/năm đang xem của người dùng
+function mergeRemoteConfigPreservingPeriod(
+  currentCfg: CompanyConfig,
+  remoteCfg?: CompanyConfig | null
+): CompanyConfig {
+  if (!remoteCfg) return currentCfg;
+  return {
+    ...remoteCfg,
+    month: currentCfg.month,
+    year: currentCfg.year,
+    period: currentCfg.period,
+    periodCode: currentCfg.periodCode,
+    paymentDate: currentCfg.paymentDate,
+    standardWorkDays: remoteCfg.standardWorkDays || currentCfg.standardWorkDays || 26,
+  };
+}
+
+// Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng)
+function mergeEmployeeListsPreservingAttendance(
+  localList: Employee[],
+  remoteList: Employee[],
+  activeMonth: number,
+  activeYear: number,
+  stdDays: number = 26
+): Employee[] {
+  const map = new Map<string, Employee>();
+  localList.forEach((emp) => map.set(emp.code || emp.id, emp));
+
+  remoteList.forEach((rEmp) => {
+    const key = rEmp.code || rEmp.id;
+    const existing = map.get(key);
+    if (existing) {
+      const mergedMonthly = { ...(existing.monthlyAttendance || {}) };
+      Object.entries(rEmp.monthlyAttendance || {}).forEach(([mKey, rRec]) => {
+        const exRec = mergedMonthly[mKey];
+        if (!exRec) {
+          mergedMonthly[mKey] = rRec;
+        } else {
+          const mergedDays = {
+            ...(exRec.days || {}),
+            ...(rRec.days || {}),
+          };
+          let totDays = 0;
+          let totOt = 0;
+          Object.values(mergedDays).forEach((d: any) => {
+            if (!d) return;
+            totDays += Number(d.workUnits || 0);
+            totOt += Number(d.otHours || 0);
+          });
+          const hasDaysObj = Object.keys(mergedDays).length > 0;
+          mergedMonthly[mKey] = {
+            ...exRec,
+            ...rRec,
+            days: mergedDays,
+            totalWorkDays: hasDaysObj
+              ? Math.round(totDays * 10) / 10
+              : Math.max(exRec.totalWorkDays || 0, rRec.totalWorkDays || 0),
+            totalOtHours: hasDaysObj
+              ? Math.round(totOt * 10) / 10
+              : Math.max(exRec.totalOtHours || 0, rRec.totalOtHours || 0),
+          };
+        }
+      });
+
+      map.set(key, {
+        ...existing,
+        ...rEmp,
+        monthlyAttendance: mergedMonthly,
+        periodRecords: {
+          ...(existing.periodRecords || {}),
+          ...(rEmp.periodRecords || {}),
+        },
+      });
+    } else {
+      map.set(key, rEmp);
+    }
+  });
+
+  return Array.from(map.values())
+    .map((emp) => {
+      const withContract = ensureEmployeeContract(emp);
+      const withHistory = ensureEmployeeHistoricalMonths(withContract);
+      return syncEmployeeForMonth(withHistory, activeMonth, activeYear, stdDays);
+    })
+    .sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+}
 
 // Hàm nhận diện chế độ xem Chấm Công Di Động (chỉ khi có tham số URL chỉ định rõ ràng hoặc mở từ link riêng)
 function checkShouldShowAttendanceView(): { shouldShow: boolean; workerCode?: string } {
@@ -113,15 +215,29 @@ function checkShouldShowAttendanceView(): { shouldShow: boolean; workerCode?: st
   return { shouldShow: false, workerCode };
 }
 
-// DỮ LIỆU ĐƯỢC BẢO LƯU 100% - KHÔNG TỰ ĐỘNG XÓA HOẶC RESET KHI SỬA CODE
+// DỮ LIỆU ĐƯỢC BẢO LƯU 100% - LUÔN HIỂN THỊ THÁNG & NGÀY THỰC TẾ HIỆN TẠI KHI MỞ APP
 export default function App() {
+  const realDateInfo = useMemo(() => getRealCurrentDateInfo(), []);
+
   const [config, setConfig] = useState<CompanyConfig>(() => {
+    const realInfo = getRealCurrentDateInfo();
+    const curM = realInfo.realMonth;
+    const curY = realInfo.realYear;
+    const curMPadded = realInfo.realMonthPadded;
+    const nextM = curM === 12 ? '01' : curM + 1 < 10 ? `0${curM + 1}` : `${curM + 1}`;
+    const nextY = curM === 12 ? curY + 1 : curY;
+
     const saved = localStorage.getItem('payroll_company_config');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         return {
           ...parsed,
+          month: curM,
+          year: curY,
+          period: `Kỳ lương tháng ${curMPadded} năm ${curY}`,
+          periodCode: `${curMPadded}/${curY}`,
+          paymentDate: `05/${nextM}/${nextY}`,
           standardWorkDays: parsed.standardWorkDays || 26,
         };
       } catch {
@@ -132,29 +248,70 @@ export default function App() {
   });
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
+    const realInfo = getRealCurrentDateInfo();
     const saved = localStorage.getItem('payroll_employees');
     if (saved) {
       try {
         const parsed: Employee[] = JSON.parse(saved);
-        // BẢO LƯU 100% DỮ LIỆU NGƯỜI DÙNG:
-        // Luôn giữ nguyên dữ liệu nhân viên đã được chỉnh sửa hoặc thêm mới
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // Gộp thêm dữ liệu các tháng đã lưu trong các slot payroll_month_YYYY_MM (nếu có) để không bao giờ mất lịch sử
+          const legacyMonthSlots: Array<{ m: number; y: number; key: string; monthKey: string }> = [
+            { m: 9, y: 2026, key: 'payroll_month_2026_09', monthKey: '2026-09' },
+            { m: 10, y: 2026, key: 'payroll_month_2026_10', monthKey: '2026-10' },
+            { m: 11, y: 2026, key: 'payroll_month_2026_11', monthKey: '2026-11' },
+            { m: 12, y: 2026, key: 'payroll_month_2026_12', monthKey: '2026-12' },
+          ];
+          const legacyByMonth: Record<string, Employee[]> = {};
+          legacyMonthSlots.forEach((slot) => {
+            try {
+              const rawSlot = localStorage.getItem(slot.key);
+              if (rawSlot) {
+                const arr = JSON.parse(rawSlot);
+                if (Array.isArray(arr)) legacyByMonth[slot.monthKey] = arr;
+              }
+            } catch {}
+          });
+
           const list = parsed.map((emp) => {
             const withContract = ensureEmployeeContract(emp);
-            if (withContract.code === 'PNC0008' && (withContract.baseSalary === 16000000 || withContract.actualWorkDays === 2 || withContract.actualWorkDays === 0)) {
-              withContract.baseSalary = 11500000;
-              withContract.actualWorkDays = 27;
-              withContract.overtimeHours = 38;
-            }
             if (withContract.projectAllowance === undefined) {
               const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
-              withContract.projectAllowance = defaultEmp ? (defaultEmp.projectAllowance || 0) : 0;
+              withContract.projectAllowance = defaultEmp ? defaultEmp.projectAllowance || 0 : 0;
             }
             if (!withContract.insuranceSalary) {
               const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
               withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 7000000;
             }
-            return recomputeEmployeePayroll(withContract);
+
+            const mergedMonthly = { ...(withContract.monthlyAttendance || {}) };
+            legacyMonthSlots.forEach((slot) => {
+              const slotList = legacyByMonth[slot.monthKey];
+              if (!slotList) return;
+              const foundInSlot = slotList.find((x) => x.code === withContract.code || x.id === withContract.id);
+              if (!foundInSlot) return;
+              const slotRec = foundInSlot.monthlyAttendance?.[slot.monthKey];
+              if (slotRec && Object.keys(slotRec.days || {}).length > 0 && !mergedMonthly[slot.monthKey]) {
+                mergedMonthly[slot.monthKey] = slotRec;
+              } else if (
+                !mergedMonthly[slot.monthKey] &&
+                ((foundInSlot.actualWorkDays || 0) > 0 || (foundInSlot.overtimeHours || 0) > 0)
+              ) {
+                mergedMonthly[slot.monthKey] = buildMonthlyAttendanceRecord(
+                  slot.m,
+                  slot.y,
+                  foundInSlot.actualWorkDays || 0,
+                  foundInSlot.overtimeHours || 0,
+                  foundInSlot.paidLeaveDays || 0,
+                  foundInSlot.unpaidLeaveDays || 0
+                );
+              }
+            });
+
+            const withHistory = ensureEmployeeHistoricalMonths({
+              ...withContract,
+              monthlyAttendance: mergedMonthly,
+            });
+            return syncEmployeeForMonth(withHistory, realInfo.realMonth, realInfo.realYear, 26);
           });
           return list.sort((a, b) => {
             if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
@@ -168,12 +325,17 @@ export default function App() {
       }
     }
 
-    // Chỉ sử dụng mẫu ban đầu khi máy chưa từng lưu bất kỳ dữ liệu nào
-    return initialEmployees.map((emp) => recomputeEmployeePayroll(emp));
+    return initialEmployees.map((emp) =>
+      syncEmployeeForMonth(ensureEmployeeHistoricalMonths(emp), realInfo.realMonth, realInfo.realYear, 26)
+    );
   });
 
   // Hàm làm sạch danh sách nhân viên thời vụ (loại bỏ trùng lặp key/id hoặc bản ghi NV chính thức bị lẫn)
-  const cleanSeasonalList = (rawList: SeasonalWorker[]): SeasonalWorker[] => {
+  const cleanSeasonalList = (
+    rawList: SeasonalWorker[],
+    targetMonth: number = config.month || realDateInfo.realMonth,
+    targetYear: number = config.year || realDateInfo.realYear
+  ): SeasonalWorker[] => {
     const seenCodes = new Set<string>();
     const seenIds = new Set<string>();
     const result: SeasonalWorker[] = [];
@@ -191,7 +353,7 @@ export default function App() {
       }
       seenIds.add(uniqueId);
 
-      result.push(recomputeSeasonal({ ...w, id: uniqueId }));
+      result.push(syncSeasonalWorkerForMonth({ ...w, id: uniqueId }, targetMonth, targetYear));
     });
     return result.sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
@@ -203,19 +365,22 @@ export default function App() {
 
   // DANH SÁCH CÔNG NHÂN KỸ THUẬT & NHÂN LỰC THỜI VỤ
   const [seasonalWorkers, setSeasonalWorkers] = useState<SeasonalWorker[]>(() => {
+    const realInfo = getRealCurrentDateInfo();
     const saved = localStorage.getItem('payroll_seasonal_workers');
     if (saved !== null) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const cleaned = cleanSeasonalList(parsed);
+          const cleaned = cleanSeasonalList(parsed, realInfo.realMonth, realInfo.realYear);
           if (cleaned.length > 0) return cleaned;
         }
       } catch (e) {
         console.error('Error parsing saved seasonal workers', e);
       }
     }
-    return initialSeasonalWorkers;
+    return initialSeasonalWorkers.map((w) =>
+      syncSeasonalWorkerForMonth(w, realInfo.realMonth, realInfo.realYear)
+    );
   });
 
   // DANH SÁCH DỰ ÁN CÔNG TRÌNH
@@ -361,10 +526,14 @@ export default function App() {
   const lastServerSnapshotRef = useRef<string>('');
   const isSyncingRef = useRef(false);
   const periodCodeRef = useRef(config.periodCode);
+  const activeMonthRef = useRef(config.month || realDateInfo.realMonth);
+  const activeYearRef = useRef(config.year || realDateInfo.realYear);
 
   useEffect(() => {
     periodCodeRef.current = config.periodCode;
-  }, [config.periodCode]);
+    activeMonthRef.current = config.month || realDateInfo.realMonth;
+    activeYearRef.current = config.year || realDateInfo.realYear;
+  }, [config.periodCode, config.month, config.year, realDateInfo.realMonth, realDateInfo.realYear]);
 
   // Khởi tạo snapshot ban đầu
   useEffect(() => {
@@ -396,6 +565,8 @@ export default function App() {
     if (!isSupabaseConfigured()) return;
     try {
       const curPeriod = periodCodeRef.current;
+      const curM = activeMonthRef.current;
+      const curY = activeYearRef.current;
       const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
         loadCompanyConfigFromSupabase(),
         loadEmployeesFromSupabase(curPeriod),
@@ -451,11 +622,20 @@ export default function App() {
             map.set(key, cw);
           }
         });
-        nextSea = Array.from(map.values()).map((w) => recomputeSeasonal(w));
+        nextSea = Array.from(map.values()).map((w) => syncSeasonalWorkerForMonth(w, curM, curY));
       }
 
-      const nextCfg = cloudCfg || config;
-      const nextEmp = (cloudEmp && cloudEmp.length > 0) ? cloudEmp : employees;
+      const nextCfg = mergeRemoteConfigPreservingPeriod(config, cloudCfg);
+      const nextEmp =
+        cloudEmp && cloudEmp.length > 0
+          ? mergeEmployeeListsPreservingAttendance(
+              employees,
+              cloudEmp,
+              curM,
+              curY,
+              nextCfg.standardWorkDays || 26
+            )
+          : employees;
 
       // So sánh với snapshot hiện tại: nếu giống hệt, DỪNG NGAY KHÔNG GÂY LẶP VÀ KHÔNG GÂY TREO APP
       const newSnapshot = serializeDataSnapshot(nextCfg, nextEmp, nextSea);
@@ -469,12 +649,12 @@ export default function App() {
       lastServerSnapshotRef.current = newSnapshot;
 
       if (cloudCfg) {
-        setConfig(cloudCfg);
-        localStorage.setItem('payroll_company_config', JSON.stringify(cloudCfg));
+        setConfig(nextCfg);
+        localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
       }
       if (cloudEmp && cloudEmp.length > 0) {
-        setEmployees(cloudEmp);
-        localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
+        setEmployees(nextEmp);
+        localStorage.setItem('payroll_employees', JSON.stringify(nextEmp));
       }
       if (cloudSea && cloudSea.length > 0) {
         setSeasonalWorkers(nextSea);
@@ -502,7 +682,6 @@ export default function App() {
   }, [seasonalWorkers]);
 
   // ĐỒNG BỘ 2 CHIỀU VỚI MÁY CHỦ BACKEND (SERVER REALTIME SYNC)
-  // Giúp link chấm công trên điện thoại và webapp trên máy tính luôn đồng bộ 100% dữ liệu ngay tức thì
   useEffect(() => {
     let isMounted = true;
 
@@ -513,21 +692,31 @@ export default function App() {
         if (!isMounted) return;
 
         if (serverData && serverData.lastUpdated > 0) {
-          const nextCfg = serverData.config || config;
-          const nextEmps = serverData.employees && serverData.employees.length > 0
-            ? serverData.employees.map((e) => recomputeEmployeePayroll(e))
-            : employees;
-          const nextSeas = serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-            ? cleanSeasonalList(serverData.seasonalWorkers)
-            : seasonalWorkers;
+          const curM = activeMonthRef.current;
+          const curY = activeYearRef.current;
+          const nextCfg = mergeRemoteConfigPreservingPeriod(config, serverData.config);
+          const nextEmps =
+            serverData.employees && serverData.employees.length > 0
+              ? mergeEmployeeListsPreservingAttendance(
+                  employees,
+                  serverData.employees,
+                  curM,
+                  curY,
+                  nextCfg.standardWorkDays || 26
+                )
+              : employees;
+          const nextSeas =
+            serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
+              ? cleanSeasonalList(serverData.seasonalWorkers, curM, curY)
+              : seasonalWorkers;
 
           const initSnap = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
           lastServerSnapshotRef.current = initSnap;
           lastSavedSnapshotRef.current = initSnap;
 
           if (serverData.config) {
-            setConfig(serverData.config);
-            localStorage.setItem('payroll_company_config', JSON.stringify(serverData.config));
+            setConfig(nextCfg);
+            localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
           }
           if (serverData.employees && serverData.employees.length > 0) {
             setEmployees(nextEmps);
@@ -549,13 +738,23 @@ export default function App() {
     const unsubscribe = subscribeToSync((serverData) => {
       if (!isMounted) return;
 
-      const nextCfg = serverData.config || config;
-      const nextEmps = serverData.employees && serverData.employees.length > 0
-        ? serverData.employees.map((e) => recomputeEmployeePayroll(e))
-        : employees;
-      const nextSeas = serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-        ? cleanSeasonalList(serverData.seasonalWorkers)
-        : seasonalWorkers;
+      const curM = activeMonthRef.current;
+      const curY = activeYearRef.current;
+      const nextCfg = mergeRemoteConfigPreservingPeriod(config, serverData.config);
+      const nextEmps =
+        serverData.employees && serverData.employees.length > 0
+          ? mergeEmployeeListsPreservingAttendance(
+              employees,
+              serverData.employees,
+              curM,
+              curY,
+              nextCfg.standardWorkDays || 26
+            )
+          : employees;
+      const nextSeas =
+        serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
+          ? cleanSeasonalList(serverData.seasonalWorkers, curM, curY)
+          : seasonalWorkers;
 
       const snapshot = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
       if (snapshot && snapshot === lastServerSnapshotRef.current) {
@@ -566,8 +765,8 @@ export default function App() {
       lastSavedSnapshotRef.current = snapshot;
 
       if (serverData.config) {
-        setConfig(serverData.config);
-        localStorage.setItem('payroll_company_config', JSON.stringify(serverData.config));
+        setConfig(nextCfg);
+        localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
       }
       if (serverData.employees && serverData.employees.length > 0) {
         setEmployees(nextEmps);
@@ -593,6 +792,8 @@ export default function App() {
 
     (async () => {
       try {
+        const curM = activeMonthRef.current;
+        const curY = activeYearRef.current;
         const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
           loadCompanyConfigFromSupabase(),
           loadEmployeesFromSupabase(config.periodCode),
@@ -601,23 +802,35 @@ export default function App() {
 
         let hasAnyDataOnCloud = false;
 
-        const nextCfg = cloudCfg || config;
-        const nextEmps = (cloudEmp && cloudEmp.length > 0) ? cloudEmp : employees;
-        const nextSeas = (cloudSea && cloudSea.length > 0) ? cloudSea : seasonalWorkers;
+        const nextCfg = mergeRemoteConfigPreservingPeriod(config, cloudCfg);
+        const nextEmps =
+          cloudEmp && cloudEmp.length > 0
+            ? mergeEmployeeListsPreservingAttendance(
+                employees,
+                cloudEmp,
+                curM,
+                curY,
+                nextCfg.standardWorkDays || 26
+              )
+            : employees;
+        const nextSeas =
+          cloudSea && cloudSea.length > 0
+            ? cleanSeasonalList(cloudSea, curM, curY)
+            : seasonalWorkers;
 
         if (cloudCfg) {
-          setConfig(cloudCfg);
-          localStorage.setItem('payroll_company_config', JSON.stringify(cloudCfg));
+          setConfig(nextCfg);
+          localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
           hasAnyDataOnCloud = true;
         }
         if (cloudEmp && cloudEmp.length > 0) {
-          setEmployees(cloudEmp);
-          localStorage.setItem('payroll_employees', JSON.stringify(cloudEmp));
+          setEmployees(nextEmps);
+          localStorage.setItem('payroll_employees', JSON.stringify(nextEmps));
           hasAnyDataOnCloud = true;
         }
         if (cloudSea && cloudSea.length > 0) {
-          setSeasonalWorkers(cloudSea);
-          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(cloudSea));
+          setSeasonalWorkers(nextSeas);
+          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeas));
           hasAnyDataOnCloud = true;
         }
 
@@ -626,7 +839,7 @@ export default function App() {
         lastServerSnapshotRef.current = snapshot;
 
         if (!hasAnyDataOnCloud) {
-          const report = await syncAllDataToSupabase(config, employees, seasonalWorkers);
+          const report = await syncAllDataToSupabase(nextCfg, nextEmps, nextSeas);
           if (report.success) {
             setCloudSyncStatus('synced');
             setLastSyncedText(getLastSyncedTime());
@@ -899,11 +1112,27 @@ export default function App() {
   const handleManualForceSync = async () => {
     setCloudSyncStatus('syncing');
     try {
+      const curM = config.month || realDateInfo.realMonth;
+      const curY = config.year || realDateInfo.realYear;
       const serverData = await fetchServerData();
       if (serverData && serverData.lastUpdated > 0) {
-        if (serverData.config) setConfig(serverData.config);
-        if (serverData.employees) setEmployees(serverData.employees.map((e) => recomputeEmployeePayroll(e)));
-        if (serverData.seasonalWorkers) setSeasonalWorkers(serverData.seasonalWorkers.map((w) => recomputeSeasonal(w)));
+        if (serverData.config) {
+          setConfig((prev) => mergeRemoteConfigPreservingPeriod(prev, serverData.config));
+        }
+        if (serverData.employees && serverData.employees.length > 0) {
+          setEmployees((prev) =>
+            mergeEmployeeListsPreservingAttendance(
+              prev,
+              serverData.employees,
+              curM,
+              curY,
+              config.standardWorkDays || 26
+            )
+          );
+        }
+        if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
+          setSeasonalWorkers(cleanSeasonalList(serverData.seasonalWorkers, curM, curY));
+        }
         setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
       }
       if (isSupabaseConfigured()) {
@@ -915,16 +1144,20 @@ export default function App() {
     }
   };
 
-  // Change Month and Year for entire payroll & timekeeping
+  // Chuyển đổi Tháng/Năm đồng bộ toàn diện cho Bản Chấm Công và Bản Lương (Tháng hiện tại, Tháng 9, Tháng 10...)
   const handleChangeMonthYear = (newMonth: number, newYear: number) => {
-    // 1. Save current month's employees to its month slot
-    const currentKey = `payroll_month_${config.year || 2026}_${(config.month || 9) < 10 ? '0' + (config.month || 9) : config.month || 9}`;
-    localStorage.setItem(currentKey, JSON.stringify(employees));
+    const curM = config.month || realDateInfo.realMonth;
+    const curY = config.year || realDateInfo.realYear;
+    const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+    const currentKey = `payroll_month_${curY}_${curMStr}`;
+    try {
+      localStorage.setItem(currentKey, JSON.stringify(employees));
+    } catch {}
 
-    // 2. Prepare new period config
     const mStr = newMonth < 10 ? `0${newMonth}` : `${newMonth}`;
-    const nextM = newMonth === 12 ? '01' : (newMonth + 1 < 10 ? `0${newMonth + 1}` : `${newMonth + 1}`);
+    const nextM = newMonth === 12 ? '01' : newMonth + 1 < 10 ? `0${newMonth + 1}` : `${newMonth + 1}`;
     const nextY = newMonth === 12 ? newYear + 1 : newYear;
+    const targetMonthKey = `${newYear}-${mStr}`;
 
     const newConfig: CompanyConfig = {
       ...config,
@@ -936,63 +1169,85 @@ export default function App() {
     };
     setConfig(newConfig);
 
-    // 3. Check if target month data exists
-    const targetKey = `payroll_month_${newYear}_${mStr}`;
-    const savedTarget = localStorage.getItem(targetKey);
-
-    if (savedTarget) {
-      try {
-        const parsedTarget: Employee[] = JSON.parse(savedTarget);
+    // Kiểm tra nếu có dữ liệu cũ từng lưu trong slot payroll_month_YYYY_MM thì gộp vào monthlyAttendance[targetMonthKey]
+    const targetStorageKey = `payroll_month_${newYear}_${mStr}`;
+    let legacySlotEmployees: Employee[] | null = null;
+    try {
+      const savedTarget = localStorage.getItem(targetStorageKey);
+      if (savedTarget) {
+        const parsedTarget = JSON.parse(savedTarget);
         if (Array.isArray(parsedTarget) && parsedTarget.length > 0) {
-          // Nạp nguyên vẹn toàn bộ nhân sự đã lưu của tháng này
-          setEmployees(parsedTarget.map((emp) => recomputeEmployeePayroll(emp)));
-          return;
+          legacySlotEmployees = parsedTarget;
         }
-      } catch (e) {
-        console.error('Error loading saved month data', e);
       }
-    }
+    } catch {}
 
-    // Nếu chuyển sang tháng mới chưa có dữ liệu:
-    // GIỮ NGUYÊN 100% hồ sơ nhân viên hiện tại (Họ tên, SĐT, Email, Ngân hàng, Lương, Phụ cấp...),
-    // Chỉ khởi tạo lại số ngày công thực tế và giờ làm thêm của tháng mới
-    const freshForNewMonth = employees.map((emp) =>
-      recomputeEmployeePayroll({
-        ...emp,
-        standardWorkDays: config.standardWorkDays || 26,
-        actualWorkDays: 0,
-        paidLeaveDays: 0,
-        unpaidLeaveDays: 0,
-        overtimeHours: 0,
-        advancePayment: 0,
-        selectedForAttendance: true,
-        status: 'ACTIVE',
+    const stdDays = config.standardWorkDays || 26;
+    setEmployees((prev) =>
+      prev.map((emp) => {
+        const mergedMonthly = { ...(emp.monthlyAttendance || {}) };
+        if (legacySlotEmployees && !mergedMonthly[targetMonthKey]) {
+          const matchedOld = legacySlotEmployees.find((x) => x.code === emp.code || x.id === emp.id);
+          if (matchedOld) {
+            const oldRec = matchedOld.monthlyAttendance?.[targetMonthKey];
+            if (oldRec && Object.keys(oldRec.days || {}).length > 0) {
+              mergedMonthly[targetMonthKey] = oldRec;
+            } else if ((matchedOld.actualWorkDays || 0) > 0 || (matchedOld.overtimeHours || 0) > 0) {
+              mergedMonthly[targetMonthKey] = buildMonthlyAttendanceRecord(
+                newMonth,
+                newYear,
+                matchedOld.actualWorkDays || 0,
+                matchedOld.overtimeHours || 0,
+                matchedOld.paidLeaveDays || 0,
+                matchedOld.unpaidLeaveDays || 0
+              );
+            }
+          }
+        }
+        const withHistory = ensureEmployeeHistoricalMonths({
+          ...emp,
+          monthlyAttendance: mergedMonthly,
+        });
+        return syncEmployeeForMonth(withHistory, newMonth, newYear, stdDays);
       })
     );
-    setEmployees(freshForNewMonth);
+
+    setSeasonalWorkers((prev) =>
+      prev.map((w) => syncSeasonalWorkerForMonth(w, newMonth, newYear))
+    );
   };
 
   const handleBatchUpdate = (updatedList: Employee[]) => {
-    setEmployees(updatedList);
-    // Lưu ngay vào kỳ tháng hiện tại để khi chuyển tháng hoặc tải lại không bị mất công đã nhập
-    const mStr = (config.month || 9) < 10 ? `0${config.month || 9}` : `${config.month || 9}`;
-    const currentMonthKey = `payroll_month_${config.year || 2026}_${mStr}`;
+    const curM = config.month || realDateInfo.realMonth;
+    const curY = config.year || realDateInfo.realYear;
+    const stdDays = config.standardWorkDays || 26;
+    const normalizedList = updatedList.map((emp) => syncEmployeeForMonth(emp, curM, curY, stdDays));
+    setEmployees(normalizedList);
+    const mStr = curM < 10 ? `0${curM}` : `${curM}`;
+    const currentMonthKey = `payroll_month_${curY}_${mStr}`;
     try {
-      localStorage.setItem(currentMonthKey, JSON.stringify(updatedList));
-      localStorage.setItem('payroll_employees', JSON.stringify(updatedList));
+      localStorage.setItem(currentMonthKey, JSON.stringify(normalizedList));
+      localStorage.setItem('payroll_employees', JSON.stringify(normalizedList));
     } catch (e) {
       console.warn('LocalStorage save error:', e);
     }
-    saveAllToServer(config, updatedList, seasonalWorkers);
+    saveAllToServer(config, normalizedList, seasonalWorkers);
     if (isSupabaseConfigured()) {
-      syncEmployeesToSupabase(updatedList, config.periodCode).then(() => notifyCrossTab());
+      syncEmployeesToSupabase(normalizedList, config.periodCode).then(() => notifyCrossTab());
     }
   };
 
   const handleResetDefault = () => {
     localStorage.removeItem('payroll_employees');
     localStorage.removeItem('payroll_company_config');
-    const clean = initialEmployees.map((emp) => recomputeEmployeePayroll(emp));
+    const clean = initialEmployees.map((emp) =>
+      syncEmployeeForMonth(
+        ensureEmployeeHistoricalMonths(emp),
+        realDateInfo.realMonth,
+        realDateInfo.realYear,
+        26
+      )
+    );
     setEmployees(clean);
     setConfig(initialCompanyConfig);
     localStorage.setItem('payroll_employees', JSON.stringify(clean));
@@ -1080,13 +1335,34 @@ export default function App() {
   };
 
   const handleBatchUpdateSeasonalWorkers = (list: SeasonalWorker[]) => {
-    setSeasonalWorkers(list);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(list));
+    const curM = config.month || realDateInfo.realMonth;
+    const curY = config.year || realDateInfo.realYear;
+    const syncedList = list.map((w) => syncSeasonalWorkerForMonth(w, curM, curY));
+    setSeasonalWorkers(syncedList);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(syncedList));
   };
 
+  // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)
+  // Giúp Bản Chấm Công, Bản Lương và Thẻ Chỉ Số (MetricCards) luôn khớp tuyệt đối
+  const syncedEmployees = useMemo(() => {
+    const m = config.month || realDateInfo.realMonth;
+    const y = config.year || realDateInfo.realYear;
+    const std = config.standardWorkDays || 26;
+    return employees.map((e) => syncEmployeeForMonth(e, m, y, std));
+  }, [employees, config.month, config.year, config.standardWorkDays, realDateInfo.realMonth, realDateInfo.realYear]);
+
+  const syncedSeasonalWorkers = useMemo(() => {
+    const m = config.month || realDateInfo.realMonth;
+    const y = config.year || realDateInfo.realYear;
+    return seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, m, y));
+  }, [seasonalWorkers, config.month, config.year, realDateInfo.realMonth, realDateInfo.realYear]);
+
   // Count issues
-  const auditCount = employees.filter(
-    (e) => !e.bankAccount || e.netSalary <= 0 || e.actualWorkDays > e.standardWorkDays
+  const auditCount = syncedEmployees.filter(
+    (e) =>
+      !e.bankAccount ||
+      (e.selectedForAttendance !== false && e.netSalary <= 0) ||
+      e.actualWorkDays > e.standardWorkDays
   ).length;
 
   // Khi người dùng hoặc thợ mở link Web App Chấm Công Di Động riêng trên điện thoại
@@ -1096,7 +1372,7 @@ export default function App() {
       sessionStorage.getItem('pncons_is_admin_preview') === 'true';
 
     // Chuyển đổi NV Chính Thức đang làm việc sang định dạng chung để dùng chung Web App Chấm Công Di Động
-    const permanentAsWorkers: SeasonalWorker[] = employees
+    const permanentAsWorkers: SeasonalWorker[] = syncedEmployees
       .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
       .map((e) => ({
         id: e.code || `PERM_${e.id}`,
@@ -1137,7 +1413,7 @@ export default function App() {
         currentPeriodKey: e.currentPeriodKey,
       }));
 
-    const allMobileWorkers: SeasonalWorker[] = [...seasonalWorkers, ...permanentAsWorkers];
+    const allMobileWorkers: SeasonalWorker[] = [...syncedSeasonalWorkers, ...permanentAsWorkers];
 
     return (
       <MobileAttendanceApp
@@ -1154,6 +1430,8 @@ export default function App() {
               ...matchedPerm,
               actualWorkDays: updatedWorker.actualWorkDays,
               overtimeHours: updatedWorker.overtimeHours,
+              selectedForAttendance:
+                (updatedWorker.actualWorkDays || 0) > 0 || (updatedWorker.overtimeHours || 0) > 0,
               monthlyAttendance: updatedWorker.monthlyAttendance,
               periodRecords: updatedWorker.periodRecords,
               payrollCycleType: updatedWorker.payrollCycleType,
@@ -1205,8 +1483,8 @@ export default function App() {
           seasonalSubTab={seasonalSubTab}
           onSelectSubTab={handleSelectSubTab}
           auditIssuesCount={auditCount}
-          seasonalCount={seasonalWorkers.length}
-          employeeCount={employees.length}
+          seasonalCount={syncedSeasonalWorkers.length}
+          employeeCount={syncedEmployees.length}
           teamCount={teamWorkers.length}
           projectCount={projects.length}
           advanceCount={salaryAdvances.length}
@@ -1229,17 +1507,22 @@ export default function App() {
                 activeTab={activeTab}
                 onSelectTab={handleSelectTab}
                 auditIssuesCount={auditCount}
-                employeeCount={employees.length}
-                seasonalCount={seasonalWorkers.length}
+                employeeCount={syncedEmployees.length}
+                seasonalCount={syncedSeasonalWorkers.length}
                 teamCount={teamWorkers.length}
                 projectCount={projects.length}
                 advanceCount={salaryAdvances.length}
               />
             </div>
 
-            {/* Metric Summary Cards */}
+            {/* Metric Summary Cards — Đồng bộ 100% với Bản Chấm Công và Bản Lương */}
             <div className="no-print">
-              <MetricCards employees={employees} />
+              <MetricCards
+                employees={syncedEmployees}
+                seasonalWorkers={syncedSeasonalWorkers}
+                activeCategory={activeTab === 'SEASONAL_WORKERS' ? 'SEASONAL' : 'PERMANENT'}
+                config={config}
+              />
             </div>
 
             {/* Tab Views */}
@@ -1265,7 +1548,7 @@ export default function App() {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
                           permanentSubTab === 'LIST' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
                         }`}>
-                          {employees.length}
+                          {syncedEmployees.length}
                         </span>
                       </button>
 
@@ -1282,7 +1565,7 @@ export default function App() {
                         <CalendarCheck className="w-4 h-4 text-emerald-400" />
                         <span>1.2 Bản Chấm Công</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          {employees.filter((e) => (e.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
+                          {syncedEmployees.filter((e) => (e.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
                         </span>
                       </button>
 
@@ -1299,7 +1582,16 @@ export default function App() {
                         <Table2 className="w-4 h-4 text-sky-300" />
                         <span>1.3 Bản Lương</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-100 text-sky-800 border border-sky-300">
-                          BHXH + Thuế
+                          {
+                            syncedEmployees.filter(
+                              (e) =>
+                                (e.status || 'ACTIVE') === 'ACTIVE' &&
+                                (e.selectedForAttendance === true ||
+                                  (e.actualWorkDays || 0) > 0 ||
+                                  (e.overtimeHours || 0) > 0)
+                            ).length
+                          }{' '}
+                          tham gia chấm công
                         </span>
                       </button>
 
@@ -1323,16 +1615,54 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="text-xs text-slate-500 hidden md:flex items-center gap-1 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span>Chạy theo ngày thực: Tháng {config.periodCode}</span>
+                    {/* Hiển thị ngày thực hiện tại & Nút chọn nhanh Tháng 9 / Tháng 10 / Tháng hiện tại */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>Hôm nay: {realDateInfo.realDateStr}</span>
+                      </span>
+                      <div className="inline-flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(9, config.year || realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === 9
+                              ? 'bg-[#0f3d64] text-white shadow-2xs'
+                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                          }`}
+                        >
+                          Tháng 9
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(10, config.year || realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === 10
+                              ? 'bg-[#0f3d64] text-white shadow-2xs'
+                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                          }`}
+                        >
+                          Tháng 10
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === realDateInfo.realMonth && config.year === realDateInfo.realYear
+                              ? 'bg-emerald-600 text-white shadow-2xs'
+                              : 'text-emerald-700 hover:bg-emerald-50'
+                          }`}
+                        >
+                          Tháng {realDateInfo.realMonthPadded}/{realDateInfo.realYear} (Hiện tại)
+                        </button>
+                      </div>
                     </div>
                   </div>
 
                   {/* 1.1 Danh Sách Nhân Viên */}
                   {permanentSubTab === 'LIST' && (
                     <EmployeeListTab
-                      employees={employees}
+                      employees={syncedEmployees}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
                       onUpdateEmployee={handleUpdateEmployee}
@@ -1351,8 +1681,8 @@ export default function App() {
                   {/* 1.2 Bản Chấm Công (Chỉ hiện NV đang làm việc) */}
                   {permanentSubTab === 'ATTENDANCE' && (
                     <AttendanceTab
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
@@ -1365,15 +1695,15 @@ export default function App() {
                         setIsMobileAttendanceView(true);
                       }}
                       forcedGroup="PERMANENT"
-                      seasonalCount={seasonalWorkers.length}
+                      seasonalCount={syncedSeasonalWorkers.length}
                     />
                   )}
 
-                  {/* 1.3 Bản Lương (Chỉ hiện NV đang làm việc) */}
+                  {/* 1.3 Bản Lương (Tự động nhảy lương khi nhân viên tham gia chấm công) */}
                   {permanentSubTab === 'PAYROLL' && (
                     <PayrollTableTab
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
@@ -1388,8 +1718,8 @@ export default function App() {
                   {permanentSubTab === 'ADVANCES' && (
                     <SalaryAdvancesTab
                       advances={salaryAdvances}
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onAddAdvance={handleAddSalaryAdvance}
@@ -1422,7 +1752,7 @@ export default function App() {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
                           seasonalSubTab === 'LIST' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
                         }`}>
-                          {seasonalWorkers.length}
+                          {syncedSeasonalWorkers.length}
                         </span>
                       </button>
 
@@ -1439,7 +1769,7 @@ export default function App() {
                         <CalendarCheck className="w-4 h-4 text-amber-200" />
                         <span>2.2 Bản Chấm Công</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                          {seasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
+                          {syncedSeasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
                         </span>
                       </button>
 
@@ -1456,7 +1786,14 @@ export default function App() {
                         <Table2 className="w-4 h-4 text-amber-200" />
                         <span>2.3 Bản Lương</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                          Đơn giá ngày & OT
+                          {
+                            syncedSeasonalWorkers.filter(
+                              (w) =>
+                                (w.status || 'ACTIVE') === 'ACTIVE' &&
+                                ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+                            ).length
+                          }{' '}
+                          tham gia chấm công
                         </span>
                       </button>
 
@@ -1480,16 +1817,53 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="text-xs text-slate-500 hidden md:flex items-center gap-1 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                      <span>Chạy theo ngày thực: Tháng {config.periodCode}</span>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        <span>Hôm nay: {realDateInfo.realDateStr}</span>
+                      </span>
+                      <div className="inline-flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(9, config.year || realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === 9
+                              ? 'bg-amber-600 text-white shadow-2xs'
+                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                          }`}
+                        >
+                          Tháng 9
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(10, config.year || realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === 10
+                              ? 'bg-amber-600 text-white shadow-2xs'
+                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                          }`}
+                        >
+                          Tháng 10
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
+                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                            config.month === realDateInfo.realMonth && config.year === realDateInfo.realYear
+                              ? 'bg-emerald-600 text-white shadow-2xs'
+                              : 'text-emerald-700 hover:bg-emerald-50'
+                          }`}
+                        >
+                          Tháng {realDateInfo.realMonthPadded}/{realDateInfo.realYear} (Hiện tại)
+                        </button>
+                      </div>
                     </div>
                   </div>
 
                   {/* 2.1 Danh Sách Thời Vụ */}
                   {seasonalSubTab === 'LIST' && (
                     <SeasonalWorkersTab
-                      workers={seasonalWorkers}
+                      workers={syncedSeasonalWorkers}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
                       onUpdateWorker={handleUpdateSeasonalWorker}
@@ -1514,8 +1888,8 @@ export default function App() {
                   {/* 2.2 Bản Chấm Công (Chỉ hiện thợ đang làm việc) */}
                   {seasonalSubTab === 'ATTENDANCE' && (
                     <AttendanceTab
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
@@ -1528,15 +1902,15 @@ export default function App() {
                         setIsMobileAttendanceView(true);
                       }}
                       forcedGroup="SEASONAL"
-                      seasonalCount={seasonalWorkers.length}
+                      seasonalCount={syncedSeasonalWorkers.length}
                     />
                   )}
 
                   {/* 2.3 Bản Lương (Chỉ hiện thợ đang làm việc) */}
                   {seasonalSubTab === 'PAYROLL' && (
                     <PayrollTableTab
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
@@ -1551,8 +1925,8 @@ export default function App() {
                   {seasonalSubTab === 'ADVANCES' && (
                     <SalaryAdvancesTab
                       advances={salaryAdvances}
-                      employees={employees}
-                      seasonalWorkers={seasonalWorkers}
+                      employees={syncedEmployees}
+                      seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
                       config={config}
                       onAddAdvance={handleAddSalaryAdvance}
@@ -1568,8 +1942,8 @@ export default function App() {
               {activeTab === 'PROJECTS' && (
                 <ProjectsTab
                   projects={projects}
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   onAddProject={handleAddProject}
                   onUpdateProject={handleUpdateProject}
@@ -1580,8 +1954,8 @@ export default function App() {
               {/* Tab 4: Báo Cáo Tài Chính */}
               {activeTab === 'FINANCIAL_REPORT' && (
                 <FinancialReportTab
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   projects={projects}
                   advances={salaryAdvances}
@@ -1593,7 +1967,7 @@ export default function App() {
               {/* Tab 5: Phiếu Lương */}
               {activeTab === 'PAYSLIP' && (
                 <PayslipTab
-                  employees={employees}
+                  employees={syncedEmployees}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
                   onUpdateEmployeeContact={(empId, updates) => {
@@ -1623,13 +1997,13 @@ export default function App() {
 
               {/* Tab: Tổng Hợp Theo Bộ Phận */}
               {activeTab === 'DEPARTMENT' && (
-                <DepartmentSummaryTab employees={employees} />
+                <DepartmentSummaryTab employees={syncedEmployees} />
               )}
 
               {/* Tab 6: Kiểm Tra Dữ Liệu */}
               {activeTab === 'DATA_AUDIT' && (
                 <DataAuditTab
-                  employees={employees}
+                  employees={syncedEmployees}
                   onSelectEmployeeForPayslip={handleAuditSelectEmployee}
                 />
               )}
@@ -1637,8 +2011,8 @@ export default function App() {
               {/* Direct Tab Access Fallbacks */}
               {activeTab === 'PERMANENT_PAYROLL' && (
                 <PayrollTableTab
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
@@ -1651,8 +2025,8 @@ export default function App() {
 
               {activeTab === 'SEASONAL_PAYROLL' && (
                 <PayrollTableTab
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
@@ -1665,23 +2039,23 @@ export default function App() {
 
               {activeTab === 'ATTENDANCE' && (
                 <AttendanceTab
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
                   onBatchUpdate={handleBatchUpdate}
                   onBatchUpdateSeasonal={handleBatchUpdateSeasonalWorkers}
                   onBatchUpdateTeam={handleBatchUpdateTeamWorkers}
-                  seasonalCount={seasonalWorkers.length}
+                  seasonalCount={syncedSeasonalWorkers.length}
                 />
               )}
 
               {activeTab === 'SALARY_ADVANCES' && (
                 <SalaryAdvancesTab
                   advances={salaryAdvances}
-                  employees={employees}
-                  seasonalWorkers={seasonalWorkers}
+                  employees={syncedEmployees}
+                  seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
                   config={config}
                   onAddAdvance={handleAddSalaryAdvance}

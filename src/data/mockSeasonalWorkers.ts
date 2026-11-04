@@ -342,6 +342,31 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
   const dailyRate = Math.max(0, worker.dailyRate || 0);
   const actualWorkDays = Math.max(0, worker.actualWorkDays || 0);
   const overtimeHours = Math.max(0, worker.overtimeHours || 0);
+  const advancePayment = Math.max(0, worker.advancePayment || 0);
+  const mealAllowance = Math.max(0, worker.mealAllowance || 0);
+  const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
+  const otherBonus = Math.max(0, worker.otherBonus || 0);
+
+  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công
+  const hasParticipated = actualWorkDays > 0 || overtimeHours > 0;
+  if (!hasParticipated) {
+    return {
+      ...worker,
+      dailyRate,
+      actualWorkDays: 0,
+      salaryByDays: 0,
+      overtimeHours: 0,
+      overtimePay: 0,
+      mealAllowance,
+      travelSafetyAllowance,
+      otherBonus,
+      totalIncome: 0,
+      personalIncomeTax: 0,
+      advancePayment,
+      totalDeductions: advancePayment,
+      netSalary: 0,
+    };
+  }
 
   // 1. Tiền lương theo ngày công
   const salaryByDays = Math.round(dailyRate * actualWorkDays);
@@ -350,27 +375,19 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
   const hourlyRate = dailyRate / 8;
   const overtimePay = Math.round(hourlyRate * overtimeHours * 1.5);
 
-  // 3. Phụ cấp và thưởng
-  const mealAllowance = Math.max(0, worker.mealAllowance || 0);
-  const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
-  const otherBonus = Math.max(0, worker.otherBonus || 0);
-
-  // 4. Tổng thu nhập
+  // 3. Tổng thu nhập
   const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
 
-  // 5. Thuế TNCN thời vụ (10% nếu không có Cam kết 08 và tổng thu nhập >= 2.000.000đ)
+  // 4. Thuế TNCN thời vụ (10% nếu không có Cam kết 08 và tổng thu nhập >= 2.000.000đ)
   let personalIncomeTax = 0;
   if (!worker.hasTaxCommitment && totalIncome >= 2000000) {
     personalIncomeTax = Math.round(totalIncome * 0.1);
   }
 
-  // 6. Tạm ứng tiền mặt tại công trường
-  const advancePayment = Math.max(0, worker.advancePayment || 0);
-
-  // 7. Tổng khấu trừ
+  // 5. Tổng khấu trừ
   const totalDeductions = personalIncomeTax + advancePayment;
 
-  // 8. Thực lĩnh thanh toán
+  // 6. Thực lĩnh thanh toán
   const netSalary = Math.max(0, totalIncome - totalDeductions);
 
   return {
@@ -389,6 +406,63 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
     totalDeductions,
     netSalary,
   };
+}
+
+/**
+ * Đồng bộ dữ liệu chấm công tháng (monthlyAttendance[monthKey]) của công nhân thời vụ sang Bản Lương cho bất kỳ Tháng/Năm nào.
+ */
+export function syncSeasonalWorkerForMonth(
+  worker: SeasonalWorker,
+  month: number,
+  year: number
+): SeasonalWorker {
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+  const monthRec = worker.monthlyAttendance?.[monthKey];
+
+  if (monthRec && monthRec.days) {
+    let totalWork = 0;
+    let totalOt = 0;
+    Object.values(monthRec.days).forEach((d: any) => {
+      if (!d) return;
+      const st = d.statusType;
+      const units = Number(d.workUnits || 0);
+      if (st === 'LATE') {
+        totalWork += units > 0 ? units : 1;
+      } else if (st !== 'ABSENT' && st !== 'LEAVE' && units > 0) {
+        totalWork += units;
+      }
+      totalOt += Number(d.otHours || 0);
+    });
+    const roundedWork = Math.round(totalWork * 10) / 10;
+    const roundedOt = Math.round(totalOt * 10) / 10;
+
+    return recomputeSeasonalWorkerPayroll({
+      ...worker,
+      actualWorkDays: roundedWork,
+      overtimeHours: roundedOt,
+      monthlyAttendance: {
+        ...(worker.monthlyAttendance || {}),
+        [monthKey]: {
+          ...monthRec,
+          totalWorkDays: roundedWork,
+          totalOtHours: roundedOt,
+        },
+      },
+    });
+  }
+
+  // Nếu đã có dữ liệu ở các tháng khác nhưng tháng đang chọn chưa có bản ghi -> mặc định 0 công
+  const hasOtherMonths =
+    worker.monthlyAttendance && Object.keys(worker.monthlyAttendance).length > 0;
+  if (hasOtherMonths) {
+    return recomputeSeasonalWorkerPayroll({
+      ...worker,
+      actualWorkDays: 0,
+      overtimeHours: 0,
+    });
+  }
+
+  return recomputeSeasonalWorkerPayroll(worker);
 }
 
 /**

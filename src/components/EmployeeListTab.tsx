@@ -42,7 +42,11 @@ import { EmployeeModal } from './EmployeeModal';
 import { AnnualSalaryReviewModal } from './AnnualSalaryReviewModal';
 import { MonthYearPicker } from './MonthYearPicker';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
-import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
+import {
+  recomputeEmployeePayroll,
+  buildMonthlyAttendanceRecord,
+  getRealCurrentDateInfo,
+} from '../utils/payrollCalculator';
 import { getContractStatusInfo } from '../utils/contractHelper';
 
 interface EmployeeListTabProps {
@@ -70,6 +74,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
   onGoToSeasonalWorkers,
   onResetDefault,
 }) => {
+  const realDateInfo = useMemo(() => getRealCurrentDateInfo(), []);
+  const activeMonth = config.month || realDateInfo.realMonth;
+  const activeYear = config.year || realDateInfo.realYear;
+  const activeMonthKey = `${activeYear}-${String(activeMonth).padStart(2, '0')}`;
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDept, setSelectedDept] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'RESIGNED' | 'LEAVE'>('ALL');
@@ -224,12 +233,55 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
     });
   }, [employees, searchTerm, selectedDept, statusFilter, attendanceFilter, contractFilter]);
 
+  // Đồng bộ thay đổi số công / giờ OT của nhân viên vào cả monthlyAttendance[activeMonthKey] để Bản Chấm Công và Bản Lương khớp 100%
+  const buildSyncedEmployeeUpdate = (
+    emp: Employee,
+    overrides: Partial<Employee>
+  ): Employee => {
+    const nextWorkDays =
+      overrides.actualWorkDays !== undefined ? overrides.actualWorkDays : emp.actualWorkDays || 0;
+    const nextOt =
+      overrides.overtimeHours !== undefined ? overrides.overtimeHours : emp.overtimeHours || 0;
+    const nextPaidLeave =
+      overrides.paidLeaveDays !== undefined ? overrides.paidLeaveDays : emp.paidLeaveDays || 0;
+    const nextUnpaidLeave =
+      overrides.unpaidLeaveDays !== undefined ? overrides.unpaidLeaveDays : emp.unpaidLeaveDays || 0;
+    const hasAttendance = nextWorkDays > 0 || nextOt > 0 || nextPaidLeave > 0;
+    const nextSelected =
+      overrides.selectedForAttendance !== undefined
+        ? overrides.selectedForAttendance
+        : hasAttendance;
+
+    const updatedMonthRecord = buildMonthlyAttendanceRecord(
+      activeMonth,
+      activeYear,
+      nextWorkDays,
+      nextOt,
+      nextPaidLeave,
+      nextUnpaidLeave
+    );
+
+    return recomputeEmployeePayroll({
+      ...emp,
+      ...overrides,
+      actualWorkDays: nextWorkDays,
+      overtimeHours: nextOt,
+      paidLeaveDays: nextPaidLeave,
+      unpaidLeaveDays: nextUnpaidLeave,
+      selectedForAttendance: nextSelected,
+      monthlyAttendance: {
+        ...(emp.monthlyAttendance || {}),
+        [activeMonthKey]: updatedMonthRecord,
+      },
+    });
+  };
+
   // Cập nhật số ngày công thực tế của nhân viên
   const handleWorkDaysChange = (emp: Employee, newDays: number) => {
     const validDays = Math.max(0, Math.min(31, Number(newDays) || 0));
-    const recomputed = recomputeEmployeePayroll({
-      ...emp,
+    const recomputed = buildSyncedEmployeeUpdate(emp, {
       actualWorkDays: validDays,
+      selectedForAttendance: validDays > 0 || (emp.overtimeHours || 0) > 0,
     });
     onUpdateEmployee(recomputed);
     setLastSavedCode(emp.code);
@@ -251,9 +303,9 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
   // Cập nhật giờ tăng ca OT
   const handleOtChange = (emp: Employee, hours: number) => {
     const validOT = Math.max(0, Math.min(200, Number(hours) || 0));
-    const recomputed = recomputeEmployeePayroll({
-      ...emp,
+    const recomputed = buildSyncedEmployeeUpdate(emp, {
       overtimeHours: validOT,
+      selectedForAttendance: (emp.actualWorkDays || 0) > 0 || validOT > 0,
     });
     onUpdateEmployee(recomputed);
     setLastSavedCode(emp.code);
@@ -275,8 +327,7 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
   // Cập nhật ngày nghỉ phép có lương
   const handlePaidLeaveChange = (emp: Employee, days: number) => {
     const validDays = Math.max(0, Math.min(31, Number(days) || 0));
-    const recomputed = recomputeEmployeePayroll({
-      ...emp,
+    const recomputed = buildSyncedEmployeeUpdate(emp, {
       paidLeaveDays: validDays,
     });
     onUpdateEmployee(recomputed);
@@ -285,38 +336,55 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
   // Cập nhật ngày nghỉ không lương
   const handleUnpaidLeaveChange = (emp: Employee, days: number) => {
     const validDays = Math.max(0, Math.min(31, Number(days) || 0));
-    const recomputed = recomputeEmployeePayroll({
-      ...emp,
+    const recomputed = buildSyncedEmployeeUpdate(emp, {
       unpaidLeaveDays: validDays,
     });
     onUpdateEmployee(recomputed);
   };
 
-  // Bật / tắt đưa vào chấm công
+  // Bật / tắt đưa vào chấm công (Tham gia chấm công <-> Chưa chấm công)
   const handleToggleAttendance = (emp: Employee) => {
-    const updated: Employee = {
-      ...emp,
-      selectedForAttendance: emp.selectedForAttendance === false ? true : false,
-    };
+    const nextSelected = emp.selectedForAttendance === false ? true : false;
+    const std = config.standardWorkDays || 26;
+    const nextWorkDays = nextSelected
+      ? (emp.actualWorkDays || 0) > 0
+        ? emp.actualWorkDays
+        : std
+      : 0;
+    const updated = buildSyncedEmployeeUpdate(emp, {
+      selectedForAttendance: nextSelected,
+      actualWorkDays: nextWorkDays,
+      overtimeHours: nextSelected ? emp.overtimeHours || 0 : 0,
+    });
     onUpdateEmployee(updated);
     showToast(
       updated.selectedForAttendance
-        ? `Đã chọn chấm công cho ${emp.fullName}`
-        : `Đã bỏ chọn chấm công cho ${emp.fullName}`
+        ? `Đã bật "Tham gia chấm công" cho ${emp.fullName} — Bản Lương tự động nhảy lương!`
+        : `Đã tắt chấm công cho ${emp.fullName}`
     );
   };
 
   // Chọn tất cả hoặc bỏ chọn tất cả
   const handleSelectAllAttendance = (select: boolean) => {
+    const std = config.standardWorkDays || 26;
     const targetIds = new Set(filteredEmployees.map((e) => e.id));
     const updatedList = employees.map((e) => {
-      if (targetIds.has(e.id)) {
-        return { ...e, selectedForAttendance: select };
+      if (targetIds.has(e.id) && e.status !== 'RESIGNED') {
+        const nextDays = select ? ((e.actualWorkDays || 0) > 0 ? e.actualWorkDays : std) : 0;
+        return buildSyncedEmployeeUpdate(e, {
+          selectedForAttendance: select,
+          actualWorkDays: nextDays,
+          overtimeHours: select ? e.overtimeHours || 0 : 0,
+        });
       }
       return e;
     });
     onBatchUpdate(updatedList);
-    showToast(select ? 'Đã chọn chấm công cho toàn bộ nhân sự đang lọc' : 'Đã bỏ chọn chấm công cho toàn bộ');
+    showToast(
+      select
+        ? 'Đã bật "Tham gia chấm công" cho toàn bộ nhân sự — Bản Lương đã tự động nhảy lương!'
+        : 'Đã bỏ chọn chấm công cho toàn bộ'
+    );
   };
 
   // Tiện ích chấm đủ công chuẩn (26 ngày) cho tất cả nhân sự đang chọn
@@ -324,31 +392,31 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
     const std = config.standardWorkDays || 26;
     const targetIds = new Set(filteredEmployees.map((e) => e.id));
     const updatedList = employees.map((e) => {
-      if (targetIds.has(e.id) && e.selectedForAttendance !== false && e.status !== 'RESIGNED') {
-        return recomputeEmployeePayroll({
-          ...e,
+      if (targetIds.has(e.id) && e.status !== 'RESIGNED') {
+        return buildSyncedEmployeeUpdate(e, {
           actualWorkDays: std,
           unpaidLeaveDays: 0,
+          selectedForAttendance: true,
         });
       }
       return e;
     });
     setRowDaysBuffer({});
     onBatchUpdate(updatedList);
-    showToast(`Đã chấm đủ ${std} ngày công chuẩn cho toàn bộ nhân viên thường trực!`);
+    showToast(`Đã chấm đủ ${std} ngày công chuẩn cho toàn bộ nhân viên — Bản Chấm Công & Bản Lương đã đồng bộ!`);
   };
 
   // Tiện ích xóa trắng ngày công để nhập mới từ đầu (0 công)
   const handleBatchClearDays = () => {
     const targetIds = new Set(filteredEmployees.map((e) => e.id));
     const updatedList = employees.map((e) => {
-      if (targetIds.has(e.id) && e.selectedForAttendance !== false) {
-        return recomputeEmployeePayroll({
-          ...e,
+      if (targetIds.has(e.id)) {
+        return buildSyncedEmployeeUpdate(e, {
           actualWorkDays: 0,
           overtimeHours: 0,
           paidLeaveDays: 0,
           unpaidLeaveDays: 0,
+          selectedForAttendance: false,
         });
       }
       return e;

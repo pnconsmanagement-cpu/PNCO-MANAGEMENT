@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { CompanyConfig, Employee, SeasonalWorker, TeamWorker } from '../types';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
-import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
+import { recomputeEmployeePayroll, syncEmployeeForMonth, getRealCurrentDateInfo } from '../utils/payrollCalculator';
+import { syncSeasonalWorkerForMonth } from '../data/mockSeasonalWorkers';
 import { MonthYearPicker } from './MonthYearPicker';
 
 interface PayrollTableTabProps {
@@ -47,10 +48,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onDeleteEmployee,
   forcedCategory,
 }) => {
+  const { realMonth, realYear } = getRealCurrentDateInfo();
+  const currentMonth = config.month || realMonth;
+  const currentYear = config.year || realYear;
+
   // Chu kỳ ghi nhận lương: Theo Tuần, Theo Tháng, Theo Quý, Theo Năm
   const [periodCycle, setPeriodCycle] = useState<'WEEK' | 'MONTH' | 'QUARTER' | 'YEAR'>('MONTH');
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
-  const [selectedQuarter, setSelectedQuarter] = useState<number>(() => Math.ceil((config.month || 9) / 3));
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(() => Math.ceil(currentMonth / 3));
 
   // Nhóm nhân sự: Tất cả, Chính thức, Thời vụ, Tổ đội
   const [workerCategory, setWorkerCategory] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>(
@@ -84,12 +89,33 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     }
   }, [periodCycle]);
 
+  // Đồng bộ 100% danh sách nhân viên chính thức và thời vụ theo đúng Tháng / Năm đang chọn từ Bản Chấm Công
+  const syncedEmployeesForMonth = useMemo(() => {
+    return employees.map((emp) =>
+      syncEmployeeForMonth(emp, currentMonth, currentYear, config.standardWorkDays || 26)
+    );
+  }, [employees, currentMonth, currentYear, config.standardWorkDays]);
+
+  const syncedSeasonalForMonth = useMemo(() => {
+    return seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear));
+  }, [seasonalWorkers, currentMonth, currentYear]);
+
   // Dữ liệu thời vụ theo chu kỳ - CHỈ NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const scaledSeasonal = useMemo(() => {
     const mult = cycleMultiplier;
-    return seasonalWorkers
+    const activeSeasonalList = syncedSeasonalForMonth.filter(
+      (w) => (w.status || 'ACTIVE') === 'ACTIVE'
+    );
+    const hasAnySeasonalParticipating = activeSeasonalList.some(
+      (w) => (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0
+    );
+
+    return activeSeasonalList
       .filter((w) => {
-        if ((w.status || 'ACTIVE') !== 'ACTIVE') return false;
+        if (attendanceOnly && hasAnySeasonalParticipating) {
+          const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+          if (!isParticipating) return false;
+        }
         const term = searchTerm.toLowerCase();
         return (
           !term ||
@@ -99,6 +125,21 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         );
       })
       .map((w) => {
+        const hasParticipated = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+        if (!hasParticipated) {
+          return {
+            ...w,
+            actualWorkDays: 0,
+            salaryByDays: 0,
+            overtimeHours: 0,
+            overtimePay: 0,
+            totalIncome: 0,
+            advancePayment: Math.round((w.advancePayment || 0) * mult),
+            personalIncomeTax: 0,
+            totalDeductions: Math.round((w.advancePayment || 0) * mult),
+            netSalary: 0,
+          };
+        }
         const actualDays = Number(((w.actualWorkDays || 0) * mult).toFixed(1));
         const rate = w.dailyRate || 0;
         const salaryByDays = Math.round(rate * actualDays);
@@ -125,7 +166,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
           netSalary,
         };
       });
-  }, [seasonalWorkers, cycleMultiplier, searchTerm]);
+  }, [syncedSeasonalForMonth, cycleMultiplier, searchTerm, attendanceOnly]);
 
   // Dữ liệu tổ đội theo chu kỳ - CHỈ TỔ ĐỘI ĐANG LÀM VIỆC (ACTIVE)
   const scaledTeam = useMemo(() => {
@@ -169,12 +210,21 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
   // Phân tách nhân viên đang làm việc và nhân viên đã nghỉ
   const activeEmployees = useMemo(
-    () => employees.filter((e) => (e.status || 'ACTIVE') !== 'RESIGNED'),
-    [employees]
+    () => syncedEmployeesForMonth.filter((e) => (e.status || 'ACTIVE') !== 'RESIGNED'),
+    [syncedEmployeesForMonth]
   );
   const resignedEmployees = useMemo(
-    () => employees.filter((e) => e.status === 'RESIGNED'),
-    [employees]
+    () => syncedEmployeesForMonth.filter((e) => e.status === 'RESIGNED'),
+    [syncedEmployeesForMonth]
+  );
+
+  // Số nhân sự đang tham gia chấm công trong kỳ này (có Công > 0 hoặc Giờ TC > 0 hoặc Nghỉ phép > 0)
+  const participatingEmployeesCount = useMemo(
+    () =>
+      activeEmployees.filter(
+        (e) => (e.actualWorkDays || 0) > 0 || (e.overtimeHours || 0) > 0 || (e.paidLeaveDays || 0) > 0
+      ).length,
+    [activeEmployees]
   );
 
   const departments = useMemo(() => {
@@ -193,72 +243,111 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
   // Danh sách dòng bảng lương nhân viên chính thức thích ứng theo chu kỳ
   const filteredEmployees = useMemo(() => {
-    return employees.filter((e) => {
-      const isActive = (e.status || 'ACTIVE') === 'ACTIVE';
-      if (!showResignedHistory) {
-        if (!isActive) return false;
-        if (attendanceOnly && e.selectedForAttendance === false) return false;
-      } else {
-        if (isActive) return false;
-      }
+    return syncedEmployeesForMonth
+      .filter((e) => {
+        const isActive = (e.status || 'ACTIVE') === 'ACTIVE';
+        const isParticipating =
+          (e.actualWorkDays || 0) > 0 || (e.overtimeHours || 0) > 0 || (e.paidLeaveDays || 0) > 0;
 
-      if (salaryTypeFilter === 'MONTHLY' && e.salaryType === 'DAILY') return false;
-      if (salaryTypeFilter === 'DAILY' && e.salaryType !== 'DAILY') return false;
+        if (!showResignedHistory) {
+          if (!isActive) return false;
+          // Khi bật "Chỉ hiện NV tham gia chấm công" và có ít nhất 1 nhân viên đã chấm công trong tháng
+          if (attendanceOnly && participatingEmployeesCount > 0 && !isParticipating) {
+            return false;
+          }
+        } else {
+          if (isActive) return false;
+        }
 
-      const matchDept = selectedDept === 'ALL' || e.department === selectedDept;
-      const term = searchTerm.toLowerCase();
-      const matchSearch =
-        !term ||
-        e.fullName.toLowerCase().includes(term) ||
-        e.code.toLowerCase().includes(term) ||
-        e.title.toLowerCase().includes(term);
-      return matchDept && matchSearch;
-    }).map((emp) => {
-      // Scale số liệu theo chu kỳ
-      const mult = cycleMultiplier;
-      const scaledActualDays = Number((emp.actualWorkDays * mult).toFixed(1));
-      const scaledStdDays = Number(((emp.standardWorkDays || 26) * mult).toFixed(1));
-      const scaledBase = Math.round(emp.baseSalary * mult);
-      const scaledSalaryByDays = Math.round(emp.salaryByActualDays * mult);
-      const scaledOT = Math.round((emp.overtimePay || 0) * mult);
-      const scaledAllowances = Math.round(
-        ((emp.responsibilityAllowance || 0) +
-          (emp.projectAllowance || 0) +
-          (emp.mealAllowance || 0) +
-          (emp.phoneTravelAllowance || 0) +
-          (emp.kpiBonus || 0)) *
-          mult
-      );
-      // Thưởng tháng 13 nếu xem theo năm
-      const yearBonus = periodCycle === 'YEAR' ? emp.baseSalary : 0;
-      const scaledTotalIncome = scaledSalaryByDays + scaledOT + scaledAllowances + yearBonus;
-      const scaledInsurance = Math.round((emp.totalInsurance || 0) * mult);
-      const scaledTax = Math.round((emp.personalIncomeTax || 0) * mult);
-      const scaledAdvance = Math.round((emp.advancePayment || 0) * mult);
-      const scaledDeductions = scaledInsurance + scaledTax + scaledAdvance + Math.round((emp.unionFee || 0) * mult);
-      const scaledNet = Math.max(0, scaledTotalIncome - scaledDeductions);
+        if (salaryTypeFilter === 'MONTHLY' && e.salaryType === 'DAILY') return false;
+        if (salaryTypeFilter === 'DAILY' && e.salaryType !== 'DAILY') return false;
 
-      return {
-        ...emp,
-        actualWorkDays: scaledActualDays,
-        standardWorkDays: scaledStdDays,
-        baseSalary: scaledBase,
-        salaryByActualDays: scaledSalaryByDays,
-        overtimePay: scaledOT,
-        totalIncome: scaledTotalIncome,
-        totalInsurance: scaledInsurance,
-        personalIncomeTax: scaledTax,
-        advancePayment: scaledAdvance,
-        totalDeductions: scaledDeductions,
-        netSalary: scaledNet,
-      };
-    }).sort((a, b) => {
-      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
-        return a.sortOrder - b.sortOrder;
-      }
-      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
-    });
-  }, [employees, selectedDept, searchTerm, attendanceOnly, salaryTypeFilter, showResignedHistory, cycleMultiplier, periodCycle]);
+        const matchDept = selectedDept === 'ALL' || e.department === selectedDept;
+        const term = searchTerm.toLowerCase();
+        const matchSearch =
+          !term ||
+          e.fullName.toLowerCase().includes(term) ||
+          e.code.toLowerCase().includes(term) ||
+          e.title.toLowerCase().includes(term);
+        return matchDept && matchSearch;
+      })
+      .map((emp) => {
+        const mult = cycleMultiplier;
+        const hasParticipated =
+          (emp.actualWorkDays || 0) > 0 || (emp.overtimeHours || 0) > 0 || (emp.paidLeaveDays || 0) > 0;
+
+        if (!hasParticipated) {
+          const scaledAdvance = Math.round((emp.advancePayment || 0) * mult);
+          return {
+            ...emp,
+            actualWorkDays: 0,
+            standardWorkDays: Number(((emp.standardWorkDays || 26) * mult).toFixed(1)),
+            baseSalary: Math.round(emp.baseSalary * mult),
+            salaryByActualDays: 0,
+            overtimePay: 0,
+            totalIncome: 0,
+            totalInsurance: 0,
+            personalIncomeTax: 0,
+            advancePayment: scaledAdvance,
+            totalDeductions: scaledAdvance,
+            netSalary: 0,
+          };
+        }
+
+        const scaledActualDays = Number((emp.actualWorkDays * mult).toFixed(1));
+        const scaledStdDays = Number(((emp.standardWorkDays || 26) * mult).toFixed(1));
+        const scaledBase = Math.round(emp.baseSalary * mult);
+        const scaledSalaryByDays = Math.round(emp.salaryByActualDays * mult);
+        const scaledOT = Math.round((emp.overtimePay || 0) * mult);
+        const scaledAllowances = Math.round(
+          ((emp.responsibilityAllowance || 0) +
+            (emp.projectAllowance || 0) +
+            (emp.mealAllowance || 0) +
+            (emp.phoneTravelAllowance || 0) +
+            (emp.kpiBonus || 0)) *
+            mult
+        );
+        const yearBonus = periodCycle === 'YEAR' ? emp.baseSalary : 0;
+        const scaledTotalIncome = scaledSalaryByDays + scaledOT + scaledAllowances + yearBonus;
+        const scaledInsurance = Math.round((emp.totalInsurance || 0) * mult);
+        const scaledTax = Math.round((emp.personalIncomeTax || 0) * mult);
+        const scaledAdvance = Math.round((emp.advancePayment || 0) * mult);
+        const scaledDeductions =
+          scaledInsurance + scaledTax + scaledAdvance + Math.round((emp.unionFee || 0) * mult);
+        const scaledNet = Math.max(0, scaledTotalIncome - scaledDeductions);
+
+        return {
+          ...emp,
+          actualWorkDays: scaledActualDays,
+          standardWorkDays: scaledStdDays,
+          baseSalary: scaledBase,
+          salaryByActualDays: scaledSalaryByDays,
+          overtimePay: scaledOT,
+          totalIncome: scaledTotalIncome,
+          totalInsurance: scaledInsurance,
+          personalIncomeTax: scaledTax,
+          advancePayment: scaledAdvance,
+          totalDeductions: scaledDeductions,
+          netSalary: scaledNet,
+        };
+      })
+      .sort((a, b) => {
+        if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+          return a.sortOrder - b.sortOrder;
+        }
+        return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+      });
+  }, [
+    syncedEmployeesForMonth,
+    selectedDept,
+    searchTerm,
+    attendanceOnly,
+    participatingEmployeesCount,
+    salaryTypeFilter,
+    showResignedHistory,
+    cycleMultiplier,
+    periodCycle,
+  ]);
 
   const filtered = filteredEmployees;
 
@@ -738,9 +827,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                   : 'bg-slate-100 text-slate-700 border-slate-300'
               }`}
+              title="Chuyển đổi giữa chỉ hiển thị nhân sự đã tham gia chấm công trong kỳ và hiển thị toàn bộ nhân sự đang làm việc"
             >
               <Filter className="w-3.5 h-3.5" />
-              <span>{attendanceOnly ? 'Chỉ hiện NV tính lương' : 'Hiện tất cả'}</span>
+              <span>
+                {attendanceOnly
+                  ? `🟢 NV tham gia chấm công (${participatingEmployeesCount})`
+                  : `Hiện tất cả (${activeEmployees.length})`}
+              </span>
             </button>
           )}
 
