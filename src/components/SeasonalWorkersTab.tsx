@@ -1036,33 +1036,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               )
             </span>
           </div>
-
-          {/* Cụm nút thao tác chấm công xây dựng nhanh */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleBatchFillFullDays}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-              title="Bật Tham gia chấm công & chấm đủ công chuẩn cho toàn bộ thợ đang làm việc — Tự động nhảy lương bên 2.3 Bản Lương"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>
-                🟢 Bật &ldquo;Tham gia chấm công&rdquo; tất cả (
-                {currentPeriodOption.cycleType === '1_WEEK' ? '6 công' : currentPeriodOption.cycleType === '2_WEEKS' ? '13 công' : '26 công'}
-                )
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleBatchClearDays}
-              className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-              title="Đặt lại 0 công (Chưa chấm công) cho kỳ này để chấm lại từ đầu"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
-              <span>⚪ Đặt về &ldquo;Chưa chấm công&rdquo; (0 công)</span>
-            </button>
-          </div>
         </div>
       </div>
 
