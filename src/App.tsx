@@ -172,6 +172,35 @@ export default function App() {
     return initialEmployees.map((emp) => recomputeEmployeePayroll(emp));
   });
 
+  // Hàm làm sạch danh sách nhân viên thời vụ (loại bỏ trùng lặp key/id hoặc bản ghi NV chính thức bị lẫn)
+  const cleanSeasonalList = (rawList: SeasonalWorker[]): SeasonalWorker[] => {
+    const seenCodes = new Set<string>();
+    const seenIds = new Set<string>();
+    const result: SeasonalWorker[] = [];
+    rawList.forEach((w, idx) => {
+      if (!w) return;
+      const codeStr = String(w.code || '');
+      if (codeStr.startsWith('PNC00') || w.trade === 'Nhân viên chính thức') return;
+      const uniqueCode = codeStr || `SEAS_${w.id || idx + 1}`;
+      if (seenCodes.has(uniqueCode)) return;
+      seenCodes.add(uniqueCode);
+
+      let uniqueId = String(w.id || uniqueCode);
+      if (seenIds.has(uniqueId)) {
+        uniqueId = `${uniqueCode}_${idx + 1}`;
+      }
+      seenIds.add(uniqueId);
+
+      result.push(recomputeSeasonal({ ...w, id: uniqueId }));
+    });
+    return result.sort((a, b) => {
+      if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+  };
+
   // DANH SÁCH CÔNG NHÂN KỸ THUẬT & NHÂN LỰC THỜI VỤ
   const [seasonalWorkers, setSeasonalWorkers] = useState<SeasonalWorker[]>(() => {
     const saved = localStorage.getItem('payroll_seasonal_workers');
@@ -179,13 +208,8 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const list = parsed.map((w) => recomputeSeasonal(w));
-          return list.sort((a, b) => {
-            if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
-              return a.sortOrder - b.sortOrder;
-            }
-            return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
-          });
+          const cleaned = cleanSeasonalList(parsed);
+          if (cleaned.length > 0) return cleaned;
         }
       } catch (e) {
         console.error('Error parsing saved seasonal workers', e);
@@ -494,7 +518,7 @@ export default function App() {
             ? serverData.employees.map((e) => recomputeEmployeePayroll(e))
             : employees;
           const nextSeas = serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-            ? serverData.seasonalWorkers.map((w) => recomputeSeasonal(w))
+            ? cleanSeasonalList(serverData.seasonalWorkers)
             : seasonalWorkers;
 
           const initSnap = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
@@ -530,7 +554,7 @@ export default function App() {
         ? serverData.employees.map((e) => recomputeEmployeePayroll(e))
         : employees;
       const nextSeas = serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-        ? serverData.seasonalWorkers.map((w) => recomputeSeasonal(w))
+        ? cleanSeasonalList(serverData.seasonalWorkers)
         : seasonalWorkers;
 
       const snapshot = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
@@ -1075,7 +1099,7 @@ export default function App() {
     const permanentAsWorkers: SeasonalWorker[] = employees
       .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
       .map((e) => ({
-        id: e.id,
+        id: e.code || `PERM_${e.id}`,
         code: e.code,
         fullName: e.fullName,
         trade: e.title || 'Nhân viên chính thức',

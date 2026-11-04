@@ -512,7 +512,7 @@ export const CompactDailyAttendancePanel: React.FC<CompactDailyAttendancePanelPr
 
       {/* LƯỚI CHẤM CÔNG TỪNG NGÀY DẠNG ICON NHỎ GỌN (10 CỘT TRÊN MÀN HÌNH LỚN) */}
       <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5 max-h-[290px] overflow-y-auto p-0.5">
-        {periodDays.map((day) => {
+        {periodDays.map((day, idx) => {
           const isFull = day.workUnits === 1;
           const isHalf = day.workUnits === 0.5;
           const isOff = day.workUnits === 0;
@@ -520,7 +520,7 @@ export const CompactDailyAttendancePanel: React.FC<CompactDailyAttendancePanelPr
 
           return (
             <div
-              key={day.dayNum}
+              key={`${day.dateLabel}_${idx}`}
               className={`rounded-lg border p-1.5 flex flex-col justify-between transition-all ${
                 isFull
                   ? 'bg-emerald-50/80 border-emerald-400 shadow-2xs'

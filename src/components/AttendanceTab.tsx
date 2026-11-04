@@ -477,10 +477,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     return modifiedTeam.filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
   }, [modifiedTeam]);
 
-  // Danh sách nhân sự để truyền vào Modal tạo Link Chấm Công Di Động (hỗ trợ cả NV Chính Thức & Thời Vụ)
+  // Danh sách nhân sự để truyền vào Modal tạo Link Chấm Công Di Động (hỗ trợ cả NV Chính Thức & Thời Vụ, key duy nhất theo mã)
   const shareableWorkers: SeasonalWorker[] = useMemo(() => {
     const permMapped: SeasonalWorker[] = displayedEmployees.map((e) => ({
-      id: e.id,
+      id: e.code || `PERM_${e.id}`,
       code: e.code,
       fullName: e.fullName,
       trade: e.title || 'Nhân viên chính thức',
@@ -518,10 +518,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       currentPeriodKey: e.currentPeriodKey,
     }));
 
+    const seasMapped: SeasonalWorker[] = displayedSeasonal.map((w) => ({
+      ...w,
+      id: w.code || `SEAS_${w.id}`,
+    }));
+
     if (attendanceGroup === 'PERMANENT') {
-      return [...permMapped, ...displayedSeasonal];
+      return permMapped;
     }
-    return [...displayedSeasonal, ...permMapped];
+    return seasMapped;
   }, [displayedEmployees, displayedSeasonal, attendanceGroup, config.standardWorkDays]);
 
   const selectedCount = displayedEmployees.length;
@@ -615,11 +620,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             <button
               type="button"
               onClick={() => {
-                const firstId =
+                const firstCode =
                   forcedGroup === 'PERMANENT'
-                    ? displayedEmployees[0]?.id
-                    : displayedSeasonal[0]?.id;
-                setShareModalTargetId(firstId ? String(firstId) : null);
+                    ? displayedEmployees[0]?.code
+                    : displayedSeasonal[0]?.code;
+                setShareModalTargetId(firstCode ? String(firstCode) : null);
                 setIsShareModalOpen(true);
               }}
               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer transition"
@@ -705,11 +710,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           <button
             type="button"
             onClick={() => {
-              const firstId =
+              const firstCode =
                 attendanceGroup === 'PERMANENT'
-                  ? displayedEmployees[0]?.id
-                  : displayedSeasonal[0]?.id;
-              setShareModalTargetId(firstId ? String(firstId) : null);
+                  ? displayedEmployees[0]?.code
+                  : displayedSeasonal[0]?.code;
+              setShareModalTargetId(firstCode ? String(firstCode) : null);
               setIsShareModalOpen(true);
             }}
             className="px-3 py-1.5 border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
@@ -925,7 +930,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            setShareModalTargetId(String(emp.id));
+                            setShareModalTargetId(String(emp.code));
                             setIsShareModalOpen(true);
                           }}
                           className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
@@ -1231,7 +1236,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                             handlePermanentDailyCalendarUpdate(emp.code, payload)
                           }
                           onOpenShareLink={() => {
-                            setShareModalTargetId(String(emp.id));
+                            setShareModalTargetId(String(emp.code));
                             setIsShareModalOpen(true);
                           }}
                           onClose={() => setExpandedDailyCode(null)}
@@ -1286,7 +1291,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 );
 
                 return (
-                  <React.Fragment key={w.id}>
+                  <React.Fragment key={`${w.code || w.id}_${index}`}>
                     <tr className={`hover:bg-amber-50/50 transition-colors ${isExpanded ? 'bg-amber-50/70' : ''}`}>
                       <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
                         {index + 1}
@@ -1336,7 +1341,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              setShareModalTargetId(String(w.id));
+                              setShareModalTargetId(String(w.code));
                               setIsShareModalOpen(true);
                             }}
                             className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
@@ -1456,7 +1461,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                               handleSeasonalDailyCalendarUpdate(w.code, payload)
                             }
                             onOpenShareLink={() => {
-                              setShareModalTargetId(String(w.id));
+                              setShareModalTargetId(String(w.code));
                               setIsShareModalOpen(true);
                             }}
                             onClose={() => setExpandedDailyCode(null)}

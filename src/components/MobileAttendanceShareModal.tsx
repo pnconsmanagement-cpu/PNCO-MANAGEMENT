@@ -62,14 +62,10 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
     }
   }, [selectedWorkerId]);
 
-  // Tự động đồng bộ toàn bộ công nhân lên máy chủ khi mở modal chia sẻ
-  useEffect(() => {
-    if (isOpen && workers && workers.length > 0) {
-      saveAllToServer(config, [], workers);
-    }
-  }, [isOpen, workers, config]);
-
-  const activeWorker = workers.find((w) => String(w.id) === String(currentWorkerId)) || workers[0];
+  const activeWorker =
+    workers.find(
+      (w) => String(w.id) === String(currentWorkerId) || w.code === String(currentWorkerId)
+    ) || workers[0];
 
   // Luôn ưu tiên tháng và năm hiện hành thực tế (ví dụ: Tháng 11 / 2026)
   const now = new Date();
@@ -378,8 +374,8 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
                 onChange={(e) => setCurrentWorkerId(e.target.value)}
                 className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {workers.map((w) => (
-                  <option key={w.id} value={String(w.id)}>
+                {workers.map((w, idx) => (
+                  <option key={`${w.code || w.id}_${idx}`} value={String(w.code || w.id)}>
                     {w.code} - {w.fullName} ({w.trade || 'Thợ thi công'} - {w.project || 'Dự án'})
                   </option>
                 ))}

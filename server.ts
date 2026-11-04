@@ -42,17 +42,39 @@ interface StoredData {
   seasonalWorkers: any[];
 }
 
+function sanitizeSeasonalList(list: any[]): any[] {
+  if (!Array.isArray(list)) return initialSeasonalWorkers;
+  const seen = new Set<string>();
+  const cleaned: any[] = [];
+  for (const w of list) {
+    if (!w) continue;
+    const codeStr = String(w.code || '');
+    // Filter out permanent employees that may have been mapped for share modal
+    if (codeStr.startsWith('PNC00') || w.trade === 'Nhân viên chính thức') {
+      continue;
+    }
+    const key = codeStr || String(w.id || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(w);
+  }
+  return cleaned;
+}
+
 function readStorage(): StoredData {
   try {
     if (fs.existsSync(DB_PATH)) {
       const content = fs.readFileSync(DB_PATH, 'utf-8');
       if (content.trim()) {
         const parsed = JSON.parse(content);
+        const cleanedSeasonal = Array.isArray(parsed.seasonalWorkers)
+          ? sanitizeSeasonalList(parsed.seasonalWorkers)
+          : initialSeasonalWorkers;
         return {
           lastUpdated: Number(parsed.lastUpdated) || 0,
           config: parsed.config || initialCompanyConfig,
           employees: Array.isArray(parsed.employees) && parsed.employees.length > 0 ? parsed.employees : initialEmployees,
-          seasonalWorkers: Array.isArray(parsed.seasonalWorkers) && parsed.seasonalWorkers.length > 0 ? parsed.seasonalWorkers : initialSeasonalWorkers,
+          seasonalWorkers: cleanedSeasonal.length > 0 ? cleanedSeasonal : initialSeasonalWorkers,
         };
       }
     }
@@ -102,8 +124,8 @@ app.post('/api/sync', (req, res) => {
   const updated: StoredData = {
     lastUpdated: Date.now(),
     config: config !== undefined ? config : current.config,
-    employees: employees !== undefined ? employees : current.employees,
-    seasonalWorkers: seasonalWorkers !== undefined ? seasonalWorkers : current.seasonalWorkers,
+    employees: Array.isArray(employees) && employees.length > 0 ? employees : current.employees,
+    seasonalWorkers: seasonalWorkers !== undefined ? sanitizeSeasonalList(seasonalWorkers) : current.seasonalWorkers,
   };
 
   writeStorage(updated);
