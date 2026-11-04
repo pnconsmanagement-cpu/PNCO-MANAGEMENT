@@ -107,6 +107,7 @@ export interface SeasonalWorker {
   netSalary: number; // Thực lĩnh = Tổng thu nhập - Tổng khấu trừ
 
   status: 'ACTIVE' | 'COMPLETED' | 'PAUSED'; // 'ACTIVE' = Đang thi công, 'COMPLETED' = Đã thanh lý đợt khoán, 'PAUSED' = Tạm ngưng
+  selectedForAttendance?: boolean; // Trạng thái tham gia chấm công kỳ hiện tại (đồng bộ sang Bản Chấm Công & Bản Lương)
   notes?: string; // Ghi chú hợp đồng hoặc công việc
   payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH'; // Option chu kỳ lương: 1 tuần, 2 tuần hoặc cả tháng
   currentPeriodKey?: string; // Khóa chu kỳ (vd: "2026-09_W1", "2026-09_BI1", "2026-09_MONTH")

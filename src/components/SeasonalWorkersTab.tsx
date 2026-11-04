@@ -79,6 +79,8 @@ interface SeasonalWorkersTabProps {
   onReorderWorkers?: (workers: SeasonalWorker[]) => void;
   onOpenMobileView?: (workerCode?: string) => void;
   onGoToPermanentEmployees?: () => void;
+  onGoToSeasonalAttendance?: () => void;
+  onGoToSeasonalPayroll?: () => void;
 }
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
@@ -94,6 +96,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   onReorderWorkers,
   onOpenMobileView,
   onGoToPermanentEmployees,
+  onGoToSeasonalAttendance,
+  onGoToSeasonalPayroll,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState('ALL');
@@ -101,17 +105,18 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'ALL' | 'BANK' | 'CASH'>('ALL');
   const [selectedTaxFilter, setSelectedTaxFilter] = useState<'ALL' | 'HAS_COMMITMENT' | 'NO_COMMITMENT'>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PAUSED'>('ALL');
+  const [attendanceFilter, setAttendanceFilter] = useState<'ALL' | 'PARTICIPATING' | 'NOT_PARTICIPATING'>('ALL');
   const [selectedWorkerCycleFilter, setSelectedWorkerCycleFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH'>('ALL');
 
-  // Lựa chọn Chu kỳ thanh toán: Lương 1 tuần ('1_WEEK'), Lương 2 tuần ('2_WEEKS') hoặc Cả tháng ('1_MONTH')
+  // Lựa chọn Chu kỳ thanh toán: Mặc định '1_MONTH' (Cả tháng) để khớp 100% với 2.2 Bản Chấm Công & 2.3 Bản Lương
   const [cycleType, setCycleType] = useState<SeasonalCycleType>(() => {
-    const saved = localStorage.getItem('seasonal_payroll_cycle_type');
-    if (saved === '1_MONTH') return '1_MONTH';
+    const saved = localStorage.getItem('seasonal_payroll_cycle_type_v2');
+    if (saved === '1_WEEK') return '1_WEEK';
     if (saved === '2_WEEKS') return '2_WEEKS';
-    return '1_WEEK';
+    return '1_MONTH';
   });
 
-  const currentMonth = config.month || 9;
+  const currentMonth = config.month || 11;
   const currentYear = config.year || 2026;
 
   // Danh sách các kỳ thanh toán sinh tự động theo Chu kỳ (1 tuần, 2 tuần hoặc cả tháng)
@@ -119,12 +124,12 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     return getPayrollPeriods(currentYear, currentMonth, cycleType);
   }, [currentYear, currentMonth, cycleType]);
 
-  // Kỳ đang được chọn (Mặc định W1, BI1 hoặc M1)
+  // Kỳ đang được chọn (Mặc định M1 cho Cả tháng)
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>(() => {
-    const saved = localStorage.getItem('seasonal_payroll_cycle_type');
-    if (saved === '1_MONTH') return 'M1';
+    const saved = localStorage.getItem('seasonal_payroll_cycle_type_v2');
+    if (saved === '1_WEEK') return 'W1';
     if (saved === '2_WEEKS') return 'BI1';
-    return 'W1';
+    return 'M1';
   });
 
   // Tự động kiểm tra và căn chỉnh selectedPeriodId nếu đổi tháng hoặc đổi chu kỳ
@@ -142,7 +147,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   // Chuyển đổi chu kỳ lương
   const handleCycleTypeChange = (newType: SeasonalCycleType) => {
     setCycleType(newType);
-    localStorage.setItem('seasonal_payroll_cycle_type', newType);
+    localStorage.setItem('seasonal_payroll_cycle_type_v2', newType);
     const newPeriods = getPayrollPeriods(currentYear, currentMonth, newType);
     setSelectedPeriodId(newPeriods[0]?.id || (newType === '1_MONTH' ? 'M1' : newType === '2_WEEKS' ? 'BI1' : 'W1'));
     showToast(
@@ -150,12 +155,12 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         ? 'Đã chuyển sang chu kỳ: Lương 1 tuần (Tuần 1, Tuần 2...)'
         : newType === '2_WEEKS'
         ? 'Đã chuyển sang chu kỳ: Lương 2 tuần (Đợt 1: 01-15, Đợt 2: 16-cuối tháng)'
-        : 'Đã chuyển sang chu kỳ: Lương Cả Tháng (Từ ngày 01 đến cuối tháng)'
+        : 'Đã chuyển sang chu kỳ: Lương Cả Tháng — Đồng bộ 100% với 2.2 Bản Chấm Công & 2.3 Bản Lương!'
     );
   };
 
-  // Chế độ sửa nhanh trực tiếp trên bảng
-  const [isQuickEditMode, setIsQuickEditMode] = useState(false);
+  // Chế độ sửa nhanh trực tiếp trên bảng (Bật sẵn mặc định để thao tác nhanh)
+  const [isQuickEditMode, setIsQuickEditMode] = useState(true);
 
   // Trạng thái Sắp xếp danh sách (Đảm bảo 2 máy tính luôn hiển thị thứ tự giống hệt nhau)
   const [sortField, setSortField] = useState<WorkerSortField>('default');
@@ -300,9 +305,14 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
       // 6. Trạng thái
       if (selectedStatus !== 'ALL' && w.status !== selectedStatus) return false;
 
-      // 7. Chu kỳ tính lương của thợ (1 tuần hoặc 2 tuần)
+      // 7. Lọc Tham gia chấm công / Chưa chấm công
+      const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+      if (attendanceFilter === 'PARTICIPATING' && !isParticipating) return false;
+      if (attendanceFilter === 'NOT_PARTICIPATING' && isParticipating) return false;
+
+      // 8. Chu kỳ tính lương của thợ (1 tuần hoặc 2 tuần)
       if (selectedWorkerCycleFilter !== 'ALL') {
-        const workerCycle = w.payrollCycleType || '1_WEEK';
+        const workerCycle = w.payrollCycleType || '1_MONTH';
         if (workerCycle !== selectedWorkerCycleFilter) return false;
       }
 
@@ -342,6 +352,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     selectedPaymentMethod,
     selectedTaxFilter,
     selectedStatus,
+    attendanceFilter,
     selectedWorkerCycleFilter,
     sortField,
     sortDirection,
@@ -350,7 +361,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   // Thống kê tổng hợp tại kỳ hiện tại
   const stats = useMemo(() => {
     const totalWorkers = workersInCurrentPeriod.length;
-    const activeWorkers = workersInCurrentPeriod.filter((w) => w.status === 'ACTIVE').length;
+    const activeWorkers = workersInCurrentPeriod.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length;
     const totalWorkDays = workersInCurrentPeriod.reduce((sum, w) => sum + (w.actualWorkDays || 0), 0);
     const totalOvertimeHours = workersInCurrentPeriod.reduce((sum, w) => sum + (w.overtimeHours || 0), 0);
     const totalSalaryByDays = workersInCurrentPeriod.reduce((sum, w) => sum + (w.salaryByDays || 0), 0);
@@ -362,11 +373,10 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     const totalBankPay = workersInCurrentPeriod.filter((w) => w.paymentMethod === 'BANK').reduce((sum, w) => sum + w.netSalary, 0);
     const totalCashPay = workersInCurrentPeriod.filter((w) => w.paymentMethod === 'CASH').reduce((sum, w) => sum + w.netSalary, 0);
 
-    // Đếm số thợ đã chấm công trong kỳ này
-    const recordedWorkersCount = workers.filter((w) => {
-      const rec = w.periodRecords?.[currentPeriodOption.periodKey];
-      return rec && rec.isRecorded && (rec.actualWorkDays > 0 || rec.netSalary > 0);
-    }).length;
+    // Đếm số thợ đang tham gia chấm công trong kỳ này
+    const recordedWorkersCount = workersInCurrentPeriod.filter(
+      (w) => (w.status || 'ACTIVE') === 'ACTIVE' && ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+    ).length;
 
     return {
       totalWorkers,
@@ -383,7 +393,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
       totalBankPay,
       totalCashPay,
     };
-  }, [workersInCurrentPeriod, workers, currentPeriodOption]);
+  }, [workersInCurrentPeriod]);
 
   // Quản lý chọn / bỏ chọn hàng loạt
   const allFilteredSelected =
@@ -408,41 +418,118 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   };
 
   // Cập nhật nhanh một thuộc tính của công nhân trong KỲ ĐANG CHỌN
-  // Tự động lưu vào periodRecords của kỳ đó và đánh dấu isRecorded = true!
+  // Tự động lưu vào periodRecords của kỳ đó và monthlyAttendance[monthKey] để đồng bộ 100% với 2.2 Bản Chấm Công & 2.3 Bản Lương!
   const handleQuickUpdate = (worker: SeasonalWorker, patch: Partial<SeasonalWorker>) => {
     const original = workers.find((w) => w.id === worker.id) || worker;
     const updated = recordWorkerPeriod(original, currentPeriodOption, patch);
     onUpdateWorker(updated);
   };
 
+  // Bật / tắt trạng thái "Tham gia chấm công" cho 1 công nhân thời vụ
+  // Khi bật -> Tự động chấm đủ công chuẩn của kỳ (26 công cho cả tháng, 13 công cho 2 tuần, 6 công cho 1 tuần) và nhảy lương ngay trên 2.3 Bản Lương
+  // Khi tắt -> Đặt về 0 công, 0 OT, 0 đ trên Bản Lương
+  const handleToggleAttendanceParticipation = (worker: SeasonalWorker) => {
+    const isCurrentlyParticipating = (worker.actualWorkDays || 0) > 0 || (worker.overtimeHours || 0) > 0;
+    const standardDays =
+      currentPeriodOption.cycleType === '1_WEEK'
+        ? 6
+        : currentPeriodOption.cycleType === '2_WEEKS'
+        ? Math.min(13, currentPeriodOption.maxStandardDays)
+        : 26;
+
+    const original = workers.find((w) => w.id === worker.id) || worker;
+    if (isCurrentlyParticipating) {
+      const mStr = String(currentMonth).padStart(2, '0');
+      const monthKey = `${currentYear}-${mStr}`;
+      const cleared = recordWorkerPeriod(original, currentPeriodOption, {
+        actualWorkDays: 0,
+        overtimeHours: 0,
+        mealAllowance: 0,
+        selectedForAttendance: false,
+      });
+      // Xóa luôn các ngày trong monthlyAttendance[monthKey] nếu đang ở chế độ Cả tháng để Timeline 2.2 cũng về 0 công
+      if (currentPeriodOption.cycleType === '1_MONTH' && cleared.monthlyAttendance?.[monthKey]) {
+        cleared.monthlyAttendance = {
+          ...cleared.monthlyAttendance,
+          [monthKey]: {
+            monthKey,
+            month: currentMonth,
+            year: currentYear,
+            totalWorkDays: 0,
+            totalOtHours: 0,
+            days: {},
+          },
+        };
+      }
+      onUpdateWorker(cleared);
+      showToast(`Đã chuyển ${worker.fullName} sang "Chưa chấm công" (0 công)`);
+    } else {
+      const activated = recordWorkerPeriod(original, currentPeriodOption, {
+        status: 'ACTIVE',
+        actualWorkDays: standardDays,
+        mealAllowance: original.mealAllowance > 0 ? original.mealAllowance : standardDays * 30000,
+        selectedForAttendance: true,
+      });
+      onUpdateWorker(activated);
+      showToast(
+        `Đã bật "Tham gia chấm công" (${standardDays} công) cho ${worker.fullName} — 2.2 Bản Chấm Công & 2.3 Bản Lương đã tự động nhảy lương!`
+      );
+    }
+  };
+
+  // Chuyển đổi trạng thái Đang làm việc (ACTIVE) <-> Đã nghỉ / Xong việc (COMPLETED)
+  // Theo đúng yêu cầu: Chỉ có nhân viên đang làm việc (ACTIVE) mới hiện lên Bản Chấm Công, Bản Lương và Bản Ứng Lương
+  const handleToggleWorkerStatus = (worker: SeasonalWorker) => {
+    const original = workers.find((w) => w.id === worker.id) || worker;
+    const nextStatus = (worker.status || 'ACTIVE') === 'ACTIVE' ? 'COMPLETED' : 'ACTIVE';
+    const updated = recordWorkerPeriod(original, currentPeriodOption, {
+      status: nextStatus,
+    });
+    onUpdateWorker(updated);
+    showToast(
+      nextStatus === 'ACTIVE'
+        ? `Đã chuyển ${worker.fullName} sang "Đang làm việc" — Đã hiển thị trên 2.2 Bản Chấm Công, 2.3 Bản Lương & 2.4 Bản Ứng Lương!`
+        : `Đã chuyển ${worker.fullName} sang "Đã nghỉ / Xong việc" — Đã ẩn khỏi Bản Chấm Công, Bản Lương & Bản Ứng Lương.`
+    );
+  };
+
   // Thay đổi nhanh số ngày công
   const handleQuickAdjustDays = (worker: SeasonalWorker, delta: number) => {
     const currentDays = worker.actualWorkDays || 0;
-    const maxDays = currentPeriodOption.maxStandardDays + 2;
+    const maxDays = currentPeriodOption.maxStandardDays + 5;
     const newDays = Math.max(0, Math.min(maxDays, Number((currentDays + delta).toFixed(1))));
     handleQuickUpdate(worker, { actualWorkDays: newDays });
   };
 
-  // Tiện ích 1: Chấm đủ công tiêu chuẩn (6 ngày cho 1 tuần, hoặc 13 ngày cho 2 tuần)
+  // Tiện ích 1: Chấm đủ công tiêu chuẩn (26 ngày cho cả tháng, 6 ngày cho 1 tuần, hoặc 13 ngày cho 2 tuần)
   const handleBatchFillFullDays = () => {
     const targetIds =
       selectedWorkerIds.length > 0
         ? new Set(selectedWorkerIds)
-        : new Set(filteredWorkers.map((w) => w.id));
+        : new Set(filteredWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').map((w) => w.id));
 
-    const standardDays = currentPeriodOption.cycleType === '1_WEEK' ? 6 : Math.min(13, currentPeriodOption.maxStandardDays);
+    const standardDays =
+      currentPeriodOption.cycleType === '1_WEEK'
+        ? 6
+        : currentPeriodOption.cycleType === '2_WEEKS'
+        ? Math.min(13, currentPeriodOption.maxStandardDays)
+        : 26;
 
     workers.forEach((w) => {
       if (targetIds.has(w.id)) {
         const updated = recordWorkerPeriod(w, currentPeriodOption, {
+          status: 'ACTIVE',
           actualWorkDays: standardDays,
-          mealAllowance: standardDays * 30000,
+          mealAllowance: w.mealAllowance > 0 ? w.mealAllowance : standardDays * 30000,
+          selectedForAttendance: true,
         });
         onUpdateWorker(updated);
       }
     });
 
-    showToast(`Đã chấm đủ ${standardDays} ngày công (${currentPeriodOption.shortLabel}) cho ${targetIds.size} thợ!`);
+    showToast(
+      `Đã bật "Tham gia chấm công" (${standardDays} công - ${currentPeriodOption.shortLabel}) cho ${targetIds.size} thợ — 2.2 Bản Chấm Công & 2.3 Bản Lương đã đồng bộ!`
+    );
   };
 
   // Tiện ích 2: Xóa trắng ngày công kỳ này để chấm lại từ đầu (0 công)
@@ -452,6 +539,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         ? new Set(selectedWorkerIds)
         : new Set(filteredWorkers.map((w) => w.id));
 
+    const mStr = String(currentMonth).padStart(2, '0');
+    const monthKey = `${currentYear}-${mStr}`;
+
     workers.forEach((w) => {
       if (targetIds.has(w.id)) {
         const updated = recordWorkerPeriod(w, currentPeriodOption, {
@@ -459,12 +549,26 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           overtimeHours: 0,
           mealAllowance: 0,
           advancePayment: 0,
+          selectedForAttendance: false,
         });
+        if (currentPeriodOption.cycleType === '1_MONTH' && updated.monthlyAttendance?.[monthKey]) {
+          updated.monthlyAttendance = {
+            ...updated.monthlyAttendance,
+            [monthKey]: {
+              monthKey,
+              month: currentMonth,
+              year: currentYear,
+              totalWorkDays: 0,
+              totalOtHours: 0,
+              days: {},
+            },
+          };
+        }
         onUpdateWorker(updated);
       }
     });
 
-    showToast(`Đã đặt lại 0 công cho ${targetIds.size} thợ để chấm lại ${currentPeriodOption.shortLabel}!`);
+    showToast(`Đã đặt lại 0 công ("Chưa chấm công") cho ${targetIds.size} thợ tại ${currentPeriodOption.shortLabel}!`);
   };
 
   // Xuất Excel bảng kê chi trả theo đúng kỳ đang chọn
@@ -599,16 +703,29 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
         {/* Thanh tác vụ chính */}
         <div className="flex flex-wrap items-center gap-2">
-          {onGoToPermanentEmployees && (
+          {onGoToSeasonalAttendance && (
             <button
               type="button"
-              id="btn-goto-permanent-employees"
-              onClick={onGoToPermanentEmployees}
-              className="px-3.5 py-2 bg-sky-900/80 hover:bg-sky-800 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer border border-sky-400/50"
-              title="Quay lại Tab 1. Danh sách nhân viên thường trực chính thức"
+              id="btn-goto-seasonal-attendance"
+              onClick={onGoToSeasonalAttendance}
+              className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-lg shadow-md flex items-center gap-1.5 transition cursor-pointer border border-emerald-300"
+              title="Mở 2.2 Bản Chấm Công Thời Vụ (Timeline theo ngày trong tháng)"
             >
-              <Users className="w-4 h-4 text-sky-300" />
-              <span>← Về 1. Nhân Viên Thường Trực</span>
+              <Calendar className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              <span>Sang 2.2 Bản Chấm Công ({stats.activeWorkers} đang làm) →</span>
+            </button>
+          )}
+
+          {onGoToSeasonalPayroll && (
+            <button
+              type="button"
+              id="btn-goto-seasonal-payroll"
+              onClick={onGoToSeasonalPayroll}
+              className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-lg shadow-md flex items-center gap-1.5 transition cursor-pointer border border-amber-300"
+              title="Mở 2.3 Bản Lương Thời Vụ (Tự động nhảy lương theo công & tăng ca)"
+            >
+              <DollarSign className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              <span>Sang 2.3 Bản Lương ({stats.recordedWorkersCount} có lương) →</span>
             </button>
           )}
 
@@ -619,24 +736,11 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               setSelectedWorkerIdForShare(null);
               setIsMobileShareOpen(true);
             }}
-            className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs rounded-lg shadow-md flex items-center gap-1.5 transition cursor-pointer border border-emerald-300"
+            className="px-3 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer border border-teal-300/60"
             title="Tạo link web app riêng và mã QR để gửi cho thợ chấm công trên điện thoại - Tự động đồng bộ về phần mềm"
           >
-            <Smartphone className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-            <span>Tạo Link Chấm Công Điện Thoại</span>
-          </button>
-
-          {/* Nút Xem thử giao diện di động */}
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenMobileView) onOpenMobileView();
-            }}
-            className="px-3 py-2 bg-sky-500/25 hover:bg-sky-500/40 text-sky-100 font-bold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer border border-sky-400/40"
-            title="Mở trực tiếp giao diện Web App Chấm Công Di Động của thợ"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>Xem giao diện thợ</span>
+            <Smartphone className="w-4 h-4" />
+            <span>Link Chấm Công ĐT</span>
           </button>
 
           {/* Nút Thêm công nhân */}
@@ -646,10 +750,10 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               setEditingWorker(null);
               setIsFormOpen(true);
             }}
-            className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+            className="px-3.5 py-2 bg-white hover:bg-sky-50 text-[#0f3d64] font-black text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
-            <span>Thêm công nhân thời vụ</span>
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>+ Thêm công nhân thời vụ</span>
           </button>
 
           {/* Toggle chế độ sửa nhanh trên bảng */}
@@ -687,26 +791,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             <span>In bảng ký nhận</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleOpenBatchNewTab}
-            className="px-3 py-2 bg-sky-500/25 hover:bg-sky-500/40 text-sky-100 font-semibold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer border border-sky-400/40"
-            title="Mở tab mới độc lập để in bảng kê (tránh bị chặn bởi iframe)"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>Mở tab in</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadBatchHTML}
-            className="px-2.5 py-2 bg-white/10 hover:bg-white/20 text-white/90 font-medium text-xs rounded-lg flex items-center gap-1 transition cursor-pointer"
-            title="Tải tệp HTML bảng kê chi trả để mở và in trên mọi thiết bị"
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            <span>Tải file in</span>
-          </button>
-
           {/* Nút Khôi phục dữ liệu mẫu */}
           <button
             type="button"
@@ -726,7 +810,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             title="Xóa trắng toàn bộ danh sách thợ để bắt đầu nhập công nhân thực tế của công trường"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-300" />
-            <span>Xóa hết danh sách</span>
+            <span>Xóa hết</span>
           </button>
         </div>
       </div>
@@ -750,7 +834,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         </div>
       )}
 
-      {/* THANH CHỌN CHU KỲ (1 TUẦN / 2 TUẦN) VÀ DANH SÁCH KỲ LƯƠNG */}
+      {/* THANH CHỌN CHU KỲ (CẢ THÁNG / 1 TUẦN / 2 TUẦN) VÀ DANH SÁCH KỲ LƯƠNG */}
       <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-3 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -772,12 +856,23 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               </div>
             )}
 
-            {/* OPTION CHU KỲ THANH TOÁN (1 TUẦN, 2 TUẦN HOẶC CẢ THÁNG) */}
+            {/* OPTION CHU KỲ THANH TOÁN (CẢ THÁNG, 1 TUẦN HOẶC 2 TUẦN) */}
             <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
               <span className="text-[11px] font-bold text-slate-600 px-2 flex items-center gap-1">
                 <Layers className="w-3.5 h-3.5 text-sky-700" />
                 <span>Chu kỳ:</span>
               </span>
+              <button
+                type="button"
+                onClick={() => handleCycleTypeChange('1_MONTH')}
+                className={`px-3 py-1 rounded-md font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  cycleType === '1_MONTH'
+                    ? 'bg-[#0f3d64] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                }`}
+              >
+                <span>Lương Tháng (Đồng bộ 2.2 & 2.3)</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleCycleTypeChange('1_WEEK')}
@@ -799,17 +894,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                 }`}
               >
                 <span>Lương 2 Tuần (Nửa tháng)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleCycleTypeChange('1_MONTH')}
-                className={`px-3 py-1 rounded-md font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
-                  cycleType === '1_MONTH'
-                    ? 'bg-[#0f3d64] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-              >
-                <span>Lương Tháng (Cả tháng)</span>
               </button>
             </div>
           </div>
@@ -840,6 +924,11 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               const isSelected = selectedPeriodId === period.id;
               // Đếm số thợ đã có dữ liệu chấm công ở kỳ này
               const recordedCountInThisPeriod = workers.filter((w) => {
+                if (period.cycleType === '1_MONTH') {
+                  const mKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+                  const mRec = w.monthlyAttendance?.[mKey];
+                  if (mRec && (mRec.totalWorkDays > 0 || mRec.totalOtHours > 0)) return true;
+                }
                 const rec = w.periodRecords?.[period.periodKey];
                 return rec && rec.isRecorded && (rec.actualWorkDays > 0 || rec.netSalary > 0);
               }).length;
@@ -874,7 +963,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                           : 'bg-emerald-100 text-emerald-800'
                       }`}
                     >
-                      {recordedCountInThisPeriod}/{workers.length} thợ
+                      🟢 {recordedCountInThisPeriod}/{workers.length} tham gia chấm công
                     </span>
                   ) : (
                     <span
@@ -884,7 +973,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
-                      0 công
+                      ⚪ Chưa chấm công (0 công)
                     </span>
                   )}
                 </button>
@@ -905,38 +994,42 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             </span>
             <span className="text-slate-400">|</span>
             <span className="text-[11px] text-slate-600">
-              Trạng thái: <strong>{stats.recordedWorkersCount}</strong> / {stats.totalWorkers} thợ đã ghi nhận công (
-              {stats.totalWorkers - stats.recordedWorkersCount > 0 ? (
+              Trạng thái: <strong className="text-emerald-700">{stats.recordedWorkersCount}</strong> / {stats.activeWorkers} thợ đang làm việc tham gia chấm công (
+              {stats.activeWorkers - stats.recordedWorkersCount > 0 ? (
                 <span className="text-amber-800 font-bold">
-                  còn {stats.totalWorkers - stats.recordedWorkersCount} thợ chưa chấm
+                  còn {stats.activeWorkers - stats.recordedWorkersCount} thợ chưa chấm công
                 </span>
               ) : (
-                <span className="text-emerald-700 font-bold">Đã chấm đủ tất cả thợ</span>
+                <span className="text-emerald-700 font-bold">Đã bật tham gia chấm công đủ tất cả thợ</span>
               )}
               )
             </span>
           </div>
 
           {/* Cụm nút thao tác chấm công xây dựng nhanh */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={handleBatchFillFullDays}
-              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded flex items-center gap-1 shadow-2xs transition cursor-pointer"
-              title={`Chấm đủ ${currentPeriodOption.cycleType === '1_WEEK' ? '6 ngày' : '13 ngày'} công tiêu chuẩn cho kỳ này`}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              title="Bật Tham gia chấm công & chấm đủ công chuẩn cho toàn bộ thợ đang làm việc — Tự động nhảy lương bên 2.3 Bản Lương"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Chấm đủ công kỳ này</span>
+              <span>
+                🟢 Bật &ldquo;Tham gia chấm công&rdquo; tất cả (
+                {currentPeriodOption.cycleType === '1_WEEK' ? '6 công' : currentPeriodOption.cycleType === '2_WEEKS' ? '13 công' : '26 công'}
+                )
+              </span>
             </button>
 
             <button
               type="button"
               onClick={handleBatchClearDays}
-              className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-[11px] rounded flex items-center gap-1 transition cursor-pointer"
-              title="Đặt lại 0 công cho kỳ này để chấm lại từ đầu, tránh bị nhầm khi in phiếu"
+              className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+              title="Đặt lại 0 công (Chưa chấm công) cho kỳ này để chấm lại từ đầu"
             >
               <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
-              <span>Xóa trắng để chấm lại</span>
+              <span>⚪ Đặt về &ldquo;Chưa chấm công&rdquo; (0 công)</span>
             </button>
           </div>
         </div>
@@ -946,14 +1039,14 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-1">
-            <span>Tổng nhân công</span>
+            <span>Tổng nhân công thời vụ</span>
             <HardHat className="w-4 h-4 text-sky-700" />
           </div>
           <div className="text-xl font-black text-slate-800">
             {stats.totalWorkers} <span className="text-xs font-normal text-slate-500">thợ ({stats.activeWorkers} đang làm)</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Tổng công: <strong className="text-slate-800">{stats.totalWorkDays}</strong> | OT: <strong className="text-slate-800">{stats.totalOvertimeHours}h</strong>
+          <p className="text-[11px] text-emerald-700 font-semibold mt-1">
+            🟢 {stats.recordedWorkersCount} tham gia chấm công &bull; Tổng {stats.totalWorkDays} công
           </p>
         </div>
 
@@ -966,7 +1059,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             {formatNumberOnly(stats.totalSalaryByDays)} <span className="text-xs font-normal text-slate-500">đ</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1">
-            Tiền OT: {formatNumberOnly(stats.totalOvertimePay)} đ
+            Tiền OT ({stats.totalOvertimeHours}h): {formatNumberOnly(stats.totalOvertimePay)} đ
           </p>
         </div>
 
@@ -1025,6 +1118,28 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             />
           </div>
 
+          {/* Lọc Trạng thái làm việc (Chỉ Đang làm việc mới hiện sang 2.2, 2.3, 2.4) */}
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value as any)}
+            className="px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-bold text-slate-800 text-xs"
+          >
+            <option value="ALL">Trạng thái làm việc (Tất cả: {workers.length})</option>
+            <option value="ACTIVE">🟢 Đang làm việc ({stats.activeWorkers})</option>
+            <option value="COMPLETED">⚪ Đã nghỉ / Xong việc ({workers.length - stats.activeWorkers})</option>
+          </select>
+
+          {/* Lọc Tham gia chấm công */}
+          <select
+            value={attendanceFilter}
+            onChange={(e) => setAttendanceFilter(e.target.value as any)}
+            className="px-2.5 py-1.5 border border-emerald-300 rounded-lg bg-emerald-50/50 font-bold text-emerald-900 text-xs"
+          >
+            <option value="ALL">Chấm công kỳ này (Tất cả)</option>
+            <option value="PARTICIPATING">🟢 Tham gia chấm công ({stats.recordedWorkersCount})</option>
+            <option value="NOT_PARTICIPATING">⚪ Chưa chấm công ({stats.totalWorkers - stats.recordedWorkersCount})</option>
+          </select>
+
           {/* Lọc Dự án */}
           <select
             value={selectedProject}
@@ -1073,18 +1188,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             <option value="ALL">Thuế TNCN (Tất cả)</option>
             <option value="HAS_COMMITMENT">Đã có Cam kết 08 (Miễn thuế)</option>
             <option value="NO_COMMITMENT">Chưa có Cam kết (Khấu trừ 10%)</option>
-          </select>
-
-          {/* Lọc Chu kỳ tính lương của thợ */}
-          <select
-            value={selectedWorkerCycleFilter}
-            onChange={(e) => setSelectedWorkerCycleFilter(e.target.value as any)}
-            className="px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-medium text-slate-700 text-xs"
-          >
-            <option value="ALL">Chu kỳ lương thợ (Tất cả)</option>
-            <option value="1_WEEK">Thợ nhận lương 1 Tuần</option>
-            <option value="2_WEEKS">Thợ nhận lương 2 Tuần</option>
-            <option value="1_MONTH">Thợ nhận lương Cả Tháng</option>
           </select>
         </div>
 
@@ -1170,22 +1273,21 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         </div>
       )}
 
-      {/* Hướng dẫn sửa / xóa trực quan */}
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 px-4 flex flex-wrap items-center justify-between text-[11px] text-slate-600">
+      {/* Hướng dẫn đồng bộ trực quan */}
+      <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-2.5 px-4 flex flex-wrap items-center justify-between text-[11px] text-slate-700">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-sky-600"></span>
-            <span>Bấm vào <strong>Họ tên</strong> hoặc nút <strong>&ldquo;Sửa&rdquo;</strong> để chỉnh sửa hồ sơ & chấm công tuần</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-            <span>Bấm biểu tượng <strong>Thùng rác</strong> để xóa thợ khỏi danh sách</span>
-          </span>
-          {isQuickEditMode && (
-            <span className="flex items-center gap-1 text-amber-900 font-bold bg-amber-100 px-2 py-0.5 rounded">
-              <span>Chế độ sửa nhanh đang BẬT: Bạn có thể nhập số trực tiếp vào các ô Đơn giá, Công, OT, Tạm ứng!</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>
+              <strong>Quy tắc đồng bộ:</strong> Chỉ nhân viên có trạng thái <strong className="text-emerald-700">&ldquo;Đang làm việc&rdquo;</strong> mới hiện sang <strong>2.2 Bản Chấm Công</strong>, <strong>2.3 Bản Lương</strong> và <strong>2.4 Bản Ứng Lương</strong>.
             </span>
-          )}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            <span>
+              Khi bật <strong className="text-emerald-700">&ldquo;🟢 Tham gia chấm công&rdquo;</strong> hoặc nhập Số ngày công &gt; 0, lương sẽ <strong>tự động nhảy ngay lập tức</strong>!
+            </span>
+          </span>
         </div>
       </div>
 
@@ -1259,6 +1361,10 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
+              <th className="p-2 border-r border-sky-800 text-center min-w-[135px] bg-emerald-900">
+                <div>Chấm công kỳ này</div>
+                <div className="text-[9px] text-emerald-200 font-normal">(Đồng bộ 2.2 & 2.3)</div>
+              </th>
               <th className="p-2 border-r border-sky-800 min-w-[150px]">Nghề nghiệp / Bậc thợ</th>
               <th className="p-2 border-r border-sky-800 min-w-[140px]">Công trình / Đội</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[100px]">SĐT / CCCD</th>
@@ -1324,14 +1430,14 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               </th>
               <th className="p-2 border-r border-sky-800 min-w-[120px]">Hình thức & STK</th>
               <th className="p-2 border-r border-sky-800 text-center min-w-[95px] bg-[#124977]">Chu kỳ lương</th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[80px]">Trạng thái</th>
+              <th className="p-2 border-r border-sky-800 text-center min-w-[115px]">Trạng thái làm việc</th>
               <th className="p-2 text-center w-36 no-print sticky right-0 bg-[#0f3d64] z-30">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filteredWorkers.length === 0 ? (
               <tr>
-                <td colSpan={23} className="p-12 text-center text-slate-400">
+                <td colSpan={24} className="p-12 text-center text-slate-400">
                   <HardHat className="w-12 h-12 mx-auto text-amber-500/70 mb-3" />
                   <p className="font-bold text-base text-slate-700">
                     {workers.length === 0
@@ -1371,12 +1477,17 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             ) : (
               filteredWorkers.map((w, index) => {
                 const isSelected = selectedWorkerIds.includes(w.id);
+                const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
 
                 return (
                   <tr
                     key={w.id}
                     className={`transition-colors ${
-                      isSelected ? 'bg-sky-50/90' : 'hover:bg-sky-50/40'
+                      w.status !== 'ACTIVE'
+                        ? 'bg-slate-100/70 opacity-75'
+                        : isSelected
+                        ? 'bg-sky-50/90'
+                        : 'hover:bg-sky-50/40'
                     }`}
                   >
                     {/* Checkbox chọn hàng */}
@@ -1493,6 +1604,36 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       )}
                     </td>
 
+                    {/* Nút Bật/Tắt Tham Gia Chấm Công Kỳ Này */}
+                    <td className="p-2 border-r border-slate-200 text-center bg-emerald-50/20">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAttendanceParticipation(w)}
+                        className={`px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition cursor-pointer inline-flex items-center gap-1 shadow-2xs ${
+                          isParticipating
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
+                            : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-800 border-slate-300'
+                        }`}
+                        title={
+                          isParticipating
+                            ? 'Đang tham gia chấm công và tính lương trên 2.2 Bản Chấm Công & 2.3 Bản Lương. Bấm để tắt về 0 công.'
+                            : 'Chưa chấm công (0 công). Bấm để bật Tham gia chấm công và tự động nhảy lương!'
+                        }
+                      >
+                        {isParticipating ? (
+                          <>
+                            <CheckCircle2 className="w-3 h-3 shrink-0" />
+                            <span>Tham gia ({w.actualWorkDays}c)</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="w-3 h-3 shrink-0" />
+                            <span>Chưa chấm (Bật)</span>
+                          </>
+                        )}
+                      </button>
+                    </td>
+
                     {/* Nghề nghiệp / Bậc thợ */}
                     <td className="p-2 border-r border-slate-200 text-slate-800">
                       {isQuickEditMode ? (
@@ -1604,11 +1745,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                           setEditingWorker(w);
                           setIsFormOpen(true);
                         }}
-                        title="Bấm để xem & chấm chi tiết 7 ngày trong tuần"
+                        title="Bấm để xem & chấm chi tiết từng ngày"
                       >
-                        {w.currentWeekLabel
-                          ? w.currentWeekLabel.split(' ')[0] + ' ' + w.currentWeekLabel.split(' ')[1]
-                          : 'Lương tuần'}
+                        {currentPeriodOption.shortLabel}
                       </div>
                     </td>
 
@@ -1726,33 +1865,35 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                     <td className="p-2 border-r border-slate-200 text-center">
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          (w.payrollCycleType || '1_WEEK') === '2_WEEKS'
+                          (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
                             ? 'bg-amber-50 text-amber-900 border-amber-300'
-                            : 'bg-sky-50 text-sky-900 border-sky-300'
+                            : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                            ? 'bg-sky-50 text-sky-900 border-sky-300'
+                            : 'bg-emerald-50 text-emerald-900 border-emerald-300'
                         }`}
-                        title={(w.payrollCycleType || '1_WEEK') === '2_WEEKS' ? 'Nhận lương 2 tuần / đợt nửa tháng' : 'Nhận lương theo từng tuần (7 ngày)'}
                       >
-                        {(w.payrollCycleType || '1_WEEK') === '2_WEEKS' ? '2 Tuần' : '1 Tuần'}
+                        {(w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+                          ? '2 Tuần'
+                          : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                          ? '1 Tuần'
+                          : 'Cả Tháng'}
                       </span>
                     </td>
 
-                    {/* Trạng thái */}
+                    {/* Trạng thái làm việc (Bấm để chuyển Đang làm việc <-> Đã nghỉ) */}
                     <td className="p-2 border-r border-slate-200 text-center">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      <button
+                        type="button"
+                        onClick={() => handleToggleWorkerStatus(w)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
                           w.status === 'ACTIVE'
-                            ? 'bg-sky-100 text-sky-800'
-                            : w.status === 'COMPLETED'
-                            ? 'bg-slate-200 text-slate-700'
-                            : 'bg-rose-100 text-rose-800'
+                            ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
                         }`}
+                        title="Chỉ nhân viên Đang làm việc mới hiện sang Bản Chấm Công, Bản Lương và Bản Ứng Lương. Bấm để chuyển đổi trạng thái."
                       >
-                        {w.status === 'ACTIVE'
-                          ? 'Đang làm'
-                          : w.status === 'COMPLETED'
-                          ? 'Xong việc'
-                          : 'Tạm ngưng'}
-                      </span>
+                        {w.status === 'ACTIVE' ? '🟢 Đang làm việc' : '⚪ Đã nghỉ việc'}
+                      </button>
                     </td>
 
                     {/* CỘT THAO TÁC RÕ RÀNG, DỄ BẤM */}
@@ -1836,7 +1977,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           {/* Dòng tổng cộng chân bảng */}
           <tfoot className="bg-slate-100 font-bold text-slate-900 sticky bottom-0 border-t-2 border-slate-400 z-20">
             <tr>
-              <td colSpan={7} className="p-2 border-r border-slate-300 uppercase text-right tracking-wider font-extrabold text-[#0f3d64]">
+              <td colSpan={8} className="p-2 border-r border-slate-300 uppercase text-right tracking-wider font-extrabold text-[#0f3d64]">
                 TỔNG CỘNG ({filteredWorkers.length} CÔNG NHÂN):
               </td>
               <td className="p-2 border-r border-slate-300 text-right font-mono font-black text-sky-900">

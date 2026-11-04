@@ -45,6 +45,7 @@ import {
   initialSeasonalWorkers,
   recomputeSeasonalWorkerPayroll as recomputeSeasonal,
   syncSeasonalWorkerForMonth,
+  ensureSeasonalHistoricalMonths,
 } from './data/mockSeasonalWorkers';
 import { initialProjects, initialTeamWorkers, initialSalaryAdvances } from './data/mockProjectsAndTeams';
 import { CompanyConfig, Employee, SeasonalWorker, Project, TeamWorker, SalaryAdvance } from './types';
@@ -353,7 +354,13 @@ export default function App() {
       }
       seenIds.add(uniqueId);
 
-      result.push(syncSeasonalWorkerForMonth({ ...w, id: uniqueId }, targetMonth, targetYear));
+      result.push(
+        syncSeasonalWorkerForMonth(
+          ensureSeasonalHistoricalMonths({ ...w, id: uniqueId }),
+          targetMonth,
+          targetYear
+        )
+      );
     });
     return result.sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
@@ -379,7 +386,7 @@ export default function App() {
       }
     }
     return initialSeasonalWorkers.map((w) =>
-      syncSeasonalWorkerForMonth(w, realInfo.realMonth, realInfo.realYear)
+      syncSeasonalWorkerForMonth(ensureSeasonalHistoricalMonths(w), realInfo.realMonth, realInfo.realYear)
     );
   });
 
@@ -426,8 +433,8 @@ export default function App() {
   });
 
   type SubViewType = 'LIST' | 'ATTENDANCE' | 'PAYROLL' | 'ADVANCES';
-  const [activeTab, setActiveTab] = useState<TabType>('PERMANENT_EMPLOYEES');
-  const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('PERMANENT');
+  const [activeTab, setActiveTab] = useState<TabType>('SEASONAL_WORKERS');
+  const [employeeSubTab, setEmployeeSubTab] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>('SEASONAL');
   const [permanentSubTab, setPermanentSubTab] = useState<SubViewType>('LIST');
   const [seasonalSubTab, setSeasonalSubTab] = useState<SubViewType>('LIST');
 
@@ -1213,7 +1220,7 @@ export default function App() {
     );
 
     setSeasonalWorkers((prev) =>
-      prev.map((w) => syncSeasonalWorkerForMonth(w, newMonth, newYear))
+      prev.map((w) => syncSeasonalWorkerForMonth(ensureSeasonalHistoricalMonths(w), newMonth, newYear))
     );
   };
 
@@ -1882,6 +1889,8 @@ export default function App() {
                         setActiveTab('PERMANENT_EMPLOYEES');
                         setPermanentSubTab('LIST');
                       }}
+                      onGoToSeasonalAttendance={() => setSeasonalSubTab('ATTENDANCE')}
+                      onGoToSeasonalPayroll={() => setSeasonalSubTab('PAYROLL')}
                     />
                   )}
 
