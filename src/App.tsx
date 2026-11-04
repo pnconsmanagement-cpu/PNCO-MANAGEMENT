@@ -1778,131 +1778,127 @@ export default function App() {
               {/* TAB 2: BẢN NHÂN VIÊN THỜI VỤ (CÓ 4 SUB-TABS BÊN TRONG) */}
               {activeTab === 'SEASONAL_WORKERS' && (
                 <div className="space-y-3">
-                  {/* Thanh chuyển đổi 4 Tab con bên trong Tab 2 */}
-                  <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                      <button
-                        type="button"
-                        id="subtab-seas-list"
-                        onClick={() => setSeasonalSubTab('LIST')}
-                        className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
-                          seasonalSubTab === 'LIST'
-                            ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <HardHat className="w-4 h-4 text-amber-200" />
-                        <span>2.1 Danh Sách Thời Vụ</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                          seasonalSubTab === 'LIST' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          {syncedSeasonalWorkers.length}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        id="subtab-seas-att"
-                        onClick={() => setSeasonalSubTab('ATTENDANCE')}
-                        className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
-                          seasonalSubTab === 'ATTENDANCE'
-                            ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <CalendarCheck className="w-4 h-4 text-amber-200" />
-                        <span>2.2 Bản Chấm Công</span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                          {syncedSeasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        id="subtab-seas-payroll"
-                        onClick={() => setSeasonalSubTab('PAYROLL')}
-                        className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
-                          seasonalSubTab === 'PAYROLL'
-                            ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <Table2 className="w-4 h-4 text-amber-200" />
-                        <span>2.3 Bản Lương</span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                          {
-                            syncedSeasonalWorkers.filter(
-                              (w) =>
-                                (w.status || 'ACTIVE') === 'ACTIVE' &&
-                                ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
-                            ).length
-                          }{' '}
-                          tham gia chấm công
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        id="subtab-seas-advances"
-                        onClick={() => setSeasonalSubTab('ADVANCES')}
-                        className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
-                          seasonalSubTab === 'ADVANCES'
-                            ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <CreditCard className="w-4 h-4 text-amber-200" />
-                        <span>2.4 Bản Ứng Lương</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
-                          seasonalSubTab === 'ADVANCES' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          {salaryAdvances.filter((a) => a.targetType === 'SEASONAL').length}
-                        </span>
-                      </button>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-bold">
-                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                        <span>Hôm nay: {realDateInfo.realDateStr}</span>
-                      </span>
-                      <div className="inline-flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  {/* Thanh chuyển đổi 4 Tab con bên trong Tab 2 (ẩn trên 2.1 Danh Sách Thời Vụ theo yêu cầu tinh gọn) */}
+                  {seasonalSubTab !== 'LIST' && (
+                    <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <button
                           type="button"
-                          onClick={() => handleChangeMonthYear(9, config.year || realDateInfo.realYear)}
-                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
-                            config.month === 9
-                              ? 'bg-amber-600 text-white shadow-2xs'
-                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                          }`}
+                          id="subtab-seas-list"
+                          onClick={() => setSeasonalSubTab('LIST')}
+                          className="px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                         >
-                          Tháng 9
+                          <HardHat className="w-4 h-4 text-amber-200" />
+                          <span>2.1 Danh Sách Thời Vụ</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-black bg-slate-200 text-slate-700">
+                            {syncedSeasonalWorkers.length}
+                          </span>
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => handleChangeMonthYear(10, config.year || realDateInfo.realYear)}
-                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
-                            config.month === 10
-                              ? 'bg-amber-600 text-white shadow-2xs'
-                              : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                          id="subtab-seas-att"
+                          onClick={() => setSeasonalSubTab('ATTENDANCE')}
+                          className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                            seasonalSubTab === 'ATTENDANCE'
+                              ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
+                              : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
                           }`}
                         >
-                          Tháng 10
+                          <CalendarCheck className="w-4 h-4 text-amber-200" />
+                          <span>2.2 Bản Chấm Công</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                            {syncedSeasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
+                          </span>
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => handleChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
-                          className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
-                            config.month === realDateInfo.realMonth && config.year === realDateInfo.realYear
-                              ? 'bg-emerald-600 text-white shadow-2xs'
-                              : 'text-emerald-700 hover:bg-emerald-50'
+                          id="subtab-seas-payroll"
+                          onClick={() => setSeasonalSubTab('PAYROLL')}
+                          className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                            seasonalSubTab === 'PAYROLL'
+                              ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
+                              : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
                           }`}
                         >
-                          Tháng {realDateInfo.realMonthPadded}/{realDateInfo.realYear} (Hiện tại)
+                          <Table2 className="w-4 h-4 text-amber-200" />
+                          <span>2.3 Bản Lương</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                            {
+                              syncedSeasonalWorkers.filter(
+                                (w) =>
+                                  (w.status || 'ACTIVE') === 'ACTIVE' &&
+                                  ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+                              ).length
+                            }{' '}
+                            tham gia chấm công
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          id="subtab-seas-advances"
+                          onClick={() => setSeasonalSubTab('ADVANCES')}
+                          className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                            seasonalSubTab === 'ADVANCES'
+                              ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-600/20'
+                              : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
+                          }`}
+                        >
+                          <CreditCard className="w-4 h-4 text-amber-200" />
+                          <span>2.4 Bản Ứng Lương</span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                            seasonalSubTab === 'ADVANCES' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {salaryAdvances.filter((a) => a.targetType === 'SEASONAL').length}
+                          </span>
                         </button>
                       </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-bold">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                          <span>Hôm nay: {realDateInfo.realDateStr}</span>
+                        </span>
+                        <div className="inline-flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => handleChangeMonthYear(9, config.year || realDateInfo.realYear)}
+                            className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                              config.month === 9
+                                ? 'bg-amber-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                            }`}
+                          >
+                            Tháng 9
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleChangeMonthYear(10, config.year || realDateInfo.realYear)}
+                            className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                              config.month === 10
+                                ? 'bg-amber-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                            }`}
+                          >
+                            Tháng 10
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
+                            className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                              config.month === realDateInfo.realMonth && config.year === realDateInfo.realYear
+                                ? 'bg-emerald-600 text-white shadow-2xs'
+                                : 'text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                          >
+                            Tháng {realDateInfo.realMonthPadded}/{realDateInfo.realYear} (Hiện tại)
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* 2.1 Danh Sách Thời Vụ */}
                   {seasonalSubTab === 'LIST' && (
