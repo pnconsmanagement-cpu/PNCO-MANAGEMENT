@@ -123,15 +123,33 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     }
   }, [periodCycle]);
 
-  // Đồng bộ 100% danh sách nhân viên chính thức và thời vụ theo đúng Tháng / Năm đang chọn từ Bản Chấm Công
+  // Đồng bộ 100% danh sách nhân viên chính thức và thời vụ theo đúng Tháng / Năm đang chọn từ Bản Chấm Công & Bản Ứng Lương
   const syncedEmployeesForMonth = useMemo(() => {
-    return employees.map((emp) =>
-      syncEmployeeForMonth(emp, currentMonth, currentYear, config.standardWorkDays || 26)
-    );
+    return employees.map((emp) => {
+      const synced = syncEmployeeForMonth(emp, currentMonth, currentYear, config.standardWorkDays || 26);
+      const adv = emp.advancePayment || synced.advancePayment || 0;
+      const totalDeductions = (synced.totalInsurance || 0) + (synced.personalIncomeTax || 0) + (synced.unionFee || 0) + adv;
+      return {
+        ...synced,
+        advancePayment: adv,
+        totalDeductions,
+        netSalary: Math.max(0, (synced.totalIncome || 0) - totalDeductions),
+      };
+    });
   }, [employees, currentMonth, currentYear, config.standardWorkDays]);
 
   const syncedSeasonalForMonth = useMemo(() => {
-    return seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear));
+    return seasonalWorkers.map((w) => {
+      const synced = syncSeasonalWorkerForMonth(w, currentMonth, currentYear);
+      const adv = w.advancePayment || synced.advancePayment || 0;
+      const totalDeductions = (synced.personalIncomeTax || 0) + adv;
+      return {
+        ...synced,
+        advancePayment: adv,
+        totalDeductions,
+        netSalary: Math.max(0, (synced.totalIncome || 0) - totalDeductions),
+      };
+    });
   }, [seasonalWorkers, currentMonth, currentYear]);
 
   // Danh sách công nhân thời vụ đang làm việc (ACTIVE)
@@ -139,13 +157,13 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return syncedSeasonalForMonth.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
   }, [syncedSeasonalForMonth]);
 
-  // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG theo từng Tab Chu kỳ lương đã khai báo
+  // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG hoặc CÓ TẠM ỨNG theo từng Tab Chu kỳ lương đã khai báo
   const oneWeekWorkersCount = useMemo(
     () =>
       activeSeasonalWorkers.filter(
         (w) =>
           (w.payrollCycleType || '1_MONTH') === '1_WEEK' &&
-          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0 || (w.advancePayment || 0) > 0)
       ).length,
     [activeSeasonalWorkers]
   );
@@ -154,7 +172,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       activeSeasonalWorkers.filter(
         (w) =>
           (w.payrollCycleType || '1_MONTH') === '2_WEEKS' &&
-          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0 || (w.advancePayment || 0) > 0)
       ).length,
     [activeSeasonalWorkers]
   );
@@ -163,7 +181,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       activeSeasonalWorkers.filter(
         (w) =>
           (w.payrollCycleType || '1_MONTH') === '1_MONTH' &&
-          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+          ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0 || (w.advancePayment || 0) > 0)
       ).length,
     [activeSeasonalWorkers]
   );
@@ -184,9 +202,18 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     // Tính toán công & lương cho từng công nhân (theo kỳ con nếu chọn Tuần 1..5 / Đợt 1..2, hoặc tổng hợp tháng)
     const computedList = listByCycle.map((w) => {
       if (subPeriod) {
-        return getWorkerForPeriod(w, subPeriod);
+        const wSub = getWorkerForPeriod(w, subPeriod);
+        const adv = w.advancePayment || wSub.advancePayment || 0;
+        const totalDed = (wSub.personalIncomeTax || 0) + adv;
+        return {
+          ...wSub,
+          advancePayment: adv,
+          totalDeductions: totalDed,
+          netSalary: Math.max(0, (wSub.totalIncome || 0) - totalDed),
+        };
       }
       const hasParticipated = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+      const adv = w.advancePayment || 0;
       if (!hasParticipated) {
         return {
           ...w,
@@ -196,16 +223,24 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
           overtimePay: 0,
           totalIncome: 0,
           personalIncomeTax: 0,
-          totalDeductions: w.advancePayment || 0,
+          advancePayment: adv,
+          totalDeductions: adv,
           netSalary: 0,
         };
       }
-      return w;
+      const totalDed = (w.personalIncomeTax || 0) + adv;
+      return {
+        ...w,
+        advancePayment: adv,
+        totalDeductions: totalDed,
+        netSalary: Math.max(0, (w.totalIncome || 0) - totalDed),
+      };
     });
 
     return computedList.filter((w) => {
       if (seasonalAttendanceOnly) {
-        const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+        const isParticipating =
+          (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0 || (w.advancePayment || 0) > 0;
         if (!isParticipating) return false;
       }
       const term = searchTerm.toLowerCase();

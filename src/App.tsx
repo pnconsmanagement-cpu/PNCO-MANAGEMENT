@@ -1332,43 +1332,105 @@ export default function App() {
     localStorage.setItem('payroll_team_workers', JSON.stringify(list));
   };
 
+  // Helper kiểm tra phiếu tạm ứng thuộc Tháng / Năm đang xét
+  const doesAdvanceMatchMonthYear = (adv: SalaryAdvance, m: number, y: number): boolean => {
+    const dateStr = (adv.requestDate || adv.paymentDate || '').trim();
+    if (dateStr) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const [yy, mm] = dateStr.split('-').map(Number);
+        if (!isNaN(mm) && !isNaN(yy)) return mm === m && yy === y;
+      }
+      const parts = dateStr.split(/[\/\-]/);
+      if (parts.length === 3) {
+        const mm = Number(parts[1]);
+        const yy = Number(parts[2].length === 4 ? parts[2] : parts[0]);
+        if (!isNaN(mm) && !isNaN(yy)) return mm === m && yy === y;
+      }
+    }
+    if (adv.periodKey) {
+      const pParts = adv.periodKey.split(/[\/\-]/);
+      if (pParts.length === 2) {
+        const mm = Number(pParts[0].length === 4 ? pParts[1] : pParts[0]);
+        const yy = Number(pParts[0].length === 4 ? pParts[0] : pParts[1]);
+        if (!isNaN(mm) && !isNaN(yy)) return mm === m && yy === y;
+      }
+    }
+    return true;
+  };
+
+  // Đồng bộ danh sách phiếu tạm ứng vào Nhân viên chính thức & Nhân viên thời vụ
+  const syncAdvancesIntoWorkers = (nextAdvances: SalaryAdvance[]) => {
+    const curM = config.month || realDateInfo.realMonth;
+    const curY = config.year || realDateInfo.realYear;
+    const mStr = String(curM).padStart(2, '0');
+    const monthPeriodKey = `${curY}-${mStr}_MONTH`;
+
+    const nextEmployees = employees.map((e) => {
+      const empAdvances = nextAdvances.filter(
+        (a) =>
+          a.targetType === 'PERMANENT' &&
+          (a.workerId === e.id || a.workerCode === e.code) &&
+          doesAdvanceMatchMonthYear(a, curM, curY)
+      );
+      const sumAdv = empAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+      return recomputeEmployeePayroll({ ...e, advancePayment: sumAdv });
+    });
+
+    const nextSeasonal = seasonalWorkers.map((w) => {
+      const workerAdvances = nextAdvances.filter(
+        (a) =>
+          a.targetType === 'SEASONAL' &&
+          (a.workerId === w.id || a.workerCode === w.code) &&
+          doesAdvanceMatchMonthYear(a, curM, curY)
+      );
+      const sumAdv = workerAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+      const totalDeductions = (w.personalIncomeTax || 0) + sumAdv;
+      const netSalary = Math.max(0, (w.totalIncome || 0) - totalDeductions);
+      const nextPeriodRecords = { ...(w.periodRecords || {}) };
+      if (nextPeriodRecords[monthPeriodKey]) {
+        const rec = nextPeriodRecords[monthPeriodKey];
+        const recDed = (rec.personalIncomeTax || 0) + sumAdv;
+        nextPeriodRecords[monthPeriodKey] = {
+          ...rec,
+          advancePayment: sumAdv,
+          totalDeductions: recDed,
+          netSalary: Math.max(0, (rec.totalIncome || 0) - recDed),
+        };
+      }
+      return {
+        ...w,
+        advancePayment: sumAdv,
+        totalDeductions,
+        netSalary,
+        periodRecords: nextPeriodRecords,
+      };
+    });
+
+    setEmployees(nextEmployees);
+    setSeasonalWorkers(nextSeasonal);
+    localStorage.setItem('payroll_employees', JSON.stringify(nextEmployees));
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeasonal));
+    saveAllToServer(config, nextEmployees, nextSeasonal);
+  };
+
   // Handlers for Salary Advances
   const handleAddSalaryAdvance = (adv: SalaryAdvance) => {
     const updated = [adv, ...salaryAdvances];
     setSalaryAdvances(updated);
     localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
-    if (adv.targetType === 'PERMANENT') {
-      setEmployees((prev) =>
-        prev.map((e) => {
-          if (e.id === adv.workerId || e.code === adv.workerCode) {
-            const newAdv = (e.advancePayment || 0) + adv.amount;
-            return recomputeEmployeePayroll({ ...e, advancePayment: newAdv });
-          }
-          return e;
-        })
-      );
-    } else if (adv.targetType === 'SEASONAL') {
-      setSeasonalWorkers((prev) =>
-        prev.map((w) => {
-          if (w.id === adv.workerId || w.code === adv.workerCode) {
-            const newAdv = (w.advancePayment || 0) + adv.amount;
-            const net = Math.max(0, (w.totalIncome || 0) - (w.personalIncomeTax || 0) - newAdv);
-            return { ...w, advancePayment: newAdv, netSalary: net };
-          }
-          return w;
-        })
-      );
-    }
+    syncAdvancesIntoWorkers(updated);
   };
   const handleUpdateSalaryAdvance = (adv: SalaryAdvance) => {
     const updated = salaryAdvances.map((item) => (item.id === adv.id ? adv : item));
     setSalaryAdvances(updated);
     localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
+    syncAdvancesIntoWorkers(updated);
   };
   const handleDeleteSalaryAdvance = (id: string) => {
     const updated = salaryAdvances.filter((item) => item.id !== id);
     setSalaryAdvances(updated);
     localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
+    syncAdvancesIntoWorkers(updated);
   };
 
   const handleBatchUpdateSeasonalWorkers = (list: SeasonalWorker[]) => {
@@ -1386,19 +1448,52 @@ export default function App() {
   };
 
   // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)
-  // Giúp Bản Chấm Công, Bản Lương và Thẻ Chỉ Số (MetricCards) luôn khớp tuyệt đối
+  // và tự động cộng tổng tiền Tạm ứng từ Bản Ứng Lương (salaryAdvances) vào đúng nhân viên
   const syncedEmployees = useMemo(() => {
     const m = config.month || realDateInfo.realMonth;
     const y = config.year || realDateInfo.realYear;
     const std = config.standardWorkDays || 26;
-    return employees.map((e) => syncEmployeeForMonth(e, m, y, std));
-  }, [employees, config.month, config.year, config.standardWorkDays, realDateInfo.realMonth, realDateInfo.realYear]);
+    return employees.map((e) => {
+      const synced = syncEmployeeForMonth(e, m, y, std);
+      const matchingAdvances = salaryAdvances.filter(
+        (a) =>
+          a.targetType === 'PERMANENT' &&
+          (a.workerId === synced.id || a.workerCode === synced.code) &&
+          doesAdvanceMatchMonthYear(a, m, y)
+      );
+      if (matchingAdvances.length > 0) {
+        const sumAdv = matchingAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+        return recomputeEmployeePayroll({ ...synced, advancePayment: sumAdv });
+      }
+      return synced;
+    });
+  }, [employees, salaryAdvances, config.month, config.year, config.standardWorkDays, realDateInfo.realMonth, realDateInfo.realYear]);
 
   const syncedSeasonalWorkers = useMemo(() => {
     const m = config.month || realDateInfo.realMonth;
     const y = config.year || realDateInfo.realYear;
-    return seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, m, y));
-  }, [seasonalWorkers, config.month, config.year, realDateInfo.realMonth, realDateInfo.realYear]);
+    return seasonalWorkers.map((w) => {
+      const synced = syncSeasonalWorkerForMonth(w, m, y);
+      const matchingAdvances = salaryAdvances.filter(
+        (a) =>
+          a.targetType === 'SEASONAL' &&
+          (a.workerId === synced.id || a.workerCode === synced.code) &&
+          doesAdvanceMatchMonthYear(a, m, y)
+      );
+      const sumAdv =
+        matchingAdvances.length > 0
+          ? matchingAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+          : 0;
+      const totalDeductions = (synced.personalIncomeTax || 0) + sumAdv;
+      const netSalary = Math.max(0, (synced.totalIncome || 0) - totalDeductions);
+      return {
+        ...synced,
+        advancePayment: sumAdv,
+        totalDeductions,
+        netSalary,
+      };
+    });
+  }, [seasonalWorkers, salaryAdvances, config.month, config.year, realDateInfo.realMonth, realDateInfo.realYear]);
 
   // Count issues
   const auditCount = syncedEmployees.filter(

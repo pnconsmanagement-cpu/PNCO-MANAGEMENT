@@ -18,6 +18,7 @@ import {
   Users,
   DollarSign,
   FileText,
+  Edit2,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SalaryAdvance, Employee, SeasonalWorker, TeamWorker, CompanyConfig } from '../types';
@@ -67,12 +68,54 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const [editingAdvance, setEditingAdvance] = useState<SalaryAdvance | null>(null);
+
+  // Helper chuyển đổi giữa YYYY-MM-DD (input type="date") và DD/MM/YYYY (hiển thị)
+  const getTodayIsoDate = () => {
+    const now = new Date();
+    const y = config.year || now.getFullYear();
+    const m = String(config.month || now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const toIsoDateString = (dateStr?: string): string => {
+    if (!dateStr) return getTodayIsoDate();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) return dateStr.trim();
+    const parts = dateStr.trim().split(/[\/\-]/);
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    return getTodayIsoDate();
+  };
+
+  const toVnDateString = (isoStr: string): string => {
+    if (!isoStr) return new Date().toLocaleDateString('vi-VN');
+    const parts = isoStr.trim().split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+    }
+    return isoStr;
+  };
+
+  const getPeriodKeyFromIsoDate = (isoStr: string): string => {
+    const parts = isoStr.trim().split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[1].padStart(2, '0')}/${parts[0]}`;
+    }
+    return `${config.month < 10 ? '0' + config.month : config.month}/${config.year}`;
+  };
+
   // Form modal state
   const [formTargetType, setFormTargetType] = useState<'PERMANENT' | 'SEASONAL' | 'TEAM'>(
     forcedTargetType || 'PERMANENT'
   );
   const [formWorkerId, setFormWorkerId] = useState('');
   const [formAmount, setFormAmount] = useState<number>(3000000);
+  const [formRequestDate, setFormRequestDate] = useState<string>(() => getTodayIsoDate());
   const [formReason, setFormReason] = useState('Tạm ứng tiền sinh hoạt công trường giữa kỳ');
   const [formMethod, setFormMethod] = useState<'BANK' | 'CASH'>('BANK');
   const [formNotes, setFormNotes] = useState('');
@@ -110,6 +153,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   }, [formTargetType, employees, seasonalWorkers, teamWorkers]);
 
   const openAddModal = () => {
+    setEditingAdvance(null);
     const target = forcedTargetType || 'PERMANENT';
     setFormTargetType(target);
     const firstActive =
@@ -118,17 +162,80 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         : seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE')?.id;
     setFormWorkerId(firstActive || '');
     setFormAmount(3000000);
+    setFormRequestDate(getTodayIsoDate());
     setFormReason(target === 'PERMANENT' ? 'Tạm ứng tiền lương giữa kỳ' : 'Tạm ứng tiền sinh hoạt công trường giữa kỳ');
     setFormMethod('BANK');
     setFormNotes('');
     setIsModalOpen(true);
   };
 
+  const openEditModal = (adv: SalaryAdvance) => {
+    setEditingAdvance(adv);
+    setFormTargetType(adv.targetType);
+    // Tìm workerId khớp theo id hoặc code
+    let matchedId = adv.workerId;
+    if (adv.targetType === 'PERMANENT') {
+      const emp = employees.find((e) => e.id === adv.workerId || e.code === adv.workerCode);
+      if (emp) matchedId = emp.id;
+    } else if (adv.targetType === 'SEASONAL') {
+      const sw = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
+      if (sw) matchedId = sw.id;
+    } else if (adv.targetType === 'TEAM') {
+      const tw = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
+      if (tw) matchedId = tw.id;
+    }
+    setFormWorkerId(matchedId);
+    setFormAmount(adv.amount || 0);
+    setFormRequestDate(toIsoDateString(adv.requestDate || adv.paymentDate));
+    setFormReason(adv.reason || '');
+    setFormMethod(adv.paymentMethod || 'BANK');
+    setFormNotes(adv.notes || '');
+    setIsModalOpen(true);
+  };
+
   const handleCreateAdvance = (e: React.FormEvent) => {
     e.preventDefault();
-    const selectedWorker = availableWorkers.find((w) => w.id === formWorkerId);
+    const selectedWorker =
+      availableWorkers.find((w) => w.id === formWorkerId || w.code === formWorkerId) ||
+      (editingAdvance
+        ? {
+            id: editingAdvance.workerId,
+            code: editingAdvance.workerCode,
+            name: editingAdvance.workerName,
+            sub: editingAdvance.departmentOrProject,
+          }
+        : undefined);
+
     if (!selectedWorker) {
-      alert('Vui lòng chọn nhân sự tạm ứng!');
+      showToast('Vui lòng chọn nhân sự tạm ứng!');
+      return;
+    }
+
+    const formattedDate = toVnDateString(formRequestDate);
+    const derivedPeriodKey = getPeriodKeyFromIsoDate(formRequestDate);
+
+    if (editingAdvance) {
+      const updatedAdv: SalaryAdvance = {
+        ...editingAdvance,
+        targetType: formTargetType,
+        workerId: selectedWorker.id,
+        workerCode: selectedWorker.code,
+        workerName: selectedWorker.name,
+        departmentOrProject: selectedWorker.sub || 'Công ty Phúc Nguyên',
+        amount: Number(formAmount) || 0,
+        requestDate: formattedDate,
+        paymentDate: formattedDate,
+        reason: formReason,
+        paymentMethod: formMethod,
+        periodKey: derivedPeriodKey,
+        notes: formNotes,
+      };
+      onUpdateAdvance(updatedAdv);
+      showToast(
+        `Đã cập nhật phiếu tạm ứng ${updatedAdv.advanceCode} (${formatVND(updatedAdv.amount)}) — Đã đồng bộ vào ô Tạm ứng trên Bản Lương!`
+      );
+      setEditingAdvance(null);
+      setIsModalOpen(false);
       return;
     }
 
@@ -142,18 +249,20 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       workerName: selectedWorker.name,
       departmentOrProject: selectedWorker.sub || 'Công ty Phúc Nguyên',
       amount: Number(formAmount) || 0,
-      requestDate: new Date().toLocaleDateString('vi-VN'),
-      paymentDate: new Date().toLocaleDateString('vi-VN'),
+      requestDate: formattedDate,
+      paymentDate: formattedDate,
       reason: formReason,
       paymentMethod: formMethod,
       status: 'APPROVED',
       approvedBy: 'Admin (Giám đốc)',
-      periodKey: `${config.month < 10 ? '0' + config.month : config.month}/${config.year}`,
+      periodKey: derivedPeriodKey,
       notes: formNotes,
     };
 
     onAddAdvance(newAdv);
-    showToast(`Đã tạo phiếu tạm ứng ${newAdv.advanceCode} cho ${newAdv.workerName}!`);
+    showToast(
+      `Đã tạo phiếu tạm ứng ${newAdv.advanceCode} (${formatVND(newAdv.amount)}) cho ${newAdv.workerName} — Đã tự động cập nhật vào ô Tạm ứng trên Bản Lương!`
+    );
     setIsModalOpen(false);
   };
 
@@ -598,7 +707,16 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                       </td>
 
                       <td className="p-3 text-center no-print">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(adv)}
+                            className="px-2 py-1 text-xs font-bold text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded flex items-center gap-1 cursor-pointer transition"
+                            title="Sửa thông tin phiếu tạm ứng (Số tiền, ngày ứng, nhân sự...)"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Sửa</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handlePrintAdvanceReceipt(adv)}
@@ -610,10 +728,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm(`Bạn có chắc muốn xóa phiếu tạm ứng ${adv.advanceCode}?`)) {
-                                onDeleteAdvance(adv.id);
-                                showToast(`Đã xóa phiếu ${adv.advanceCode}`);
-                              }
+                              onDeleteAdvance(adv.id);
+                              showToast(`Đã xóa phiếu ${adv.advanceCode} và cập nhật lại Bản Lương!`);
                             }}
                             className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded cursor-pointer"
                             title="Xóa phiếu tạm ứng"
@@ -631,18 +747,23 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
       </div>
 
-      {/* Modal Tạo Phiếu Tạm Ứng Mới */}
+      {/* Modal Tạo / Sửa Phiếu Tạm Ứng */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-[#09233b] text-white p-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-amber-300" />
-                <h3 className="font-bold text-sm uppercase">Lập Phiếu Tạm Ứng Tiền Lương</h3>
+                <h3 className="font-bold text-sm uppercase">
+                  {editingAdvance ? `Sửa Phiếu Tạm Ứng (${editingAdvance.advanceCode})` : 'Lập Phiếu Tạm Ứng Tiền Lương'}
+                </h3>
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setEditingAdvance(null);
+                  setIsModalOpen(false);
+                }}
                 className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
               >
                 <X className="w-5 h-5" />
@@ -715,7 +836,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                     type="number"
                     step={100000}
                     required
-                    min={100000}
+                    min={0}
                     value={formAmount}
                     onChange={(e) => setFormAmount(Number(e.target.value))}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono font-bold text-rose-700"
@@ -724,16 +845,30 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 font-semibold mb-1">Phương thức chi</label>
-                  <select
-                    value={formMethod}
-                    onChange={(e) => setFormMethod(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-semibold"
-                  >
-                    <option value="BANK">Chuyển khoản ATM</option>
-                    <option value="CASH">Tiền mặt công trường</option>
-                  </select>
+                  <label className="block text-slate-700 font-semibold mb-1">Ngày tạm ứng *</label>
+                  <input
+                    type="date"
+                    required
+                    value={formRequestDate}
+                    onChange={(e) => setFormRequestDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono font-semibold text-slate-800"
+                  />
+                  <div className="text-[10px] text-sky-700 mt-0.5 font-semibold">
+                    Ngày: {toVnDateString(formRequestDate)} (Kỳ {getPeriodKeyFromIsoDate(formRequestDate)})
+                  </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Phương thức chi</label>
+                <select
+                  value={formMethod}
+                  onChange={(e) => setFormMethod(e.target.value as any)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-semibold"
+                >
+                  <option value="BANK">Chuyển khoản ATM</option>
+                  <option value="CASH">Tiền mặt công trường</option>
+                </select>
               </div>
 
               <div>
@@ -762,7 +897,10 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setEditingAdvance(null);
+                    setIsModalOpen(false);
+                  }}
                   className="px-4 py-2 border border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-50 cursor-pointer"
                 >
                   Hủy
@@ -772,7 +910,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                   className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Lưu & Phê Duyệt Phiếu</span>
+                  <span>{editingAdvance ? 'Cập Nhật & Đồng Bộ Bản Lương' : 'Lưu & Phê Duyệt Phiếu'}</span>
                 </button>
               </div>
             </form>

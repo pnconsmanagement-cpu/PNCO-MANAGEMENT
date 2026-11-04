@@ -580,7 +580,10 @@ export function syncSeasonalWorkerForMonth(
       const effectiveMeal = existingPeriodRec?.mealAllowance ?? (roundedWork > 0 ? (worker.mealAllowance || roundedWork * 30000) : 0);
       const effectiveTravel = existingPeriodRec?.travelSafetyAllowance ?? (roundedWork > 0 ? (worker.travelSafetyAllowance || 0) : 0);
       const effectiveBonus = existingPeriodRec?.otherBonus ?? (roundedWork > 0 ? (worker.otherBonus || 0) : 0);
-      const effectiveAdvance = existingPeriodRec?.advancePayment ?? (worker.advancePayment || 0);
+      const effectiveAdvance =
+        worker.advancePayment !== undefined && worker.advancePayment > 0
+          ? worker.advancePayment
+          : existingPeriodRec?.advancePayment || 0;
 
       const recomputed = recomputeSeasonalWorkerPayroll({
         ...worker,
@@ -802,7 +805,10 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       mealAllowance: existingRecord?.mealAllowance ?? worker.mealAllowance ?? 0,
       travelSafetyAllowance: existingRecord?.travelSafetyAllowance ?? worker.travelSafetyAllowance ?? 0,
       otherBonus: existingRecord?.otherBonus ?? worker.otherBonus ?? 0,
-      advancePayment: existingRecord?.advancePayment ?? worker.advancePayment ?? 0,
+      advancePayment:
+        worker.advancePayment !== undefined && worker.advancePayment > 0
+          ? worker.advancePayment
+          : existingRecord?.advancePayment || 0,
       hasTaxCommitment: existingRecord?.hasTaxCommitment ?? worker.hasTaxCommitment,
       notes: existingRecord?.notes ?? worker.notes,
       weeklyTimesheet: timesheetFromMonthly,
@@ -857,7 +863,10 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       travelSafetyAllowance: existingRecord.travelSafetyAllowance,
       otherBonus: existingRecord.otherBonus,
       hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
-      advancePayment: existingRecord.advancePayment,
+      advancePayment:
+        worker.advancePayment !== undefined && worker.advancePayment > 0
+          ? worker.advancePayment
+          : existingRecord.advancePayment || 0,
       weeklyTimesheet: normalizedTimesheet,
       notes: existingRecord.notes ?? worker.notes,
     });
