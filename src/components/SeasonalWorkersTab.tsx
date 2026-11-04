@@ -42,7 +42,8 @@ import {
   Users,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption } from '../types';
+import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption, Project } from '../types';
+import { initialProjects } from '../data/mockProjectsAndTeams';
 import { SeasonalWorkerModal } from './SeasonalWorkerModal';
 import { SeasonalWorkerReceiptModal } from './SeasonalWorkerReceiptModal';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
@@ -68,6 +69,7 @@ export type SortDirection = 'asc' | 'desc';
 
 interface SeasonalWorkersTabProps {
   workers: SeasonalWorker[];
+  projects?: Project[];
   config: CompanyConfig;
   onChangeMonthYear?: (month: number, year: number) => void;
   onUpdateWorker: (worker: SeasonalWorker) => void;
@@ -85,6 +87,7 @@ interface SeasonalWorkersTabProps {
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   workers,
+  projects: propProjects,
   config,
   onChangeMonthYear,
   onUpdateWorker,
@@ -254,14 +257,32 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
     return workers.map((w) => getWorkerForPeriod(w, currentPeriodOption));
   }, [workers, currentPeriodOption]);
 
-  // Danh sách công trình độc nhất
+  // Danh sách Dự án / Công trình tham chiếu trực tiếp từ Bản Dự Án (Tab 3)
+  const availableProjects = useMemo<Project[]>(() => {
+    if (propProjects && propProjects.length > 0) return propProjects;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('payroll_projects');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return initialProjects;
+  }, [propProjects]);
+
+  // Danh sách công trình độc nhất (gộp từ Bản Dự Án + công trình đang gán trên thợ)
   const projects = useMemo(() => {
     const set = new Set<string>();
+    availableProjects.forEach((p) => {
+      if (p.name) set.add(p.name);
+    });
     workers.forEach((w) => {
       if (w.project) set.add(w.project);
     });
-    return Array.from(set).sort();
-  }, [workers]);
+    return Array.from(set);
+  }, [availableProjects, workers]);
 
   // Danh sách chuyên môn độc nhất
   const trades = useMemo(() => {
@@ -1666,10 +1687,42 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
                     {/* Công trình / Đội */}
                     <td className="p-2 border-r border-slate-200 text-slate-700">
-                      <div className="font-semibold text-sky-950">{w.project}</div>
-                      <div className="text-[10px] text-slate-500">
-                        {w.teamName} — {w.teamLeader}
-                      </div>
+                      {isQuickEditMode ? (
+                        <div className="space-y-1">
+                          <select
+                            value={w.project}
+                            onChange={(e) => {
+                              const newProjName = e.target.value;
+                              const matchedProj = availableProjects.find((p) => p.name === newProjName);
+                              handleQuickUpdate(w, {
+                                project: newProjName,
+                                ...(matchedProj?.managerName ? { teamLeader: matchedProj.managerName } : {}),
+                              });
+                            }}
+                            className="w-full text-xs font-bold text-[#0f3d64] px-1 py-0.5 border border-sky-400 rounded bg-white cursor-pointer"
+                            title="Chọn Công trình / Dự án (Ref từ Bản Dự Án)"
+                          >
+                            {w.project && !availableProjects.some((p) => p.name === w.project) && (
+                              <option value={w.project}>{w.project} (Hiện tại)</option>
+                            )}
+                            {availableProjects.map((p) => (
+                              <option key={p.id || p.code} value={p.name}>
+                                {p.code ? `[${p.code}] ` : ''}{p.name}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {w.teamName} — {w.teamLeader}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="font-semibold text-sky-950">{w.project}</div>
+                          <div className="text-[10px] text-slate-500">
+                            {w.teamName} — {w.teamLeader}
+                          </div>
+                        </>
+                      )}
                     </td>
 
                     {/* SĐT / CCCD */}
@@ -2067,6 +2120,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         isOpen={isFormOpen}
         worker={editingWorker}
         config={config}
+        projects={availableProjects}
+        existingTrades={trades}
         initialPeriod={currentPeriodOption}
         onClose={() => {
           setIsFormOpen(false);

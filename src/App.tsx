@@ -27,6 +27,7 @@ import {
   loadCompanyConfigFromSupabase,
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
+  loadProjectsFromSupabase,
   syncAllDataToSupabase,
   syncSeasonalWorkersToSupabase,
   syncSingleSeasonalWorkerToSupabase,
@@ -36,6 +37,7 @@ import {
   syncSingleEmployeeToSupabase,
   syncEmployeesToSupabase,
   deleteEmployeeFromSupabase,
+  syncProjectsToSupabase,
   subscribeToSupabaseRealtime,
   autoApplyUrlConfig,
   getLastSyncedTime,
@@ -574,11 +576,17 @@ export default function App() {
       const curPeriod = periodCodeRef.current;
       const curM = activeMonthRef.current;
       const curY = activeYearRef.current;
-      const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
+      const [cloudCfg, cloudEmp, cloudSea, cloudProj] = await Promise.all([
         loadCompanyConfigFromSupabase(),
         loadEmployeesFromSupabase(curPeriod),
         loadSeasonalWorkersFromSupabase(curPeriod),
+        loadProjectsFromSupabase(),
       ]);
+
+      if (cloudProj && cloudProj.length > 0) {
+        setProjects(cloudProj);
+        localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
+      }
 
       let nextSea = seasonalWorkers;
       if (cloudSea && cloudSea.length > 0) {
@@ -802,11 +810,17 @@ export default function App() {
       try {
         const curM = activeMonthRef.current;
         const curY = activeYearRef.current;
-        const [cloudCfg, cloudEmp, cloudSea] = await Promise.all([
+        const [cloudCfg, cloudEmp, cloudSea, cloudProj] = await Promise.all([
           loadCompanyConfigFromSupabase(),
           loadEmployeesFromSupabase(config.periodCode),
           loadSeasonalWorkersFromSupabase(config.periodCode),
+          loadProjectsFromSupabase(),
         ]);
+
+        if (cloudProj && cloudProj.length > 0) {
+          setProjects(cloudProj);
+          localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
+        }
 
         let hasAnyDataOnCloud = false;
 
@@ -1270,16 +1284,31 @@ export default function App() {
     const updated = [p, ...projects];
     setProjects(updated);
     localStorage.setItem('payroll_projects', JSON.stringify(updated));
+    if (isSupabaseConfigured()) {
+      syncProjectsToSupabase(updated)
+        .then(() => notifyCrossTab())
+        .catch(() => {});
+    }
   };
   const handleUpdateProject = (p: Project) => {
     const updated = projects.map((item) => (item.id === p.id ? p : item));
     setProjects(updated);
     localStorage.setItem('payroll_projects', JSON.stringify(updated));
+    if (isSupabaseConfigured()) {
+      syncProjectsToSupabase(updated)
+        .then(() => notifyCrossTab())
+        .catch(() => {});
+    }
   };
   const handleDeleteProject = (id: string) => {
     const updated = projects.filter((item) => item.id !== id);
     setProjects(updated);
     localStorage.setItem('payroll_projects', JSON.stringify(updated));
+    if (isSupabaseConfigured()) {
+      syncProjectsToSupabase(updated)
+        .then(() => notifyCrossTab())
+        .catch(() => {});
+    }
   };
 
   // Handlers for Team Workers
@@ -1878,6 +1907,7 @@ export default function App() {
                   {seasonalSubTab === 'LIST' && (
                     <SeasonalWorkersTab
                       workers={syncedSeasonalWorkers}
+                      projects={projects}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
                       onUpdateWorker={handleUpdateSeasonalWorker}

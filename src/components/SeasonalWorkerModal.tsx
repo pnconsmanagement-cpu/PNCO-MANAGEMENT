@@ -27,6 +27,7 @@ import {
   CompanyConfig,
   SeasonalCycleType,
   PayrollPeriodOption,
+  Project,
 } from '../types';
 import {
   recomputeSeasonalWorkerPayroll,
@@ -36,13 +37,32 @@ import {
   createTimesheetForPeriod,
   createEmptyTimesheetForPeriod,
 } from '../data/mockSeasonalWorkers';
+import { initialProjects } from '../data/mockProjectsAndTeams';
 import { formatNumberOnly } from '../utils/numberToVietnameseWords';
 import { printSeasonalWorkerReceipt } from '../utils/printPayrollReceipt';
+
+const DEFAULT_TRADES = [
+  'Thợ chính Cơ điện',
+  'Phụ Cơ Điện',
+  'Thợ điện chính M&E',
+  'Thợ phụ cơ điện công trình',
+  'Thợ hàn áp lực & kết cấu 6G',
+  'Thợ hàn điện & kết cấu thép',
+  'Thợ cơ điện lạnh HVAC',
+  'Thợ thi công PCCC & Báo cháy',
+  'Thợ điện nước M&E âm tường',
+  'Thợ kéo cáp điện hạ thế & cáp ngầm',
+  'Thợ cơ khí lắp dựng & kết cấu thép',
+  'KTV bảo trì hệ thống Chiller & Bơm',
+  'Tổ trưởng / Đội trưởng thi công',
+];
 
 interface SeasonalWorkerModalProps {
   isOpen: boolean;
   worker: SeasonalWorker | null; // null for creating new
   config?: CompanyConfig;
+  projects?: Project[];
+  existingTrades?: string[];
   onClose: () => void;
   onSave: (worker: SeasonalWorker) => void;
   onDelete?: (id: string) => void;
@@ -100,6 +120,8 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
   isOpen,
   worker,
   config = DEFAULT_CONFIG,
+  projects: propProjects,
+  existingTrades = [],
   onClose,
   onSave,
   onDelete,
@@ -109,6 +131,32 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
   const isEditing = !!worker;
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isCustomTradeInput, setIsCustomTradeInput] = useState(false);
+  const [isCustomProjectInput, setIsCustomProjectInput] = useState(false);
+
+  // Danh sách Dự án / Công trình tham chiếu trực tiếp từ Bản Dự Án (Tab 3)
+  const availableProjects = useMemo<Project[]>(() => {
+    if (propProjects && propProjects.length > 0) return propProjects;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('payroll_projects');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return initialProjects;
+  }, [propProjects, isOpen]);
+
+  // Danh sách Nghề nghiệp / Vị trí tay nghề tham chiếu
+  const availableTrades = useMemo<string[]>(() => {
+    const set = new Set<string>(DEFAULT_TRADES);
+    existingTrades.forEach((t) => {
+      if (t && t.trim()) set.add(t.trim());
+    });
+    return Array.from(set);
+  }, [existingTrades]);
 
   // Chế độ chấm công: 'WEEKLY_SHEET' (Lồng bảng chấm công) hoặc 'MANUAL' (Nhập số trực tiếp)
   const [attendanceMode, setAttendanceMode] = useState<'WEEKLY_SHEET' | 'MANUAL'>('WEEKLY_SHEET');
@@ -164,15 +212,17 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       return getWorkerForPeriod(worker, activePeriod);
     }
     const defaultSheet = createEmptyTimesheetForPeriod(activePeriod);
+    const defaultProj =
+      availableProjects.find((p) => p.status === 'IN_PROGRESS') || availableProjects[0];
     return recomputeSeasonalWorkerPayroll({
       id: String(Date.now()),
       code: `PNC-TV${String(existingCodes.length + 1).padStart(2, '0')}`,
       fullName: '',
-      trade: 'Thợ điện chính M&E',
-      skillLevel: 'Thợ chính (bậc 4/7)',
-      project: 'Dự án Vinhomes Grand Park',
+      trade: 'Thợ chính Cơ điện',
+      skillLevel: 'Thợ chính',
+      project: defaultProj?.name || 'Dự án Vinhomes Grand Park',
       teamName: 'Đội Thi công Cơ điện 1',
-      teamLeader: 'KS. Trần Văn Minh',
+      teamLeader: defaultProj?.managerName || 'KS. Trần Văn Minh',
       phone: '',
       idCard: '',
       bankAccount: '',
@@ -213,6 +263,8 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     if (isOpen) {
       setRawWorkDays(null);
       setRawOT(null);
+      setIsCustomTradeInput(false);
+      setIsCustomProjectInput(false);
       const activeCycle = initialPeriod?.cycleType || worker?.payrollCycleType || cycleType || '1_WEEK';
       setCycleType(activeCycle);
 
@@ -237,17 +289,19 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         setTimesheet(workerForThisPeriod.weeklyTimesheet || createEmptyTimesheetForPeriod(curPeriod));
       } else {
         const defaultSheet = createEmptyTimesheetForPeriod(curPeriod);
+        const defaultProj =
+          availableProjects.find((p) => p.status === 'IN_PROGRESS') || availableProjects[0];
         setTimesheet(defaultSheet);
         setForm(
           recomputeSeasonalWorkerPayroll({
             id: `SW_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             code: getNextWorkerCode(existingCodes),
             fullName: '',
-            trade: 'Thợ điện chính M&E',
-            skillLevel: 'Thợ chính (bậc 4/7)',
-            project: 'Dự án Vinhomes Grand Park',
+            trade: 'Thợ chính Cơ điện',
+            skillLevel: 'Thợ chính',
+            project: defaultProj?.name || 'Dự án Vinhomes Grand Park',
             teamName: 'Đội Thi công Cơ điện 1',
-            teamLeader: 'KS. Trần Văn Minh',
+            teamLeader: defaultProj?.managerName || 'KS. Trần Văn Minh',
             phone: '',
             idCard: '',
             bankAccount: '',
@@ -280,7 +334,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         );
       }
     }
-  }, [worker, isOpen, existingCodes.length, config.month, config.year, initialPeriod]);
+  }, [worker, isOpen, existingCodes.length, config.month, config.year, initialPeriod, availableProjects]);
 
   // Tự động làm mới bảng chấm công khi có dữ liệu đồng bộ mới từ điện thoại / Cloud
   useEffect(() => {
@@ -694,14 +748,47 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Nghề nghiệp / Vị trí tay nghề</label>
-                <input
-                  type="text"
-                  value={form.trade}
-                  onChange={(e) => updateField('trade', e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-semibold text-slate-800"
-                  placeholder="Thợ hàn 6G, Thợ điện M&E, Thợ PCCC..."
-                />
+                <label className="block font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Nghề nghiệp / Vị trí tay nghề</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomTradeInput((prev) => !prev)}
+                    className="text-[10px] text-sky-700 hover:underline font-normal cursor-pointer"
+                  >
+                    {isCustomTradeInput ? 'Chọn từ danh sách' : '+ Gõ tay khác'}
+                  </button>
+                </label>
+                {isCustomTradeInput ? (
+                  <input
+                    type="text"
+                    value={form.trade}
+                    onChange={(e) => updateField('trade', e.target.value)}
+                    className="w-full px-3 py-2 border border-sky-400 rounded focus:ring-2 focus:ring-sky-500 font-semibold text-slate-800 bg-white"
+                    placeholder="Nhập nghề nghiệp / vị trí tay nghề..."
+                  />
+                ) : (
+                  <select
+                    value={form.trade}
+                    onChange={(e) => {
+                      if (e.target.value === '__CUSTOM_TRADE__') {
+                        setIsCustomTradeInput(true);
+                      } else {
+                        updateField('trade', e.target.value);
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 bg-white font-semibold text-slate-800 cursor-pointer"
+                  >
+                    {form.trade && !availableTrades.includes(form.trade) && (
+                      <option value={form.trade}>{form.trade}</option>
+                    )}
+                    {availableTrades.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                    <option value="__CUSTOM_TRADE__">+ Nhập nghề nghiệp / vị trí khác...</option>
+                  </select>
+                )}
               </div>
 
               <div>
@@ -747,14 +834,67 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Công trình / Dự án</label>
-                <input
-                  type="text"
-                  value={form.project}
-                  onChange={(e) => updateField('project', e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-sky-500 font-medium"
-                  placeholder="Vinhomes Grand Park, NM Dược Mekophar..."
-                />
+                <label className="block font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Công trình / Dự án</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomProjectInput((prev) => !prev)}
+                    className="text-[10px] text-emerald-700 hover:underline font-bold cursor-pointer"
+                    title="Tham chiếu trực tiếp từ mục 3. Danh Sách Dự Án"
+                  >
+                    {isCustomProjectInput ? 'Chọn từ Bản Dự Án' : `Ref Bản Dự Án (${availableProjects.length})`}
+                  </button>
+                </label>
+                {isCustomProjectInput ? (
+                  <input
+                    type="text"
+                    value={form.project}
+                    onChange={(e) => updateField('project', e.target.value)}
+                    className="w-full px-3 py-2 border border-sky-400 rounded focus:ring-2 focus:ring-sky-500 font-medium bg-white"
+                    placeholder="Nhập tên công trình / dự án..."
+                  />
+                ) : (
+                  <select
+                    value={form.project}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__CUSTOM_PROJECT__') {
+                        setIsCustomProjectInput(true);
+                        return;
+                      }
+                      const matchedProj = availableProjects.find((p) => p.name === val);
+                      setForm((prev) => {
+                        const nextLeader =
+                          matchedProj?.managerName &&
+                          (!prev.teamLeader ||
+                            availableProjects.some((p) => p.managerName === prev.teamLeader))
+                            ? matchedProj.managerName
+                            : prev.teamLeader;
+                        return recomputeSeasonalWorkerPayroll({
+                          ...prev,
+                          project: val,
+                          teamLeader: nextLeader,
+                        });
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-sky-400 rounded focus:ring-2 focus:ring-sky-500 bg-white font-bold text-[#0f3d64] cursor-pointer"
+                  >
+                    {form.project && !availableProjects.some((p) => p.name === form.project) && (
+                      <option value={form.project}>
+                        {form.project} (Hiện tại)
+                      </option>
+                    )}
+                    <optgroup label={`Danh sách từ Bản Dự Án (${availableProjects.length} dự án)`}>
+                      {availableProjects.map((p) => (
+                        <option key={p.id || p.code} value={p.name}>
+                          {p.code ? `[${p.code}] ` : ''}{p.name}
+                          {p.status === 'COMPLETED' ? ' (Đã hoàn thành)' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <option value="__CUSTOM_PROJECT__">+ Nhập tên công trình khác...</option>
+                  </select>
+                )}
               </div>
 
               <div>
