@@ -24,7 +24,9 @@ import {
   SeasonalWorker,
   CompanyConfig,
   DailyAttendanceDetail,
+  Project,
 } from '../types';
+import { initialProjects } from '../data/mockProjectsAndTeams';
 import {
   generateMonthCalendarGrid,
   getWorkerMonthlyAttendance,
@@ -38,6 +40,7 @@ import { saveAttendanceToServer, fetchServerData, subscribeToSync } from '../ser
 import {
   syncSingleSeasonalWorkerToSupabase,
   loadSeasonalWorkersFromSupabase,
+  loadProjectsFromSupabase,
   isSupabaseConfigured,
   autoApplyUrlConfig,
   subscribeToSupabaseRealtime,
@@ -45,6 +48,7 @@ import {
 
 interface MobileAttendanceAppProps {
   workers: SeasonalWorker[];
+  projects?: Project[];
   config: CompanyConfig;
   initialWorkerCode?: string;
   isAdminPreview?: boolean;
@@ -54,6 +58,7 @@ interface MobileAttendanceAppProps {
 
 export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   workers,
+  projects: propProjects,
   config,
   initialWorkerCode,
   isAdminPreview = false,
@@ -200,6 +205,45 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   }, []);
 
   const lastLocalEditAtRef = React.useRef<number>(0);
+  const [cloudProjects, setCloudProjects] = useState<Project[]>([]);
+
+  // Danh sách Dự án / Vị trí làm việc tham chiếu trực tiếp từ Bản Dự Án (Tab 3)
+  const availableProjects = useMemo<Project[]>(() => {
+    if (propProjects && propProjects.length > 0) return propProjects;
+    if (cloudProjects && cloudProjects.length > 0) return cloudProjects;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('payroll_projects');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return initialProjects;
+  }, [propProjects, cloudProjects]);
+
+  const projectLocationOptions = useMemo<string[]>(() => {
+    const names = availableProjects
+      .map((p) => (p.name || '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(names));
+  }, [availableProjects]);
+
+  // Tải danh sách dự án từ Supabase Cloud khi mở link chấm công
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    loadProjectsFromSupabase()
+      .then((projs) => {
+        if (projs && projs.length > 0) {
+          setCloudProjects(projs);
+          try {
+            localStorage.setItem('payroll_projects', JSON.stringify(projs));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
   const syncLatestAttendance = async () => {
@@ -213,7 +257,16 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       // 1. Ưu tiên tải trực tiếp từ Supabase Cloud
       if (isSupabaseConfigured()) {
         try {
-          const cloudWorkers = await loadSeasonalWorkersFromSupabase();
+          const [cloudWorkers, projs] = await Promise.all([
+            loadSeasonalWorkersFromSupabase(),
+            loadProjectsFromSupabase(),
+          ]);
+          if (projs && projs.length > 0) {
+            setCloudProjects(projs);
+            try {
+              localStorage.setItem('payroll_projects', JSON.stringify(projs));
+            } catch {}
+          }
           if (cloudWorkers && cloudWorkers.length > 0) {
             const matched = cloudWorkers.find(
               (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
@@ -490,8 +543,33 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       initialStatus = 'FULL';
     }
 
+    const resolveProjectLocation = (rawName?: string): string => {
+      if (!rawName || !rawName.trim()) return '';
+      const trimmed = rawName.trim();
+      const exact = projectLocationOptions.find((p) => p === trimmed);
+      if (exact) return exact;
+      const lower = trimmed.toLowerCase();
+      const caseMatch = projectLocationOptions.find((p) => p.toLowerCase() === lower);
+      if (caseMatch) return caseMatch;
+      const normalize = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, '');
+      const normTarget = normalize(trimmed);
+      if (normTarget.length >= 3) {
+        const fuzzy = projectLocationOptions.find((p) => {
+          const normP = normalize(p);
+          return normP === normTarget || normP.includes(normTarget) || normTarget.includes(normP);
+        });
+        if (fuzzy) return fuzzy;
+      }
+      return trimmed;
+    };
+
     setModalStatus(initialStatus);
-    setModalLocation(existing?.location || currentWorker?.project || '');
+    setModalLocation(
+      resolveProjectLocation(existing?.location) ||
+      resolveProjectLocation(currentWorker?.project) ||
+      ''
+    );
     setModalOtHours(existing?.otHours || 0);
     setModalOtMultiplier(existing?.otMultiplier || 1.5);
     setEditingCell(cell);
@@ -1068,7 +1146,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
               </div>
             </div>
 
-            {/* Mục 2: Vị trí làm việc (Icon định vị cam + Dropdown theo Ảnh 2) */}
+            {/* Mục 2: Vị trí làm việc (Tham chiếu trực tiếp từ Bản Dự Án) */}
             <div className="p-3.5 bg-white rounded-xl border border-slate-200 space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600">
                 <MapPin className="w-4 h-4 fill-orange-500 text-white" />
@@ -1077,15 +1155,17 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
               <select
                 value={modalLocation}
                 onChange={(e) => setModalLocation(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
               >
                 <option value="">-Chọn vị trí-</option>
-                <option value="Công trình chính">Công trình chính</option>
-                <option value="Khu vực kết cấu dầm sàn">Khu vực kết cấu dầm sàn</option>
-                <option value="Khu vực xây tô hoàn thiện">Khu vực xây tô hoàn thiện</option>
-                <option value="Hệ thống cơ điện M&E">Hệ thống cơ điện M&E</option>
-                <option value="Xưởng gia công cơ khí">Xưởng gia công cơ khí</option>
-                <option value="Kho vật tư công trường">Kho vật tư công trường</option>
+                {projectLocationOptions.map((projName) => (
+                  <option key={projName} value={projName}>
+                    {projName}
+                  </option>
+                ))}
+                {modalLocation && !projectLocationOptions.includes(modalLocation) && (
+                  <option value={modalLocation}>{modalLocation}</option>
+                )}
               </select>
             </div>
 

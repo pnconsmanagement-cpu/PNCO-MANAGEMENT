@@ -265,7 +265,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       setRawOT(null);
       setIsCustomTradeInput(false);
       setIsCustomProjectInput(false);
-      const activeCycle = initialPeriod?.cycleType || worker?.payrollCycleType || cycleType || '1_WEEK';
+      const activeCycle: SeasonalCycleType = worker
+        ? (worker.payrollCycleType || initialPeriod?.cycleType || '1_MONTH')
+        : (initialPeriod?.cycleType || '1_MONTH');
       setCycleType(activeCycle);
 
       const yr = initialPeriod
@@ -278,14 +280,22 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       setAttendanceMonth(mo);
 
       const periods = getPayrollPeriods(yr, mo, activeCycle);
-      const targetPeriodId = initialPeriod?.id || worker?.currentWeekId || periods[0]?.id || 'W1';
+      const targetPeriodId =
+        initialPeriod?.cycleType === activeCycle
+          ? initialPeriod.id
+          : worker?.payrollCycleType === activeCycle && worker?.currentWeekId
+          ? worker.currentWeekId
+          : periods[0]?.id || (activeCycle === '1_MONTH' ? 'M1' : activeCycle === '2_WEEKS' ? 'BI1' : 'W1');
       setSelectedPeriodId(targetPeriodId);
 
       const curPeriod = periods.find((p) => p.id === targetPeriodId) || periods[0];
 
       if (worker) {
-        const workerForThisPeriod = getWorkerForPeriod(worker, curPeriod);
-        setForm({ ...workerForThisPeriod });
+        const workerForThisPeriod = getWorkerForPeriod(
+          { ...worker, payrollCycleType: activeCycle },
+          curPeriod
+        );
+        setForm({ ...workerForThisPeriod, payrollCycleType: activeCycle });
         setTimesheet(workerForThisPeriod.weeklyTimesheet || createEmptyTimesheetForPeriod(curPeriod));
       } else {
         const defaultSheet = createEmptyTimesheetForPeriod(curPeriod);
@@ -328,7 +338,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
             attendanceYear: yr,
             currentWeekId: curPeriod.id,
             currentWeekLabel: curPeriod.label,
-            payrollCycleType: curPeriod.cycleType,
+            payrollCycleType: activeCycle,
             weeklyTimesheet: defaultSheet,
           })
         );
@@ -344,6 +354,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       setForm((prev) => ({
         ...prev,
         ...freshState,
+        payrollCycleType: prev.payrollCycleType || worker.payrollCycleType || cycleType,
         monthlyAttendance: worker.monthlyAttendance || prev.monthlyAttendance,
         periodRecords: worker.periodRecords || prev.periodRecords,
       }));
@@ -380,7 +391,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     });
   };
 
-  // Đổi Chu kỳ: 1 tuần vs 2 tuần
+  // Đổi Chu kỳ: 1 tuần vs 2 tuần vs Lương Tháng
   const handleCycleChange = (newCycle: SeasonalCycleType) => {
     setCycleType(newCycle);
     const newPeriods = getPayrollPeriods(attendanceYear, attendanceMonth, newCycle);
@@ -388,19 +399,24 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setSelectedPeriodId(firstPeriod.id);
 
     // Chuyển chu kỳ: Nạp bản ghi của kỳ mới (hoặc reset 0 công nếu chưa có)
-    const workerWithSavedCurrent = recordWorkerPeriod(form, activePeriod, {
-      dailyRate: form.dailyRate,
-      actualWorkDays: form.actualWorkDays,
-      overtimeHours: form.overtimeHours,
-      weeklyTimesheet: timesheet,
-      mealAllowance: form.mealAllowance,
-      travelSafetyAllowance: form.travelSafetyAllowance,
-      otherBonus: form.otherBonus,
-      advancePayment: form.advancePayment,
-    });
+    const workerWithSavedCurrent = recordWorkerPeriod(
+      { ...form, payrollCycleType: newCycle },
+      activePeriod,
+      {
+        payrollCycleType: newCycle,
+        dailyRate: form.dailyRate,
+        actualWorkDays: form.actualWorkDays,
+        overtimeHours: form.overtimeHours,
+        weeklyTimesheet: timesheet,
+        mealAllowance: form.mealAllowance,
+        travelSafetyAllowance: form.travelSafetyAllowance,
+        otherBonus: form.otherBonus,
+        advancePayment: form.advancePayment,
+      }
+    );
 
     const newPeriodState = getWorkerForPeriod(workerWithSavedCurrent, firstPeriod);
-    setForm(newPeriodState);
+    setForm({ ...newPeriodState, payrollCycleType: newCycle });
     setTimesheet(newPeriodState.weeklyTimesheet || createEmptyTimesheetForPeriod(firstPeriod));
   };
 
@@ -410,20 +426,25 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const targetPeriod = payrollPeriods.find((p) => p.id === newPeriodId) || payrollPeriods[0];
 
     // Lưu lại kỳ hiện tại trước khi chuyển sang kỳ mới
-    const workerWithSavedCurrent = recordWorkerPeriod(form, activePeriod, {
-      dailyRate: form.dailyRate,
-      actualWorkDays: form.actualWorkDays,
-      overtimeHours: form.overtimeHours,
-      weeklyTimesheet: timesheet,
-      mealAllowance: form.mealAllowance,
-      travelSafetyAllowance: form.travelSafetyAllowance,
-      otherBonus: form.otherBonus,
-      advancePayment: form.advancePayment,
-    });
+    const workerWithSavedCurrent = recordWorkerPeriod(
+      { ...form, payrollCycleType: cycleType },
+      activePeriod,
+      {
+        payrollCycleType: cycleType,
+        dailyRate: form.dailyRate,
+        actualWorkDays: form.actualWorkDays,
+        overtimeHours: form.overtimeHours,
+        weeklyTimesheet: timesheet,
+        mealAllowance: form.mealAllowance,
+        travelSafetyAllowance: form.travelSafetyAllowance,
+        otherBonus: form.otherBonus,
+        advancePayment: form.advancePayment,
+      }
+    );
 
     // Lấy trạng thái của kỳ mới (nếu chưa có thì MẶC ĐỊNH 0 CÔNG để người dùng chấm lại từ đầu)
     const newPeriodState = getWorkerForPeriod(workerWithSavedCurrent, targetPeriod);
-    setForm(newPeriodState);
+    setForm({ ...newPeriodState, payrollCycleType: cycleType });
     setTimesheet(newPeriodState.weeklyTimesheet || createEmptyTimesheetForPeriod(targetPeriod));
   };
 
@@ -623,20 +644,32 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     }
 
     // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod kèm đơn giá riêng của kỳ này
-    const finalWorker = recordWorkerPeriod(form, activePeriod, {
-      dailyRate: form.dailyRate,
-      actualWorkDays: targetDays,
-      overtimeHours: targetOT,
-      weeklyTimesheet: finalTimesheet,
-      mealAllowance: form.mealAllowance,
-      travelSafetyAllowance: form.travelSafetyAllowance,
-      otherBonus: form.otherBonus,
-      advancePayment: form.advancePayment,
-      hasTaxCommitment: form.hasTaxCommitment,
-      notes: form.notes,
-    });
+    const finalWorker = recordWorkerPeriod(
+      { ...form, payrollCycleType: cycleType },
+      activePeriod,
+      {
+        payrollCycleType: cycleType,
+        dailyRate: form.dailyRate,
+        actualWorkDays: targetDays,
+        overtimeHours: targetOT,
+        weeklyTimesheet: finalTimesheet,
+        mealAllowance: form.mealAllowance,
+        travelSafetyAllowance: form.travelSafetyAllowance,
+        otherBonus: form.otherBonus,
+        advancePayment: form.advancePayment,
+        hasTaxCommitment: form.hasTaxCommitment,
+        notes: form.notes,
+      }
+    );
 
-    onSave(finalWorker);
+    try {
+      localStorage.setItem('seasonal_payroll_active_tab', cycleType);
+    } catch {}
+
+    onSave({
+      ...finalWorker,
+      payrollCycleType: cycleType,
+    });
   };
 
   return (
@@ -654,11 +687,15 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   {isEditing ? `Hồ sơ công nhân: ${worker?.fullName}` : 'Thêm mới Công nhân kỹ thuật / Lao động thời vụ'}
                 </h3>
                 <span className="px-2 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[10px] uppercase tracking-wider">
-                  {cycleType === '1_WEEK' ? 'Lương 1 tuần' : 'Lương 2 tuần'}
+                  {cycleType === '1_WEEK' ? 'Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Lương 2 Tuần' : 'Lương Tháng'}
                 </span>
               </div>
               <p className="text-xs text-sky-200 mt-0.5">
-                Chấm công {cycleType === '1_WEEK' ? '7 ngày' : '15 ngày'}, chọn Tháng/Năm, đơn giá ngày, tiền tăng ca OT và quyết toán thuế TNCN 10%
+                {cycleType === '1_WEEK'
+                  ? 'Nhân sự thuộc Tab Bản Lương 1 Tuần — Chấm công 7 ngày/tuần, đơn giá ngày, OT và thuế TNCN 10%'
+                  : cycleType === '2_WEEKS'
+                  ? 'Nhân sự thuộc Tab Bản Lương 2 Tuần — Chấm công 15 ngày/đợt, đơn giá ngày, OT và thuế TNCN 10%'
+                  : 'Nhân sự thuộc Tab Bản Lương Tháng — Chấm công cả tháng, đơn giá ngày, OT và thuế TNCN 10%'}
               </p>
             </div>
           </div>
@@ -808,20 +845,77 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 </select>
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Chu kỳ tính lương *</span>
-                  <span className="text-[10px] text-sky-700 font-normal">Thiết lập theo thợ</span>
-                </label>
-                <select
-                  value={cycleType}
-                  onChange={(e) => handleCycleChange(e.target.value as SeasonalCycleType)}
-                  className="w-full px-3 py-2 border-2 border-sky-400 rounded focus:ring-2 focus:ring-sky-500 bg-sky-50/50 font-bold text-sky-950 cursor-pointer"
-                >
-                  <option value="1_WEEK">Lương 1 Tuần (Theo từng tuần W1 - W5)</option>
-                  <option value="2_WEEKS">Lương 2 Tuần (Đợt 1: 01-15, Đợt 2: 16-cuối tháng)</option>
-                  <option value="1_MONTH">Lương Cả Tháng (Từ ngày 01 đến cuối tháng)</option>
-                </select>
+              <div className="md:col-span-3 bg-sky-50/70 border border-sky-200 rounded-xl p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-sky-700" />
+                    <span>Khai báo Chu kỳ nhận lương * (Phân loại sang Bản Lương 1 Tuần / 2 Tuần / Lương Tháng)</span>
+                  </label>
+                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                    Hiển thị bên Bản Lương: {cycleType === '1_WEEK' ? 'Tab Bản Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Tab Bản Lương 2 Tuần' : 'Tab Bản Lương Tháng'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleCycleChange('1_WEEK')}
+                    className={`px-3 py-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
+                      cycleType === '1_WEEK'
+                        ? 'bg-[#0f3d64] text-white border-[#0f3d64] shadow-sm ring-2 ring-[#0f3d64]/20'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-sky-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs">Lương 1 Tuần</div>
+                      <div className={`text-[10px] ${cycleType === '1_WEEK' ? 'text-sky-200' : 'text-slate-500'}`}>
+                        Hiện vào Tab Bản Lương 1 Tuần
+                      </div>
+                    </div>
+                    {cycleType === '1_WEEK' && (
+                      <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[9px]">ĐANG CHỌN</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCycleChange('2_WEEKS')}
+                    className={`px-3 py-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
+                      cycleType === '2_WEEKS'
+                        ? 'bg-[#0f3d64] text-white border-[#0f3d64] shadow-sm ring-2 ring-[#0f3d64]/20'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-sky-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs">Lương 2 Tuần</div>
+                      <div className={`text-[10px] ${cycleType === '2_WEEKS' ? 'text-sky-200' : 'text-slate-500'}`}>
+                        Hiện vào Tab Bản Lương 2 Tuần
+                      </div>
+                    </div>
+                    {cycleType === '2_WEEKS' && (
+                      <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[9px]">ĐANG CHỌN</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCycleChange('1_MONTH')}
+                    className={`px-3 py-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
+                      cycleType === '1_MONTH'
+                        ? 'bg-[#0f3d64] text-white border-[#0f3d64] shadow-sm ring-2 ring-[#0f3d64]/20'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-sky-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs">Lương Tháng</div>
+                      <div className={`text-[10px] ${cycleType === '1_MONTH' ? 'text-sky-200' : 'text-slate-500'}`}>
+                        Hiện vào Tab Bản Lương Tháng
+                      </div>
+                    </div>
+                    {cycleType === '1_MONTH' && (
+                      <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[9px]">ĐANG CHỌN</span>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

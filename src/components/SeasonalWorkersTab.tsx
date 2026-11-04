@@ -1924,23 +1924,39 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       )}
                     </td>
 
-                    {/* Chu kỳ tính lương của thợ */}
+                    {/* Chu kỳ tính lương của thợ (Khai báo phân vào Tab Bản Lương 1 Tuần / 2 Tuần / Lương Tháng) */}
                     <td className="p-2 border-r border-slate-200 text-center">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      <select
+                        value={w.payrollCycleType || '1_MONTH'}
+                        onChange={(e) => {
+                          const newCycle = e.target.value as SeasonalCycleType;
+                          try {
+                            localStorage.setItem('seasonal_payroll_active_tab', newCycle);
+                          } catch {}
+                          handleQuickUpdate(w, { payrollCycleType: newCycle });
+                          showToast(
+                            `Đã chuyển ${w.fullName} sang ${
+                              newCycle === '1_WEEK'
+                                ? 'Bản Lương 1 Tuần'
+                                : newCycle === '2_WEEKS'
+                                ? 'Bản Lương 2 Tuần'
+                                : 'Bản Lương Tháng'
+                            }!`
+                          );
+                        }}
+                        className={`px-2 py-1 rounded text-[10.5px] font-bold border cursor-pointer transition ${
                           (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
                             ? 'bg-amber-50 text-amber-900 border-amber-300'
                             : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
                             ? 'bg-sky-50 text-sky-900 border-sky-300'
                             : 'bg-emerald-50 text-emerald-900 border-emerald-300'
                         }`}
+                        title="Chọn chu kỳ lương để phân loại nhân viên này sang Tab Bản Lương 1 Tuần, Bản Lương 2 Tuần hoặc Bản Lương Tháng"
                       >
-                        {(w.payrollCycleType || '1_MONTH') === '2_WEEKS'
-                          ? '2 Tuần'
-                          : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
-                          ? '1 Tuần'
-                          : 'Cả Tháng'}
-                      </span>
+                        <option value="1_WEEK">Lương 1 Tuần</option>
+                        <option value="2_WEEKS">Lương 2 Tuần</option>
+                        <option value="1_MONTH">Lương Tháng</option>
+                      </select>
                     </td>
 
                     {/* Trạng thái làm việc (Bấm để chuyển Đang làm việc <-> Đã nghỉ) */}

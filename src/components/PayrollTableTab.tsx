@@ -19,10 +19,14 @@ import {
   Clock,
   Sparkles,
 } from 'lucide-react';
-import { CompanyConfig, Employee, SeasonalWorker, TeamWorker } from '../types';
+import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, SeasonalCycleType } from '../types';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
 import { recomputeEmployeePayroll, syncEmployeeForMonth, getRealCurrentDateInfo } from '../utils/payrollCalculator';
-import { syncSeasonalWorkerForMonth } from '../data/mockSeasonalWorkers';
+import {
+  syncSeasonalWorkerForMonth,
+  getPayrollPeriods,
+  getWorkerForPeriod,
+} from '../data/mockSeasonalWorkers';
 import { MonthYearPicker } from './MonthYearPicker';
 
 interface PayrollTableTabProps {
@@ -34,6 +38,7 @@ interface PayrollTableTabProps {
   onUpdateEmployee: (emp: Employee) => void;
   onAddEmployee: (emp: Employee) => void;
   onDeleteEmployee: (id: string) => void;
+  onUpdateSeasonalWorker?: (worker: SeasonalWorker) => void;
   forcedCategory?: 'PERMANENT' | 'SEASONAL' | 'TEAM' | 'ALL';
 }
 
@@ -46,6 +51,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onUpdateEmployee,
   onAddEmployee,
   onDeleteEmployee,
+  onUpdateSeasonalWorker,
   forcedCategory,
 }) => {
   const { realMonth, realYear } = getRealCurrentDateInfo();
@@ -71,11 +77,39 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDept, setSelectedDept] = useState('ALL');
   const [attendanceOnly, setAttendanceOnly] = useState(true);
+  const [seasonalAttendanceOnly, setSeasonalAttendanceOnly] = useState(false);
   const [salaryTypeFilter, setSalaryTypeFilter] = useState<'ALL' | 'MONTHLY' | 'DAILY'>('ALL');
   const [showResignedHistory, setShowResignedHistory] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
 
-  // Hệ số tính toán theo chu kỳ
+  // 3 Tab Bản Lương Thời Vụ riêng biệt: Bản Lương 1 Tuần ('1_WEEK'), Bản Lương 2 Tuần ('2_WEEKS'), Bản Lương Tháng ('1_MONTH')
+  const [seasonalCycleTab, setSeasonalCycleTab] = useState<SeasonalCycleType>(() => {
+    try {
+      const saved = localStorage.getItem('seasonal_payroll_active_tab');
+      if (saved === '1_WEEK' || saved === '2_WEEKS' || saved === '1_MONTH') {
+        return saved;
+      }
+    } catch {}
+    return '1_MONTH';
+  });
+
+  // Lựa chọn kỳ con trong tháng cho Bản Lương 1 Tuần (W1..W5) hoặc Bản Lương 2 Tuần (BI1..BI2), hoặc 'ALL_PERIODS' (Tổng hợp tháng)
+  const [selectedSeasonalSubPeriodId, setSelectedSeasonalSubPeriodId] = useState<string>('ALL_PERIODS');
+
+  const handleSelectSeasonalCycleTab = (tab: SeasonalCycleType) => {
+    setSeasonalCycleTab(tab);
+    setSelectedSeasonalSubPeriodId('ALL_PERIODS');
+    try {
+      localStorage.setItem('seasonal_payroll_active_tab', tab);
+    } catch {}
+  };
+
+  // Danh sách các kỳ con (Tuần 1..5 hoặc Đợt 1..2) của tháng hiện tại theo tab chu kỳ đang chọn
+  const seasonalSubPeriods = useMemo(() => {
+    return getPayrollPeriods(currentYear, currentMonth, seasonalCycleTab);
+  }, [currentYear, currentMonth, seasonalCycleTab]);
+
+  // Hệ số tính toán theo chu kỳ (cho nhân viên chính thức / tổ đội)
   const cycleMultiplier = useMemo(() => {
     switch (periodCycle) {
       case 'WEEK':
@@ -100,73 +134,82 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear));
   }, [seasonalWorkers, currentMonth, currentYear]);
 
-  // Dữ liệu thời vụ theo chu kỳ - CHỈ NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
-  const scaledSeasonal = useMemo(() => {
-    const mult = cycleMultiplier;
-    const activeSeasonalList = syncedSeasonalForMonth.filter(
-      (w) => (w.status || 'ACTIVE') === 'ACTIVE'
-    );
-    const hasAnySeasonalParticipating = activeSeasonalList.some(
-      (w) => (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0
-    );
+  // Danh sách công nhân thời vụ đang làm việc (ACTIVE)
+  const activeSeasonalWorkers = useMemo(() => {
+    return syncedSeasonalForMonth.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+  }, [syncedSeasonalForMonth]);
 
-    return activeSeasonalList
-      .filter((w) => {
-        if (attendanceOnly && hasAnySeasonalParticipating) {
-          const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
-          if (!isParticipating) return false;
-        }
-        const term = searchTerm.toLowerCase();
-        return (
-          !term ||
-          w.fullName.toLowerCase().includes(term) ||
-          w.code.toLowerCase().includes(term) ||
-          (w.project && w.project.toLowerCase().includes(term))
-        );
-      })
-      .map((w) => {
-        const hasParticipated = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
-        if (!hasParticipated) {
-          return {
-            ...w,
-            actualWorkDays: 0,
-            salaryByDays: 0,
-            overtimeHours: 0,
-            overtimePay: 0,
-            totalIncome: 0,
-            advancePayment: Math.round((w.advancePayment || 0) * mult),
-            personalIncomeTax: 0,
-            totalDeductions: Math.round((w.advancePayment || 0) * mult),
-            netSalary: 0,
-          };
-        }
-        const actualDays = Number(((w.actualWorkDays || 0) * mult).toFixed(1));
-        const rate = w.dailyRate || 0;
-        const salaryByDays = Math.round(rate * actualDays);
-        const otHours = Number(((w.overtimeHours || 0) * mult).toFixed(1));
-        const otPay = Math.round(otHours * (rate / 8) * 1.5);
-        const allowances = Math.round(
-          ((w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0)) * mult
-        );
-        const totalIncome = salaryByDays + otPay + allowances;
-        const advance = Math.round((w.advancePayment || 0) * mult);
-        const tax = Math.round((w.personalIncomeTax || 0) * mult);
-        const deductions = advance + tax;
-        const netSalary = Math.max(0, totalIncome - deductions);
+  // Số lượng nhân viên thời vụ theo từng Tab Chu kỳ lương đã khai báo
+  const oneWeekWorkersCount = useMemo(
+    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '1_WEEK').length,
+    [activeSeasonalWorkers]
+  );
+  const twoWeeksWorkersCount = useMemo(
+    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '2_WEEKS').length,
+    [activeSeasonalWorkers]
+  );
+  const monthlySeasonalWorkersCount = useMemo(
+    () => activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === '1_MONTH').length,
+    [activeSeasonalWorkers]
+  );
+
+  // Dữ liệu thời vụ theo đúng Tab Chu kỳ đã khai báo (Bản Lương 1 Tuần / Bản Lương 2 Tuần / Bản Lương Tháng)
+  const scaledSeasonal = useMemo(() => {
+    // Khi đang ở chế độ xem Bản Lương Thời Vụ (workerCategory === 'SEASONAL'), lọc đúng nhân viên thuộc Tab đang chọn
+    const listByCycle =
+      workerCategory === 'SEASONAL'
+        ? activeSeasonalWorkers.filter((w) => (w.payrollCycleType || '1_MONTH') === seasonalCycleTab)
+        : activeSeasonalWorkers;
+
+    const subPeriod =
+      selectedSeasonalSubPeriodId !== 'ALL_PERIODS'
+        ? seasonalSubPeriods.find((p) => p.id === selectedSeasonalSubPeriodId)
+        : undefined;
+
+    // Tính toán công & lương cho từng công nhân (theo kỳ con nếu chọn Tuần 1..5 / Đợt 1..2, hoặc tổng hợp tháng)
+    const computedList = listByCycle.map((w) => {
+      if (subPeriod) {
+        return getWorkerForPeriod(w, subPeriod);
+      }
+      const hasParticipated = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+      if (!hasParticipated) {
         return {
           ...w,
-          actualWorkDays: actualDays,
-          salaryByDays,
-          overtimeHours: otHours,
-          overtimePay: otPay,
-          totalIncome,
-          advancePayment: advance,
-          personalIncomeTax: tax,
-          totalDeductions: deductions,
-          netSalary,
+          actualWorkDays: 0,
+          salaryByDays: 0,
+          overtimeHours: 0,
+          overtimePay: 0,
+          totalIncome: 0,
+          personalIncomeTax: 0,
+          totalDeductions: w.advancePayment || 0,
+          netSalary: 0,
         };
-      });
-  }, [syncedSeasonalForMonth, cycleMultiplier, searchTerm, attendanceOnly]);
+      }
+      return w;
+    });
+
+    return computedList.filter((w) => {
+      if (seasonalAttendanceOnly) {
+        const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
+        if (!isParticipating) return false;
+      }
+      const term = searchTerm.toLowerCase();
+      return (
+        !term ||
+        w.fullName.toLowerCase().includes(term) ||
+        w.code.toLowerCase().includes(term) ||
+        (w.project && w.project.toLowerCase().includes(term))
+      );
+    });
+  }, [
+    activeSeasonalWorkers,
+    workerCategory,
+    seasonalCycleTab,
+    selectedSeasonalSubPeriodId,
+    seasonalSubPeriods,
+    seasonalAttendanceOnly,
+    searchTerm,
+  ]);
 
   // Dữ liệu tổ đội theo chu kỳ - CHỈ TỔ ĐỘI ĐANG LÀM VIỆC (ACTIVE)
   const scaledTeam = useMemo(() => {
@@ -521,124 +564,282 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       )}
 
       {forcedCategory === 'SEASONAL' && (
-        <div className="bg-gradient-to-r from-amber-700 to-slate-900 text-white p-3.5 rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
-              <HardHat className="w-5 h-5 text-amber-300" />
+        <div className="space-y-3">
+          <div className="bg-gradient-to-r from-amber-700 to-slate-900 text-white p-3.5 rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
+                <HardHat className="w-5 h-5 text-amber-300" />
+              </div>
+              <div>
+                <h2 className="text-base font-black tracking-wide flex items-center gap-2">
+                  2.3 BẢN LƯƠNG NHÂN VIÊN THỜI VỤ —{' '}
+                  {seasonalCycleTab === '1_WEEK'
+                    ? 'BẢN LƯƠNG 1 TUẦN'
+                    : seasonalCycleTab === '2_WEEKS'
+                    ? 'BẢN LƯƠNG 2 TUẦN'
+                    : 'BẢN LƯƠNG THÁNG'}
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950">
+                    {scaledSeasonal.length} công nhân
+                  </span>
+                </h2>
+                <p className="text-xs text-amber-200/90">
+                  Nhân viên khai báo <strong>Lương 1 Tuần</strong> hiện ở Tab Bản Lương 1 Tuần, <strong>Lương 2 Tuần</strong> hiện ở Tab Bản Lương 2 Tuần, và <strong>Lương Tháng</strong> hiện ở Tab Bản Lương Tháng.
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-base font-black tracking-wide flex items-center gap-2">
-                4. BẢN LƯƠNG NHÂN VIÊN THỜI VỤ & KỸ THUẬT CÔNG TRÌNH
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950">
-                  {scaledSeasonal.length} công nhân
-                </span>
-              </h2>
-              <p className="text-xs text-amber-200/90">
-                Tính theo chu kỳ (Tuần / 2 Tuần / Tháng), đơn giá ngày công, tăng ca x1.5, phụ cấp ăn trưa/đi lại & khấu trừ thuế TNCN 10%.
-              </p>
+            <div className="text-xs text-amber-200 bg-amber-950/60 px-3 py-1.5 rounded-lg border border-amber-800/40 font-semibold">
+              Kỳ tính lương: <strong className="text-white">{config.periodCode}</strong>
             </div>
           </div>
-          <div className="text-xs text-amber-200 bg-amber-950/60 px-3 py-1.5 rounded-lg border border-amber-800/40 font-semibold">
-            Kỳ tính lương: <strong className="text-white">{config.periodCode}</strong>
+
+          {/* 3 TAB BẢN LƯƠNG NHÂN VIÊN THỜI VỤ: BẢN LƯƠNG 1 TUẦN | BẢN LƯƠNG 2 TUẦN | BẢN LƯƠNG THÁNG */}
+          <div className="bg-white p-3 rounded-xl border-2 border-amber-200 shadow-xs space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSelectSeasonalCycleTab('1_WEEK')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                    seasonalCycleTab === '1_WEEK'
+                      ? 'bg-[#0f3d64] text-white shadow-sm font-black ring-2 ring-[#0f3d64]/20'
+                      : 'bg-slate-50 text-slate-700 hover:bg-sky-50 border border-slate-300'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 text-sky-400" />
+                  <span>Bản Lương 1 Tuần</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                      seasonalCycleTab === '1_WEEK'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-sky-100 text-sky-900'
+                    }`}
+                  >
+                    {oneWeekWorkersCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectSeasonalCycleTab('2_WEEKS')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                    seasonalCycleTab === '2_WEEKS'
+                      ? 'bg-[#0f3d64] text-white shadow-sm font-black ring-2 ring-[#0f3d64]/20'
+                      : 'bg-slate-50 text-slate-700 hover:bg-amber-50 border border-slate-300'
+                  }`}
+                >
+                  <Layers className="w-4 h-4 text-amber-400" />
+                  <span>Bản Lương 2 Tuần</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                      seasonalCycleTab === '2_WEEKS'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-amber-100 text-amber-900'
+                    }`}
+                  >
+                    {twoWeeksWorkersCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectSeasonalCycleTab('1_MONTH')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                    seasonalCycleTab === '1_MONTH'
+                      ? 'bg-[#0f3d64] text-white shadow-sm font-black ring-2 ring-[#0f3d64]/20'
+                      : 'bg-slate-50 text-slate-700 hover:bg-emerald-50 border border-slate-300'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4 text-emerald-400" />
+                  <span>Bản Lương Tháng</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                      seasonalCycleTab === '1_MONTH'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-emerald-100 text-emerald-900'
+                    }`}
+                  >
+                    {monthlySeasonalWorkersCount}
+                  </span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <MonthYearPicker
+                  month={config.month || 9}
+                  year={config.year || 2026}
+                  onChange={onChangeMonthYear}
+                  label="Chọn kỳ xem lương:"
+                />
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Tìm tên thợ, mã, dự án..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg w-48 focus:outline-sky-600"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSeasonalAttendanceOnly(!seasonalAttendanceOnly)}
+                  className={`px-2.5 py-1.5 text-xs rounded-lg border font-bold flex items-center gap-1 transition cursor-pointer ${
+                    seasonalAttendanceOnly
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      : 'bg-slate-100 text-slate-700 border-slate-300'
+                  }`}
+                  title="Chuyển đổi giữa hiển thị toàn bộ thợ thuộc tab này hoặc chỉ hiện thợ đã có công > 0"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>{seasonalAttendanceOnly ? '🟢 Chỉ hiện thợ đã có công' : 'Hiện tất cả thợ trong Tab'}</span>
+                </button>
+
+                <button
+                  id="btn-export-excel"
+                  onClick={handleExportExcel}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Xuất Excel (.xlsx)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Thanh chọn Tuần (W1..W5) hoặc Đợt (BI1..BI2) khi đang ở Tab Bản Lương 1 Tuần hoặc Bản Lương 2 Tuần */}
+            {(seasonalCycleTab === '1_WEEK' || seasonalCycleTab === '2_WEEKS') && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200 text-xs">
+                <span className="font-bold text-slate-600 mr-1">
+                  {seasonalCycleTab === '1_WEEK' ? 'Chọn tuần trong tháng:' : 'Chọn đợt 2 tuần trong tháng:'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeasonalSubPeriodId('ALL_PERIODS')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
+                    selectedSeasonalSubPeriodId === 'ALL_PERIODS'
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+                  }`}
+                >
+                  Tổng hợp cả tháng {config.periodCode}
+                </button>
+                {seasonalSubPeriods.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedSeasonalSubPeriodId(p.id)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      selectedSeasonalSubPeriodId === p.id
+                        ? 'bg-amber-600 text-white shadow-2xs'
+                        : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-300'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* 4 Chế độ chu kỳ lương: Theo Tuần, Theo Tháng, Theo Quý, Theo Năm */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-slate-100 rounded-xl border border-slate-200">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-black text-slate-800 uppercase tracking-wider mr-1">Chu kỳ lương:</span>
-          <button
-            type="button"
-            id="cycle-week"
-            onClick={() => setPeriodCycle('WEEK')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-              periodCycle === 'WEEK'
-                ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>Theo Tuần (Tuần {selectedWeek})</span>
-          </button>
-          <button
-            type="button"
-            id="cycle-month"
-            onClick={() => setPeriodCycle('MONTH')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-              periodCycle === 'MONTH'
-                ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
-            }`}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>Theo Tháng ({config.periodCode})</span>
-          </button>
-          <button
-            type="button"
-            id="cycle-quarter"
-            onClick={() => setPeriodCycle('QUARTER')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-              periodCycle === 'QUARTER'
-                ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
-            }`}
-          >
-            <TrendingUp className="w-3.5 h-3.5" />
-            <span>Theo Quý (Quý {selectedQuarter})</span>
-          </button>
-          <button
-            type="button"
-            id="cycle-year"
-            onClick={() => setPeriodCycle('YEAR')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-              periodCycle === 'YEAR'
-                ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
-                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Theo Năm ({config.year || 2026})</span>
-          </button>
+      {/* 4 Chế độ chu kỳ lương: Chỉ hiển thị khi KHÔNG phải Bản Lương Thời Vụ cố định */}
+      {forcedCategory !== 'SEASONAL' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-slate-100 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-black text-slate-800 uppercase tracking-wider mr-1">Chu kỳ lương:</span>
+            <button
+              type="button"
+              id="cycle-week"
+              onClick={() => setPeriodCycle('WEEK')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                periodCycle === 'WEEK'
+                  ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Theo Tuần (Tuần {selectedWeek})</span>
+            </button>
+            <button
+              type="button"
+              id="cycle-month"
+              onClick={() => setPeriodCycle('MONTH')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                periodCycle === 'MONTH'
+                  ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Theo Tháng ({config.periodCode})</span>
+            </button>
+            <button
+              type="button"
+              id="cycle-quarter"
+              onClick={() => setPeriodCycle('QUARTER')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                periodCycle === 'QUARTER'
+                  ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Theo Quý (Quý {selectedQuarter})</span>
+            </button>
+            <button
+              type="button"
+              id="cycle-year"
+              onClick={() => setPeriodCycle('YEAR')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                periodCycle === 'YEAR'
+                  ? 'bg-[#0f3d64] text-white shadow-xs font-black ring-2 ring-[#0f3d64]/20'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Theo Năm ({config.year || 2026})</span>
+            </button>
+          </div>
+
+          {periodCycle === 'WEEK' && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="font-semibold text-slate-600">Chọn tuần:</span>
+              {[1, 2, 3, 4].map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => setSelectedWeek(w)}
+                  className={`w-7 h-7 rounded font-bold text-xs cursor-pointer transition ${
+                    selectedWeek === w ? 'bg-sky-600 text-white shadow-xs' : 'bg-white text-slate-700 border border-slate-300'
+                  }`}
+                >
+                  T{w}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {periodCycle === 'QUARTER' && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="font-semibold text-slate-600">Chọn quý:</span>
+              {[1, 2, 3, 4].map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setSelectedQuarter(q)}
+                  className={`px-2 py-1 rounded font-bold text-xs cursor-pointer transition ${
+                    selectedQuarter === q ? 'bg-sky-600 text-white shadow-xs' : 'bg-white text-slate-700 border border-slate-300'
+                  }`}
+                >
+                  Quý {q}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-
-        {/* Lựa chọn tuần hoặc quý cụ thể */}
-        {periodCycle === 'WEEK' && (
-          <div className="flex items-center gap-1 text-xs">
-            <span className="font-semibold text-slate-600">Chọn tuần:</span>
-            {[1, 2, 3, 4].map((w) => (
-              <button
-                key={w}
-                type="button"
-                onClick={() => setSelectedWeek(w)}
-                className={`w-7 h-7 rounded font-bold text-xs cursor-pointer transition ${
-                  selectedWeek === w ? 'bg-sky-600 text-white shadow-xs' : 'bg-white text-slate-700 border border-slate-300'
-                }`}
-              >
-                T{w}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {periodCycle === 'QUARTER' && (
-          <div className="flex items-center gap-1 text-xs">
-            <span className="font-semibold text-slate-600">Chọn quý:</span>
-            {[1, 2, 3, 4].map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => setSelectedQuarter(q)}
-                className={`px-2 py-1 rounded font-bold text-xs cursor-pointer transition ${
-                  selectedQuarter === q ? 'bg-sky-600 text-white shadow-xs' : 'bg-white text-slate-700 border border-slate-300'
-                }`}
-              >
-                Quý {q}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* 3 Nhóm nhân sự: Chỉ hiển thị khi xem Tổng hợp (không cố định nhóm) */}
       {!forcedCategory && (
@@ -712,142 +913,141 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         </div>
       )}
 
-      {/* Top Filter & Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
-            {showResignedHistory ? 'Hồ sơ lưu trữ lịch sử lương nhân viên đã nghỉ' : 'Bảng lương chi tiết'} — {periodCycle === 'WEEK' ? `Tuần ${selectedWeek} (Tháng ${config.periodCode})` : periodCycle === 'QUARTER' ? `Quý ${selectedQuarter} Năm ${config.year || 2026}` : periodCycle === 'YEAR' ? `Cả Năm ${config.year || 2026}` : config.period}
-          </h2>
-          <span className="text-xs text-slate-500 font-medium">
-            ({filtered.length} {showResignedHistory ? 'nhân sự đã thôi việc' : 'nhân viên đang làm việc'})
-          </span>
+      {/* Top Filter & Actions (Dành cho Nhân viên chính thức / Tổng hợp) */}
+      {forcedCategory !== 'SEASONAL' && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              {showResignedHistory ? 'Hồ sơ lưu trữ lịch sử lương nhân viên đã nghỉ' : 'Bảng lương chi tiết'} — {periodCycle === 'WEEK' ? `Tuần ${selectedWeek} (Tháng ${config.periodCode})` : periodCycle === 'QUARTER' ? `Quý ${selectedQuarter} Năm ${config.year || 2026}` : periodCycle === 'YEAR' ? `Cả Năm ${config.year || 2026}` : config.period}
+            </h2>
+            <span className="text-xs text-slate-500 font-medium">
+              ({filtered.length} {showResignedHistory ? 'nhân sự đã thôi việc' : 'nhân viên đang làm việc'})
+            </span>
 
-          {/* Month & Year Picker Text Box */}
-          {periodCycle === 'MONTH' && (
-            <MonthYearPicker
-              month={config.month || 9}
-              year={config.year || 2026}
-              onChange={onChangeMonthYear}
-              label="Chọn kỳ xem lương:"
-            />
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Chế độ xem: Bảng lương chính vs Lịch sử nhân viên đã nghỉ */}
-          <div className="flex items-center rounded border border-slate-300 p-0.5 bg-slate-100 text-xs font-semibold">
-            <button
-              type="button"
-              id="btn-payroll-active"
-              onClick={() => setShowResignedHistory(false)}
-              className={`px-2.5 py-1 rounded cursor-pointer transition flex items-center gap-1.5 ${
-                !showResignedHistory ? 'bg-white text-[#0f3d64] shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Đang làm việc ({activeEmployees.length})</span>
-            </button>
-            {resignedEmployees.length > 0 && (
-              <button
-                type="button"
-                id="btn-payroll-resigned-history"
-                onClick={() => setShowResignedHistory(true)}
-                className={`px-2.5 py-1 rounded cursor-pointer transition flex items-center gap-1.5 ${
-                  showResignedHistory ? 'bg-rose-700 text-white shadow-xs font-bold' : 'text-rose-800 hover:bg-rose-50'
-                }`}
-                title="Xem lại lịch sử bảng lương lúc trước của nhân viên đã thôi việc"
-              >
-                <History className="w-3.5 h-3.5" />
-                <span>Lịch sử đã nghỉ ({resignedEmployees.length})</span>
-              </button>
+            {periodCycle === 'MONTH' && (
+              <MonthYearPicker
+                month={config.month || 9}
+                year={config.year || 2026}
+                onChange={onChangeMonthYear}
+                label="Chọn kỳ xem lương:"
+              />
             )}
           </div>
 
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Tìm kiếm..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1 text-xs border border-slate-300 rounded w-44 focus:outline-sky-600"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded border border-slate-300 p-0.5 bg-slate-100 text-xs font-semibold">
+              <button
+                type="button"
+                id="btn-payroll-active"
+                onClick={() => setShowResignedHistory(false)}
+                className={`px-2.5 py-1 rounded cursor-pointer transition flex items-center gap-1.5 ${
+                  !showResignedHistory ? 'bg-white text-[#0f3d64] shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Đang làm việc ({activeEmployees.length})</span>
+              </button>
+              {resignedEmployees.length > 0 && (
+                <button
+                  type="button"
+                  id="btn-payroll-resigned-history"
+                  onClick={() => setShowResignedHistory(true)}
+                  className={`px-2.5 py-1 rounded cursor-pointer transition flex items-center gap-1.5 ${
+                    showResignedHistory ? 'bg-rose-700 text-white shadow-xs font-bold' : 'text-rose-800 hover:bg-rose-50'
+                  }`}
+                  title="Xem lại lịch sử bảng lương lúc trước của nhân viên đã thôi việc"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>Lịch sử đã nghỉ ({resignedEmployees.length})</span>
+                </button>
+              )}
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm kiếm..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-8 pr-3 py-1 text-xs border border-slate-300 rounded w-44 focus:outline-sky-600"
+              />
+            </div>
+
+            <div className="flex items-center rounded border border-slate-300 p-0.5 bg-slate-50 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setSalaryTypeFilter('ALL')}
+                className={`px-2 py-0.5 rounded cursor-pointer transition ${
+                  salaryTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Tất cả ({showResignedHistory ? resignedEmployees.length : activeEmployees.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSalaryTypeFilter('MONTHLY')}
+                className={`px-2 py-0.5 rounded cursor-pointer transition ${
+                  salaryTypeFilter === 'MONTHLY' ? 'bg-sky-100 text-[#0f3d64] shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Lương tháng ({monthlyCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSalaryTypeFilter('DAILY')}
+                className={`px-2 py-0.5 rounded cursor-pointer transition ${
+                  salaryTypeFilter === 'DAILY' ? 'bg-amber-100 text-amber-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Lương ngày ({dailyCount})
+              </button>
+            </div>
+
+            <select
+              value={selectedDept}
+              onChange={(e) => setSelectedDept(e.target.value)}
+              className="px-2.5 py-1 text-xs border border-slate-300 rounded text-slate-700 bg-white"
+            >
+              <option value="ALL">Tất cả bộ phận</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+
+            {!showResignedHistory && (
+              <button
+                type="button"
+                onClick={() => setAttendanceOnly(!attendanceOnly)}
+                className={`px-2.5 py-1 text-xs rounded border font-semibold flex items-center gap-1 transition cursor-pointer ${
+                  attendanceOnly
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'bg-slate-100 text-slate-700 border-slate-300'
+                }`}
+                title="Chuyển đổi giữa chỉ hiển thị nhân sự đã tham gia chấm công trong kỳ và hiển thị toàn bộ nhân sự đang làm việc"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>
+                  {attendanceOnly
+                    ? `🟢 NV tham gia chấm công (${participatingEmployeesCount})`
+                    : `Hiện tất cả (${activeEmployees.length})`}
+                </span>
+              </button>
+            )}
+
+            <button
+              id="btn-export-excel"
+              onClick={handleExportExcel}
+              className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Xuất Excel (.xlsx)</span>
+            </button>
           </div>
-
-          {/* Lọc theo hình thức lương */}
-          <div className="flex items-center rounded border border-slate-300 p-0.5 bg-slate-50 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setSalaryTypeFilter('ALL')}
-              className={`px-2 py-0.5 rounded cursor-pointer transition ${
-                salaryTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Tất cả ({showResignedHistory ? resignedEmployees.length : activeEmployees.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSalaryTypeFilter('MONTHLY')}
-              className={`px-2 py-0.5 rounded cursor-pointer transition ${
-                salaryTypeFilter === 'MONTHLY' ? 'bg-sky-100 text-[#0f3d64] shadow-xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Lương tháng ({monthlyCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSalaryTypeFilter('DAILY')}
-              className={`px-2 py-0.5 rounded cursor-pointer transition ${
-                salaryTypeFilter === 'DAILY' ? 'bg-amber-100 text-amber-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Lương ngày ({dailyCount})
-            </button>
-          </div>
-
-          <select
-            value={selectedDept}
-            onChange={(e) => setSelectedDept(e.target.value)}
-            className="px-2.5 py-1 text-xs border border-slate-300 rounded text-slate-700 bg-white"
-          >
-            <option value="ALL">Tất cả bộ phận</option>
-            {departments.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-
-          {!showResignedHistory && (
-            <button
-              type="button"
-              onClick={() => setAttendanceOnly(!attendanceOnly)}
-              className={`px-2.5 py-1 text-xs rounded border font-semibold flex items-center gap-1 transition cursor-pointer ${
-                attendanceOnly
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                  : 'bg-slate-100 text-slate-700 border-slate-300'
-              }`}
-              title="Chuyển đổi giữa chỉ hiển thị nhân sự đã tham gia chấm công trong kỳ và hiển thị toàn bộ nhân sự đang làm việc"
-            >
-              <Filter className="w-3.5 h-3.5" />
-              <span>
-                {attendanceOnly
-                  ? `🟢 NV tham gia chấm công (${participatingEmployeesCount})`
-                  : `Hiện tất cả (${activeEmployees.length})`}
-              </span>
-            </button>
-          )}
-
-          <button
-            id="btn-export-excel"
-            onClick={handleExportExcel}
-            className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Xuất Excel (.xlsx)</span>
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Cảnh báo chế độ xem Lịch sử lương của nhân viên đã thôi việc */}
       {showResignedHistory && (
@@ -1125,6 +1325,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <th className="p-2 border-r border-amber-800 text-center w-10">STT</th>
                 <th className="p-2 border-r border-amber-800">Mã thợ</th>
                 <th className="p-2 border-r border-amber-800 sticky left-0 bg-[#b45309] z-30">Họ và tên thợ</th>
+                <th className="p-2 border-r border-amber-800 text-center">Chu kỳ lương</th>
                 <th className="p-2 border-r border-amber-800">Ngành nghề</th>
                 <th className="p-2 border-r border-amber-800">Bậc thợ</th>
                 <th className="p-2 border-r border-amber-800">Dự án thi công</th>
@@ -1145,8 +1346,20 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
             <tbody className="divide-y divide-slate-200">
               {scaledSeasonal.length === 0 ? (
                 <tr>
-                  <td colSpan={18} className="p-8 text-center text-slate-400">
-                    Không có nhân lực thời vụ nào phù hợp với bộ lọc tìm kiếm
+                  <td colSpan={19} className="p-8 text-center text-slate-500">
+                    <div className="space-y-1">
+                      <p className="font-bold text-slate-700">
+                        Chưa có nhân viên thời vụ nào trong{' '}
+                        {seasonalCycleTab === '1_WEEK'
+                          ? 'Tab Bản Lương 1 Tuần'
+                          : seasonalCycleTab === '2_WEEKS'
+                          ? 'Tab Bản Lương 2 Tuần'
+                          : 'Tab Bản Lương Tháng'}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Khi thêm nhân viên mới hoặc chọn chu kỳ lương tại mục <strong>2.1 Danh Sách Thời Vụ</strong> (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng), nhân viên sẽ tự động xuất hiện tại Tab tương ứng này.
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -1160,6 +1373,49 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     </td>
                     <td className="p-1.5 border-r border-slate-200 sticky left-0 bg-white hover:bg-amber-50 font-bold text-slate-900 z-10">
                       {w.fullName}
+                    </td>
+                    <td className="p-1.5 border-r border-slate-200 text-center">
+                      {onUpdateSeasonalWorker ? (
+                        <select
+                          value={w.payrollCycleType || '1_MONTH'}
+                          onChange={(e) => {
+                            const newCycle = e.target.value as SeasonalCycleType;
+                            const original = seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+                            onUpdateSeasonalWorker({
+                              ...original,
+                              payrollCycleType: newCycle,
+                            });
+                          }}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                            (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                              ? 'bg-sky-50 text-sky-900 border-sky-300'
+                              : (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+                              ? 'bg-amber-50 text-amber-900 border-amber-300'
+                              : 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                          }`}
+                          title="Đổi chu kỳ lương của công nhân này"
+                        >
+                          <option value="1_WEEK">Lương 1 Tuần</option>
+                          <option value="2_WEEKS">Lương 2 Tuần</option>
+                          <option value="1_MONTH">Lương Tháng</option>
+                        </select>
+                      ) : (
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                              ? 'bg-sky-50 text-sky-900 border-sky-300'
+                              : (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+                              ? 'bg-amber-50 text-amber-900 border-amber-300'
+                              : 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                          }`}
+                        >
+                          {(w.payrollCycleType || '1_MONTH') === '1_WEEK'
+                            ? 'Lương 1 Tuần'
+                            : (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+                            ? 'Lương 2 Tuần'
+                            : 'Lương Tháng'}
+                        </span>
+                      )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-slate-700">{w.trade}</td>
                     <td className="p-1.5 border-r border-slate-200 text-center">
@@ -1208,8 +1464,8 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
             </tbody>
             <tfoot className="bg-amber-100 font-bold text-slate-900 sticky bottom-0 border-t-2 border-amber-400">
               <tr>
-                <td colSpan={6} className="p-2 text-center uppercase tracking-wide border-r border-amber-300">
-                  TỔNG CỘNG ({scaledSeasonal.length} THỢ THỜI VỤ)
+                <td colSpan={7} className="p-2 text-center uppercase tracking-wide border-r border-amber-300">
+                  TỔNG CỘNG {seasonalCycleTab === '1_WEEK' ? 'BẢN LƯƠNG 1 TUẦN' : seasonalCycleTab === '2_WEEKS' ? 'BẢN LƯƠNG 2 TUẦN' : 'BẢN LƯƠNG THÁNG'} ({scaledSeasonal.length} THỢ THỜI VỤ)
                 </td>
                 <td className="p-2 text-right border-r border-amber-300 font-mono">
                   {formatNumberOnly(scaledSeasonal.reduce((s, w) => s + w.dailyRate, 0))}

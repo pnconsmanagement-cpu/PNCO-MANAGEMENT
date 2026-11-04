@@ -796,7 +796,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
-      payrollCycleType: period.cycleType,
+      payrollCycleType: worker.payrollCycleType || '1_MONTH',
       actualWorkDays: roundedWorkDays,
       overtimeHours: totalOT,
       mealAllowance: existingRecord?.mealAllowance ?? worker.mealAllowance ?? 0,
@@ -850,7 +850,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       currentPeriodKey: pKey,
       currentWeekId: period.id,
       currentWeekLabel: period.label,
-      payrollCycleType: period.cycleType,
+      payrollCycleType: worker.payrollCycleType || '1_MONTH',
       actualWorkDays: effectiveDays,
       overtimeHours: effectiveOT,
       mealAllowance: existingRecord.mealAllowance,
@@ -871,7 +871,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
-    payrollCycleType: period.cycleType,
+    payrollCycleType: worker.payrollCycleType || '1_MONTH',
     actualWorkDays: 0, // Mặc định 0 công
     overtimeHours: 0,
     mealAllowance: 0,
@@ -919,6 +919,9 @@ export function recordWorkerPeriod(
     effectiveTimesheet = createTimesheetForPeriod(period, targetDays, targetOT);
   }
 
+  const declaredCycle: SeasonalCycleType =
+    patch.payrollCycleType || worker.payrollCycleType || period.cycleType || '1_MONTH';
+
   const updated = recomputeSeasonalWorkerPayroll({
     ...worker,
     ...patch,
@@ -929,7 +932,7 @@ export function recordWorkerPeriod(
     currentPeriodKey: pKey,
     currentWeekId: period.id,
     currentWeekLabel: period.label,
-    payrollCycleType: period.cycleType,
+    payrollCycleType: declaredCycle,
   });
 
   const isPeriodParticipating = updated.actualWorkDays > 0 || updated.overtimeHours > 0;

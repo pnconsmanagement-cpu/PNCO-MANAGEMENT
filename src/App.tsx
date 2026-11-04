@@ -523,7 +523,7 @@ export default function App() {
       return JSON.stringify({
         p: cfg?.periodCode,
         e: emps.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.baseSalary, x.overtimeHours, x.monthlyAttendance]),
-        s: seas.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.dailyRate, x.overtimeHours, x.monthlyAttendance]),
+        s: seas.map((x) => [x.id, x.actualWorkDays, x.advancePayment, x.dailyRate, x.overtimeHours, x.payrollCycleType, x.monthlyAttendance]),
       });
     } catch {
       return '';
@@ -1461,6 +1461,7 @@ export default function App() {
     return (
       <MobileAttendanceApp
         workers={allMobileWorkers}
+        projects={projects}
         config={config}
         initialWorkerCode={activeMobileWorkerCode}
         isAdminPreview={isAdminPreview}
@@ -1963,6 +1964,7 @@ export default function App() {
                       onUpdateEmployee={handleUpdateEmployee}
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
+                      onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       forcedCategory="SEASONAL"
                     />
                   )}
@@ -2079,6 +2081,7 @@ export default function App() {
                   onUpdateEmployee={handleUpdateEmployee}
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
+                  onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                   forcedCategory="SEASONAL"
                 />
               )}
