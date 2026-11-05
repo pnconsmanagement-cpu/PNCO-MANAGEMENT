@@ -32,6 +32,7 @@ import {
   RotateCcw,
   Zap,
   Clock,
+  Search,
 } from 'lucide-react';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 
@@ -284,6 +285,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     seasonalWorkers.map((w) => syncSeasonalWorkerForMonth(w, currentMonth, currentYear))
   );
   const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [shareModalTargetId, setShareModalTargetId] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -365,11 +367,21 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
 
   // Nhóm nhân sự theo Phòng ban / Dự án giống hệt giao diện Timeline
   const groupedSections = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
     if (attendanceGroup === 'PERMANENT') {
-      const filtered =
+      const filtered = (
         selectedDepartment === 'ALL'
           ? activeEmployees
-          : activeEmployees.filter((e) => e.department === selectedDepartment);
+          : activeEmployees.filter((e) => e.department === selectedDepartment)
+      ).filter((e) => {
+        if (!keyword) return true;
+        return (
+          (e.fullName || '').toLowerCase().includes(keyword) ||
+          (e.code || '').toLowerCase().includes(keyword) ||
+          (e.department || '').toLowerCase().includes(keyword) ||
+          (e.phone || '').toLowerCase().includes(keyword)
+        );
+      });
 
       const groupsMap = new Map<string, Employee[]>();
       filtered.forEach((emp) => {
@@ -425,12 +437,22 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         }),
       }));
     } else {
-      const filtered =
+      const filtered = (
         selectedDepartment === 'ALL'
           ? activeSeasonal
           : activeSeasonal.filter(
               (w) => (w.project || w.teamName || w.trade || 'Công trình thi công') === selectedDepartment
-            );
+            )
+      ).filter((w) => {
+        if (!keyword) return true;
+        return (
+          (w.fullName || '').toLowerCase().includes(keyword) ||
+          (w.code || '').toLowerCase().includes(keyword) ||
+          (w.project || '').toLowerCase().includes(keyword) ||
+          (w.trade || '').toLowerCase().includes(keyword) ||
+          (w.phone || '').toLowerCase().includes(keyword)
+        );
+      });
 
       const groupsMap = new Map<string, SeasonalWorker[]>();
       filtered.forEach((w) => {
@@ -477,6 +499,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   }, [
     attendanceGroup,
     selectedDepartment,
+    searchTerm,
     activeEmployees,
     activeSeasonal,
     monthKey,
@@ -970,269 +993,83 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   }, [groupedSections]);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-      {/* ===================================================================== */}
-      {/* THANH TIÊU ĐỀ TIMELINE (GIỐNG HỆT MẪU TIMELINE CHẤM CÔNG) */}
-      {/* ===================================================================== */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-100">
-        {/* Bên trái: Icon Lịch Cam + Chữ Timeline */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-[#e85d2a] shadow-2xs">
-            <Calendar className="w-5 h-5 stroke-[2.2]" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-extrabold text-[#e85d2a] tracking-tight">
-                Timeline
-              </h2>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                {attendanceGroup === 'PERMANENT'
-                  ? `Nhân Viên Chính Thức (${participatingCount}/${activeEmployees.length} tham gia chấm công)`
-                  : `Nhân Viên Thời Vụ (${participatingCount}/${activeSeasonal.length} tham gia chấm công)`}
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-[#0f3d64] border border-sky-200">
-                Hôm nay: {realDateInfo.realDateStr}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Nhấn vào ô ngày để chấm công / nhập giờ tăng ca (OT) — Khi trạng thái là{' '}
-              <strong className="text-emerald-700">🟢 Tham gia chấm công</strong>,{' '}
-              <strong className="text-[#e85d2a]">Bản Lương</strong> tự động nhảy lương ngay lập tức!
-            </p>
-          </div>
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+      {/* Thanh công cụ gọn nhẹ: Tìm kiếm nhân viên chấm công & Lọc theo Tháng / Năm */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Ô tìm kiếm nhanh nhân viên chấm công */}
+        <div className="relative flex-1 min-w-[240px] max-w-md">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Tìm nhanh tên hoặc mã nhân viên chấm công..."
+            className="w-full pl-9 pr-8 py-1.5 bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#0f3d64] rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none transition"
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              title="Xóa tìm kiếm"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
-        {/* Bên phải: Lọc Phòng Ban + Điều hướng Tháng/Năm + Chọn nhanh Tháng 9 / Tháng 10 + Link Chấm Công + Tải Excel */}
-        <div className="flex flex-wrap items-center gap-2">
-          {!forcedGroup && (
-            <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setAttendanceGroup('PERMANENT');
-                  setSelectedDepartment('ALL');
-                }}
-                className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${
-                  attendanceGroup === 'PERMANENT'
-                    ? 'bg-[#0f3d64] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                NV Chính Thức ({activeEmployees.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAttendanceGroup('SEASONAL');
-                  setSelectedDepartment('ALL');
-                }}
-                className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${
-                  attendanceGroup === 'SEASONAL'
-                    ? 'bg-amber-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                NV Thời Vụ ({activeSeasonal.length})
-              </button>
-            </div>
-          )}
-
-          {/* Dropdown lọc Tất cả phòng ban */}
-          <select
-            value={selectedDepartment}
-            onChange={(e) => setSelectedDepartment(e.target.value)}
-            className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 cursor-pointer min-w-[150px]"
-          >
-            <option value="ALL">
-              {attendanceGroup === 'PERMANENT' ? 'Tất cả phòng ban' : 'Tất cả dự án / tổ đội'}
-            </option>
-            {departmentList.map((dept) => (
-              <option key={dept} value={dept}>
-                {dept}
-              </option>
-            ))}
-          </select>
-
-          {/* Nút chọn nhanh Tháng 9 | Tháng 10 | Tháng hiện tại */}
-          <div className="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              type="button"
-              onClick={() => onChangeMonthYear(9, currentYear)}
-              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
-                currentMonth === 9
-                  ? 'bg-[#0f3d64] text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-white hover:text-slate-900'
-              }`}
-              title="Xem Bản Chấm Công & Bản Lương Tháng 09"
-            >
-              Tháng 9
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeMonthYear(10, currentYear)}
-              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
-                currentMonth === 10
-                  ? 'bg-[#0f3d64] text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-white hover:text-slate-900'
-              }`}
-              title="Xem Bản Chấm Công & Bản Lương Tháng 10"
-            >
-              Tháng 10
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeMonthYear(realDateInfo.realMonth, realDateInfo.realYear)}
-              className={`px-2 py-1 rounded text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
-                isViewingRealCurrentMonth
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-emerald-700 hover:bg-emerald-50'
-              }`}
-              title={`Quay về tháng hiện tại (${realDateInfo.realMonthPadded}/${realDateInfo.realYear})`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              <span>Hiện tại (T{realDateInfo.realMonth})</span>
-            </button>
-          </div>
-
-          {/* Bộ chuyển đổi < tháng MM năm YYYY > */}
-          <div className="inline-flex items-center bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 gap-1">
-            <button
-              type="button"
-              onClick={() => {
-                if (currentMonth === 1) onChangeMonthYear(12, currentYear - 1);
-                else onChangeMonthYear(currentMonth - 1, currentYear);
-              }}
-              className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
-              title="Tháng trước"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <div className="flex items-center gap-1 px-2 text-xs font-semibold text-slate-800">
-              <span>tháng</span>
-              <select
-                value={currentMonth}
-                onChange={(e) => onChangeMonthYear(Number(e.target.value), currentYear)}
-                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {m < 10 ? `0${m}` : m}
-                  </option>
-                ))}
-              </select>
-              <span>năm</span>
-              <select
-                value={currentYear}
-                onChange={(e) => onChangeMonthYear(currentMonth, Number(e.target.value))}
-                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
-              >
-                {[2024, 2025, 2026, 2027, 2028].map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (currentMonth === 12) onChangeMonthYear(1, currentYear + 1);
-                else onChangeMonthYear(currentMonth + 1, currentYear);
-              }}
-              className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
-              title="Tháng sau"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          {attendanceGroup === 'PERMANENT' && (
-            <button
-              type="button"
-              onClick={handleFillAllWorkersInMonth}
-              className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-[#0f3d64] border border-sky-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition"
-              title="Chấm đủ công chuẩn cho toàn bộ nhân viên đang làm việc trong tháng này để nhảy lương"
-            >
-              <Zap className="w-3.5 h-3.5 text-amber-500" />
-              <span>Chấm đủ tất cả</span>
-            </button>
-          )}
-
-          {/* Nút gửi Link Chấm Công Điện Thoại */}
+        {/* Bộ lọc Tháng / Năm */}
+        <div className="inline-flex items-center bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 gap-1">
           <button
             type="button"
             onClick={() => {
-              const firstCode =
-                attendanceGroup === 'PERMANENT'
-                  ? activeEmployees[0]?.code
-                  : activeSeasonal[0]?.code;
-              setShareModalTargetId(firstCode ? String(firstCode) : null);
-              setIsShareModalOpen(true);
+              if (currentMonth === 1) onChangeMonthYear(12, currentYear - 1);
+              else onChangeMonthYear(currentMonth - 1, currentYear);
             }}
-            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
-            title="Lấy Link & Mã QR gửi cho mọi người chấm công trên điện thoại"
+            className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
+            title="Tháng trước"
           >
-            <QrCode className="w-3.5 h-3.5" />
-            <span>Link Chấm Công</span>
+            <ChevronLeft className="w-4 h-4" />
           </button>
 
-          {/* Nút Tải Excel màu cam giống mẫu */}
+          <div className="flex items-center gap-1 px-2 text-xs font-semibold text-slate-800">
+            <span>tháng</span>
+            <select
+              value={currentMonth}
+              onChange={(e) => onChangeMonthYear(Number(e.target.value), currentYear)}
+              className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>
+                  {m < 10 ? `0${m}` : m}
+                </option>
+              ))}
+            </select>
+            <span>năm</span>
+            <select
+              value={currentYear}
+              onChange={(e) => onChangeMonthYear(currentMonth, Number(e.target.value))}
+              className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+            >
+              {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             type="button"
-            onClick={handleExportExcel}
-            className="px-3.5 py-1.5 bg-[#e85d2a] hover:bg-[#d14e1f] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
+            onClick={() => {
+              if (currentMonth === 12) onChangeMonthYear(1, currentYear + 1);
+              else onChangeMonthYear(currentMonth + 1, currentYear);
+            }}
+            className="w-6 h-6 rounded hover:bg-white hover:shadow-2xs flex items-center justify-center text-slate-600 cursor-pointer transition"
+            title="Tháng sau"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Tải Excel</span>
+            <ChevronRight className="w-4 h-4" />
           </button>
-        </div>
-      </div>
-
-      {/* Chú thích nhanh các ký hiệu icon nhỏ */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50/80 px-3 py-1.5 rounded-xl border border-slate-200/80">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-bold text-slate-700">Ký hiệu:</span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-4 h-4 rounded bg-[#4caf50] text-white inline-flex items-center justify-center text-[9px] font-bold">
-              ✓
-            </span>
-            <span>Đủ công (1.0)</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-4 h-4 rounded bg-[#4caf50] text-white inline-flex items-center justify-center text-[9px] font-bold">
-              ½
-            </span>
-            <span>Nửa công (0.5)</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-4 h-4 rounded bg-[#ef5350] text-white inline-flex items-center justify-center text-[9px] font-bold">
-              ✕
-            </span>
-            <span>Vắng mặt (VM)</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-4 h-4 rounded bg-[#2196f3] text-white inline-flex items-center justify-center text-[9px] font-bold">
-              📅
-            </span>
-            <span>Nghỉ phép (NP)</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-4 h-4 rounded bg-amber-500 text-white inline-flex items-center justify-center text-[8px] font-bold">
-              ĐM
-            </span>
-            <span>Đi muộn (ĐM)</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="px-1 py-0.2 rounded-full bg-[#f57c00] text-white text-[9px] font-bold">
-              3h
-            </span>
-            <span>Giờ tăng ca (Giờ TC)</span>
-          </span>
-        </div>
-        <div className="text-[11px] font-semibold text-emerald-700">
-          ✓ Trạng thái <strong className="underline">Tham gia chấm công</strong> sẽ tự động nhảy lương trực tiếp sang Bản Lương
         </div>
       </div>
 
