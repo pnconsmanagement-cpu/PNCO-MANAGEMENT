@@ -768,12 +768,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                 1. DANH SÁCH NHÂN VIÊN THƯỜNG TRỰC CHÍNH THỨC
               </h2>
               <span className="px-2.5 py-0.5 bg-sky-400 text-slate-950 font-black rounded text-[10px] uppercase tracking-wider shadow-xs">
-                Lương tháng &bull; HĐLĐ &bull; Chấm công trực tiếp
+                Hồ sơ nhân sự &bull; Hợp đồng lao động &bull; Khai báo định mức
               </span>
             </div>
             <p className="text-xs text-sky-100 mt-1 max-w-3xl leading-relaxed">
-              Quản lý hồ sơ nhân sự thường trực, chấm công thực tế, giờ OT, phụ cấp, BHXH 10.5% và lương thực lĩnh.
-              Hỗ trợ nhập ngày công trực tiếp, gõ số thập phân 25.5 công mượt mà và tự động tính lương.
+              Quản lý thông tin khai báo hồ sơ nhân viên chính thức, chức danh, mức lương cơ bản, phụ cấp cố định, hợp đồng lao động và tài khoản ngân hàng. (Chấm công tại mục 1.2 Bản Chấm Công, tính lương tại mục 1.3 Bản Lương).
             </p>
           </div>
         </div>
@@ -794,41 +793,15 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
             <span>+ Thêm nhân viên mới</span>
           </button>
 
-          {/* Toggle chế độ sửa nhanh trên bảng */}
-          <button
-            type="button"
-            onClick={() => setIsQuickEditMode(!isQuickEditMode)}
-            className={`px-3 py-2 text-xs font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer border ${
-              isQuickEditMode
-                ? 'bg-amber-400 text-slate-950 border-amber-300'
-                : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
-            }`}
-            title="Bật/tắt chế độ sửa nhanh ngày công, OT trực tiếp trên bảng"
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>{isQuickEditMode ? 'Đang sửa nhanh' : 'Sửa nhanh trên bảng'}</span>
-          </button>
-
           {/* Xuất file Excel */}
           <button
             type="button"
             onClick={handleExportExcel}
             className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-            title="Xuất file Excel đầy đủ bảng kê chi trả lương & ngày công"
+            title="Xuất file Excel danh sách hồ sơ nhân sự"
           >
             <Download className="w-4 h-4" />
             <span>Xuất Excel</span>
-          </button>
-
-          {/* In bảng ký nhận */}
-          <button
-            type="button"
-            onClick={handlePrintPayrollSheet}
-            className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer border border-white/20"
-            title="In bảng danh sách ký nhận tiền lương tháng của nhân viên"
-          >
-            <Printer className="w-4 h-4" />
-            <span>In bảng ký nhận</span>
           </button>
 
           {/* Nút Quy trình Tăng lương hàng năm */}
@@ -866,15 +839,15 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 2. THẺ CHỈ SỐ THỐNG KÊ TỔNG QUAN (4 METRIC CARDS) */}
+      {/* 2. THẺ CHỈ SỐ THỐNG KÊ TỔNG QUAN HỒ SƠ NHÂN SỰ (4 METRIC CARDS) */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
           <div>
-            <div className="text-slate-500 font-medium">Tổng số nhân sự thường trực</div>
+            <div className="text-slate-500 font-medium">Tổng số nhân sự chính thức</div>
             <div className="text-xl font-black text-slate-900 mt-0.5">{totalCount} người</div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              🟢 {activeCount} đang làm việc &bull; 🔴 {resignedCount} đã nghỉ
+              {departments.length} phòng ban chuyên môn
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0f3d64] shrink-0">
@@ -884,12 +857,12 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
 
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
           <div>
-            <div className="text-slate-500 font-medium">Nhân sự chấm công tháng</div>
+            <div className="text-slate-500 font-medium">Trạng thái làm việc</div>
             <div className="text-xl font-black text-emerald-700 mt-0.5">
-              {selectedAttendanceCount} / {totalCount} người
+              {activeCount} / {totalCount} người
             </div>
-            <div className="text-[10px] text-emerald-600 font-medium mt-0.5">
-              ✓ Đưa vào bảng tính lương tháng {monthFormatted}/{yearFormatted}
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              🟢 {activeCount} đang làm &bull; 🔴 {resignedCount} đã nghỉ
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
@@ -899,27 +872,31 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
 
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
           <div>
-            <div className="text-slate-500 font-medium">Tổng ngày công & Giờ OT</div>
+            <div className="text-slate-500 font-medium">Hợp đồng lao động</div>
             <div className="text-xl font-black text-sky-950 mt-0.5">
-              {totalWorkDays} công &bull; {totalOtHours}h OT
+              {contractStats.unlimited} vô thời hạn
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              Công chuẩn: {config.standardWorkDays || 26} ngày/tháng
+              {contractStats.fixed} có thời hạn &bull; {contractStats.probationOrOther} thử việc
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
-            <Clock className="w-5 h-5" />
+            <FileText className="w-5 h-5" />
           </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
           <div>
-            <div className="text-slate-500 font-medium">Tổng lương thực lĩnh tháng</div>
+            <div className="text-slate-500 font-medium">Tổng mức lương cơ bản khai báo</div>
             <div className="text-xl font-black text-[#0f3d64] mt-0.5">
-              {formatVND(totalNetSalary)}
+              {formatVND(
+                employees
+                  .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
+                  .reduce((s, e) => s + (e.baseSalary || 0), 0)
+              )}
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              Chi trả kỳ tháng {monthFormatted}/{yearFormatted}
+              Định mức lương hợp đồng đang làm việc
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-800 shrink-0">
@@ -929,104 +906,17 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. THANH ĐIỀU HÀNH KỲ LƯƠNG, CHỌN CHẾ ĐỘ XEM & TIỆN ÍCH CHẤM CÔNG */}
+      {/* 3. THANH TÌM KIẾM, BỘ LỌC HỒ SƠ & SAO LƯU DỮ LIỆU */}
       {/* ========================================================================= */}
-      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Bộ chọn tháng/năm đồng bộ */}
-            {onChangeMonthYear ? (
-              <MonthYearPicker
-                month={config.month || 9}
-                year={config.year || 2026}
-                onChange={onChangeMonthYear}
-                label="Kỳ chấm công:"
-              />
-            ) : (
-              <div className="flex items-center gap-1 font-bold text-slate-800 bg-slate-100 px-3 py-1.5 rounded border border-slate-300">
-                <Calendar className="w-4 h-4 text-sky-700" />
-                <span>Tháng {monthFormatted}/{yearFormatted}</span>
-              </div>
-            )}
-
-            {/* Toggle 2 chế độ hiển thị: 'Chấm công & Lương' vs 'Hồ sơ & Hợp đồng' */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
-              <span className="text-[11px] font-bold text-slate-600 px-2 flex items-center gap-1">
-                <Layers className="w-3.5 h-3.5 text-sky-700" />
-                <span>Chế độ xem:</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setViewMode('ATTENDANCE')}
-                className={`px-3 py-1 rounded-md font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
-                  viewMode === 'ATTENDANCE'
-                    ? 'bg-[#0f3d64] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-                title="Xem và chấm công trực tiếp số ngày công, giờ OT, phụ cấp, lương theo công, BHXH và thực lĩnh"
-              >
-                <CalendarCheck className="w-3.5 h-3.5" />
-                <span>Chấm công & Tiền lương</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('CONTRACT')}
-                className={`px-3 py-1 rounded-md font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
-                  viewMode === 'CONTRACT'
-                    ? 'bg-[#0f3d64] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                }`}
-                title="Xem chi tiết hồ sơ hợp đồng lao động, thời hạn HĐ, số tài khoản ATM, thông tin liên lạc"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Hồ sơ & Hợp đồng lao động</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Các nút tiện ích thao tác chấm công nhanh */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleBatchClearDays}
-              className="px-2.5 py-1.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-              title="Đặt lại 0 công và 0 OT để nhập mới từ đầu cho kỳ này"
-            >
-              <Eraser className="w-3.5 h-3.5 text-amber-700" />
-              <span>Để trống nhập mới (0 công)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleBatchFillFullDays}
-              className="px-3 py-1.5 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-2xs"
-              title="Chấm đủ 26 ngày công chuẩn cho tất cả nhân viên thường trực"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Chấm đủ công tất cả ({config.standardWorkDays || 26} công)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSaveAllAttendance}
-              className="px-3.5 py-1.5 bg-[#0f3d64] hover:bg-sky-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-              title="Lưu lại toàn bộ dữ liệu chấm công và cập nhật bảng lương"
-            >
-              <Save className="w-3.5 h-3.5 text-amber-300" />
-              <span>Lưu & Đồng bộ bảng lương</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Thanh tìm kiếm & bộ lọc */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
           <div className="flex flex-wrap items-center gap-2 flex-1">
             {/* Ô Tìm kiếm */}
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <div className="relative flex-1 min-w-[220px] max-w-sm">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Tìm họ tên, mã NV, chức danh, số HĐ..."
+                placeholder="Tìm họ tên, mã NV, chức danh, số HĐ, SĐT..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-8 pr-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-sky-600 bg-slate-50 focus:bg-white text-xs"
@@ -1058,57 +948,24 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
               <option value="RESIGNED">🔴 Đã nghỉ việc ({resignedCount})</option>
             </select>
 
-            {/* Lọc tình trạng chấm công */}
-            <select
-              value={attendanceFilter}
-              onChange={(e) => setAttendanceFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white focus:outline-sky-600 text-xs"
-            >
-              <option value="ALL">Tất cả chế độ chấm công</option>
-              <option value="SELECTED">✓ Đã chọn chấm công ({selectedAttendanceCount})</option>
-              <option value="UNSELECTED">✗ Không chọn chấm công ({totalCount - selectedAttendanceCount})</option>
-            </select>
-
             {/* Lọc Hợp đồng lao động */}
-            {viewMode === 'CONTRACT' && (
-              <select
-                value={contractFilter}
-                onChange={(e) => setContractFilter(e.target.value as any)}
-                className="px-2.5 py-1.5 border border-sky-300 rounded-lg bg-sky-50/40 focus:outline-sky-600 font-medium text-slate-800 text-xs"
-              >
-                <option value="ALL">Tất cả Hợp đồng ({totalCount})</option>
-                <option value="UNLIMITED">HĐLĐ Vô thời hạn ({contractStats.unlimited})</option>
-                <option value="FIXED">HĐLĐ Có thời hạn ({contractStats.fixed})</option>
-                <option value="PROBATION">Thử việc / Khoán việc ({contractStats.probationOrOther})</option>
-                {(contractStats.expiringSoon > 0 || contractStats.expired > 0) && (
-                  <option value="EXPIRING">⚠️ Cần lưu ý hạn HĐ ({contractStats.expiringSoon + contractStats.expired})</option>
-                )}
-              </select>
-            )}
+            <select
+              value={contractFilter}
+              onChange={(e) => setContractFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white focus:outline-sky-600 font-medium text-slate-800 text-xs"
+            >
+              <option value="ALL">Tất cả Hợp đồng ({totalCount})</option>
+              <option value="UNLIMITED">HĐLĐ Vô thời hạn ({contractStats.unlimited})</option>
+              <option value="FIXED">HĐLĐ Có thời hạn ({contractStats.fixed})</option>
+              <option value="PROBATION">Thử việc / Khoán việc ({contractStats.probationOrOther})</option>
+              {(contractStats.expiringSoon > 0 || contractStats.expired > 0) && (
+                <option value="EXPIRING">⚠️ Cần lưu ý hạn HĐ ({contractStats.expiringSoon + contractStats.expired})</option>
+              )}
+            </select>
           </div>
 
-          {/* Nút chọn nhanh tất cả chấm công & backup */}
+          {/* Nút Xuất CSV & Sao lưu */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleSelectAllAttendance(true)}
-              className="px-2.5 py-1.5 border border-emerald-300 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100 rounded-lg font-medium flex items-center gap-1 cursor-pointer transition text-xs"
-              title="Tích chọn tất cả nhân viên đang hiển thị vào chấm công"
-            >
-              <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Chọn tất cả chấm công</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectAllAttendance(false)}
-              className="px-2.5 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-100 rounded-lg font-medium flex items-center gap-1 cursor-pointer transition text-xs"
-              title="Bỏ chọn tất cả nhân viên đang hiển thị"
-            >
-              <Square className="w-3.5 h-3.5 text-slate-400" />
-              <span>Bỏ chọn tất cả</span>
-            </button>
-
             <button
               type="button"
               onClick={handleExportCSV}
@@ -1154,7 +1011,7 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 4. BẢNG DANH SÁCH NHÂN SỰ THƯỜNG TRỰC: HỖ TRỢ CHẤM CÔNG DỄ DÀNG NHƯ THỜI VỤ */}
+      {/* 4. BẢNG DANH SÁCH THÔNG TIN HỒ SƠ NHÂN VIÊN CHÍNH THỨC (GỌN NHẸ, RÕ RÀNG) */}
       {/* ========================================================================= */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto max-h-[660px]">
@@ -1162,87 +1019,31 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
             <thead className="sticky top-0 bg-[#0f3d64] text-white z-20 select-none text-[11px]">
               <tr>
                 <th className="p-2.5 border-r border-sky-800 text-center w-12 font-bold">STT</th>
-                <th
-                  className="p-2.5 border-r border-sky-800 text-center w-20 font-bold bg-[#144d7d]"
-                  title="Tích chọn để tính vào bảng lương"
-                >
-                  <div className="flex items-center justify-center gap-1">
-                    <CalendarCheck className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Chấm công</span>
-                  </div>
-                </th>
                 <th className="p-2.5 border-r border-sky-800 w-20 font-bold text-center">Mã NV</th>
-                <th className="p-2.5 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[170px] font-bold">
+                <th className="p-2.5 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[180px] font-bold">
                   Họ và tên
                 </th>
-                <th className="p-2.5 border-r border-sky-800 min-w-[130px]">Bộ phận & Chức danh</th>
-                <th className="p-2.5 border-r border-sky-800 text-center min-w-[125px]">
-                  <div>Hình thức lương</div>
-                  <div className="text-[9px] text-amber-200 font-normal">Tháng / Ngày</div>
+                <th className="p-2.5 border-r border-sky-800 min-w-[140px] font-bold">Bộ phận & Chức danh</th>
+                <th className="p-2.5 border-r border-sky-800 text-center w-24 font-bold">Hình thức</th>
+                <th className="p-2.5 border-r border-sky-800 text-right w-32 font-bold">
+                  <div>Mức lương cơ bản</div>
+                  <div className="text-[9px] text-amber-200 font-normal">Theo Tháng / Ngày</div>
                 </th>
-
-                {/* CÁC CỘT TRONG CHẾ ĐỘ 'CHẤM CÔNG & LƯƠNG' (GIỐNG THỜI VỤ) */}
-                {viewMode === 'ATTENDANCE' ? (
-                  <>
-                    <th className="p-2.5 border-r border-sky-800 text-center w-20">Công chuẩn</th>
-                    <th className="p-2.5 border-r border-sky-800 text-center min-w-[185px] bg-[#144d7d]">
-                      <div className="font-bold text-amber-200">Công thực tế *</div>
-                      <div className="text-[9px] text-sky-200 font-normal">Nhập số hoặc bấm +/-</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-center min-w-[145px]">
-                      <div>Giờ OT (h)</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Hệ số 150%</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-right w-28 bg-[#144d7d]">
-                      <div>Tiền tăng ca</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Lương giờ × 1.5</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-center w-24">Nghỉ phép</th>
-                    <th className="p-2.5 border-r border-sky-800 text-center w-24">Nghỉ KL</th>
-                    <th className="p-2.5 border-r border-sky-800 text-right min-w-[130px]">
-                      <div>Lương theo công</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Đơn giá × công</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-right min-w-[120px]">
-                      <div>Phụ cấp</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Trách nhiệm + Dự án</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-right min-w-[125px]">
-                      <div>BHXH (10.5%)</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Khấu trừ NLĐ</div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 text-right min-w-[140px] bg-[#144d7d] font-bold">
-                      <div>THỰC LĨNH</div>
-                      <div className="text-[9px] text-amber-200 font-normal">Chi trả thực nhận</div>
-                    </th>
-                  </>
-                ) : (
-                  /* CÁC CỘT TRONG CHẾ ĐỘ 'HỒ SƠ & HỢP ĐỒNG' */
-                  <>
-                    <th className="p-2.5 border-r border-sky-800 min-w-[165px] font-bold bg-[#144d7d]">
-                      <div className="flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Hợp đồng lao động</span>
-                      </div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 min-w-[145px] font-bold bg-[#144d7d]">
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Thời hạn hợp đồng</span>
-                      </div>
-                    </th>
-                    <th className="p-2.5 border-r border-sky-800 min-w-[180px] font-bold">Email & SĐT</th>
-                    <th className="p-2.5 border-r border-sky-800 text-center w-24 font-bold">Trạng thái</th>
-                    <th className="p-2.5 border-r border-sky-800 text-right w-28 font-bold">Lương cơ bản</th>
-                    <th className="p-2.5 border-r border-sky-800 text-right w-28 font-bold">PC Trách nhiệm</th>
-                    <th className="p-2.5 border-r border-sky-800 text-right w-28 font-bold">PC Dự án</th>
-                    <th className="p-2.5 border-r border-sky-800 text-center w-14 font-bold">NPT</th>
-                    <th className="p-2.5 border-r border-sky-800 text-right w-32 font-bold">BHXH (10.5%)</th>
-                    <th className="p-2.5 border-r border-sky-800 min-w-[170px] font-bold">Tài khoản ATM</th>
-                  </>
-                )}
-
-                <th className="p-2.5 text-center min-w-[130px] font-bold sticky right-0 bg-[#0f3d64] z-30">
+                <th className="p-2.5 border-r border-sky-800 text-right w-32 font-bold">
+                  <div>Phụ cấp cố định</div>
+                  <div className="text-[9px] text-amber-200 font-normal">Trách nhiệm + Dự án</div>
+                </th>
+                <th className="p-2.5 border-r border-sky-800 min-w-[165px] font-bold">
+                  <div className="flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Hợp đồng lao động</span>
+                  </div>
+                </th>
+                <th className="p-2.5 border-r border-sky-800 min-w-[135px] font-bold">Thời hạn HĐ</th>
+                <th className="p-2.5 border-r border-sky-800 min-w-[165px] font-bold">Liên hệ (SĐT / Email)</th>
+                <th className="p-2.5 border-r border-sky-800 min-w-[160px] font-bold">Tài khoản nhận lương</th>
+                <th className="p-2.5 border-r border-sky-800 text-center w-24 font-bold">Trạng thái</th>
+                <th className="p-2.5 text-center min-w-[125px] font-bold sticky right-0 bg-[#0f3d64] z-30">
                   Thao tác
                 </th>
               </tr>
@@ -1250,97 +1051,40 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
             <tbody className="divide-y divide-slate-200">
               {filteredEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={18} className="p-8 text-center text-slate-500 italic">
+                  <td colSpan={13} className="p-8 text-center text-slate-500 italic">
                     Không tìm thấy nhân viên nào phù hợp với bộ lọc tìm kiếm.
                   </td>
                 </tr>
               ) : (
                 filteredEmployees.map((emp, idx) => {
-                  const isSelectedForAttendance = emp.selectedForAttendance !== false;
                   const isResigned = emp.status === 'RESIGNED';
                   const contractInfo = getContractStatusInfo(emp);
                   const isRecentlySaved = lastSavedCode === emp.code;
-                  const stdDays = emp.standardWorkDays || config.standardWorkDays || 26;
-
-                  // Lấy chuỗi nhập liệu tạm thời (để việc gõ phím không bị gián đoạn)
-                  const rawDays =
-                    rowDaysBuffer[emp.id] !== undefined
-                      ? rowDaysBuffer[emp.id]
-                      : emp.actualWorkDays !== undefined
-                      ? String(emp.actualWorkDays)
-                      : '';
-
-                  const rawOt =
-                    rowOtBuffer[emp.id] !== undefined
-                      ? rowOtBuffer[emp.id]
-                      : emp.overtimeHours !== undefined
-                      ? String(emp.overtimeHours)
-                      : '';
-
-                  const rawPaid =
-                    rowPaidLeaveBuffer[emp.id] !== undefined
-                      ? rowPaidLeaveBuffer[emp.id]
-                      : emp.paidLeaveDays !== undefined
-                      ? String(emp.paidLeaveDays)
-                      : '';
-
-                  const rawUnpaid =
-                    rowUnpaidLeaveBuffer[emp.id] !== undefined
-                      ? rowUnpaidLeaveBuffer[emp.id]
-                      : emp.unpaidLeaveDays !== undefined
-                      ? String(emp.unpaidLeaveDays)
-                      : '';
+                  const totalFixedAllowance = (emp.responsibilityAllowance || 0) + (emp.projectAllowance || 0);
 
                   return (
                     <tr
                       key={emp.id}
                       className={`hover:bg-sky-50/50 transition-colors ${
-                        !isSelectedForAttendance
-                          ? 'bg-slate-100/70 text-slate-400 opacity-70'
-                          : isResigned
-                          ? 'bg-rose-50/40'
+                        isResigned
+                          ? 'bg-rose-50/40 text-slate-500'
                           : idx % 2 === 0
                           ? 'bg-white'
                           : 'bg-slate-50/40'
                       }`}
                     >
                       {/* STT */}
-                      <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
+                      <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-500">
                         {idx + 1}
                       </td>
 
-                      {/* Checkbox chọn chấm công */}
-                      <td
-                        className={`p-2 border-r border-slate-200 text-center cursor-pointer transition-colors ${
-                          isSelectedForAttendance ? 'bg-emerald-50/70' : 'bg-slate-100'
-                        }`}
-                        onClick={() => handleToggleAttendance(emp)}
-                        title={isSelectedForAttendance ? 'Đang chọn chấm công. Bấm để bỏ chọn.' : 'Đã bỏ chọn. Bấm để chọn chấm công.'}
-                      >
-                        <div className="flex items-center justify-center gap-1.5 select-none">
-                          <input
-                            type="checkbox"
-                            checked={isSelectedForAttendance}
-                            onChange={() => {}}
-                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
-                          />
-                          <span
-                            className={`text-[11px] font-semibold ${
-                              isSelectedForAttendance ? 'text-emerald-800' : 'text-slate-400'
-                            }`}
-                          >
-                            {isSelectedForAttendance ? 'Chấm' : 'Ẩn'}
-                          </span>
-                        </div>
-                      </td>
-
                       {/* Mã NV */}
-                      <td className="p-2 border-r border-slate-200 font-mono font-bold text-center text-[#0f3d64]">
+                      <td className="p-2.5 border-r border-slate-200 font-mono font-bold text-center text-[#0f3d64]">
                         {emp.code}
                       </td>
 
                       {/* Họ và tên (Cố định cột trái khi scroll) */}
-                      <td className="p-2 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50 z-10">
+                      <td className="p-2.5 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50 z-10">
                         <div className="flex items-center justify-between gap-2">
                           <div
                             className="font-bold text-slate-900 hover:text-sky-700 cursor-pointer"
@@ -1392,393 +1136,111 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                       </td>
 
                       {/* Bộ phận & Chức danh */}
-                      <td className="p-2 border-r border-slate-200 text-slate-700">
+                      <td className="p-2.5 border-r border-slate-200 text-slate-700">
                         <div className="font-semibold text-slate-900">{emp.department}</div>
                         <div className="text-[10px] text-slate-500">{emp.title}</div>
                       </td>
 
-                      {/* Hình thức lương & Mức lương cơ bản */}
-                      <td className="p-1.5 border-r border-slate-200 text-center">
+                      {/* Hình thức trả lương */}
+                      <td className="p-2.5 border-r border-slate-200 text-center">
                         {emp.salaryType === 'DAILY' ? (
-                          <div className="flex flex-col items-center">
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                              Theo ngày
-                            </span>
-                            <span className="text-[11px] font-mono text-amber-950 font-bold mt-0.5">
-                              {new Intl.NumberFormat('vi-VN').format(emp.baseSalary)} đ
-                            </span>
-                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            Theo ngày
+                          </span>
                         ) : (
-                          <div className="flex flex-col items-center">
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-sky-50 text-[#0f3d64] border border-sky-200">
-                              Theo tháng
-                            </span>
-                            <span className="text-[11px] font-mono text-slate-700 mt-0.5">
-                              {new Intl.NumberFormat('vi-VN').format(emp.baseSalary)} đ
-                            </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-sky-50 text-[#0f3d64] border border-sky-200">
+                            Theo tháng
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Mức lương cơ bản */}
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
+                        {new Intl.NumberFormat('vi-VN').format(emp.baseSalary || 0)} đ
+                      </td>
+
+                      {/* Phụ cấp cố định (Trách nhiệm + Dự án) */}
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono text-slate-700">
+                        {totalFixedAllowance > 0 ? (
+                          `${new Intl.NumberFormat('vi-VN').format(totalFixedAllowance)} đ`
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+
+                      {/* Hợp đồng lao động */}
+                      <td className="p-2.5 border-r border-slate-200">
+                        <div className="font-bold text-slate-800 text-[11px] leading-snug">
+                          {emp.contractType || 'HĐLĐ Không xác định thời hạn'}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                          Số: {emp.contractNumber || 'Chưa cấp'}
+                        </div>
+                      </td>
+
+                      {/* Thời hạn hợp đồng */}
+                      <td className="p-2.5 border-r border-slate-200">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            contractInfo.status === 'UNLIMITED'
+                              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                              : contractInfo.status === 'EXPIRED'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-300 font-black animate-pulse'
+                              : contractInfo.status === 'EXPIRING_SOON'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold'
+                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          }`}
+                        >
+                          {contractInfo.label}
+                        </span>
+                        {emp.contractEndDate && (
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                            Hết hạn: {emp.contractEndDate}
                           </div>
                         )}
                       </td>
 
-                      {/* ========================================================================= */}
-                      {/* DỮ LIỆU CHẾ ĐỘ 'CHẤM CÔNG & LƯƠNG' (CỰC KỲ DỄ CHẤM CÔNG NHƯ THỜI VỤ) */}
-                      {/* ========================================================================= */}
-                      {viewMode === 'ATTENDANCE' ? (
-                        <>
-                          {/* Công chuẩn */}
-                          <td className="p-2 border-r border-slate-200 text-center font-mono font-bold text-slate-700">
-                            {stdDays}
-                          </td>
+                      {/* Liên hệ (SĐT / Email) */}
+                      <td className="p-2.5 border-r border-slate-200">
+                        {emp.phone ? (
+                          <div className="flex items-center gap-1 text-[11px] text-slate-800 font-mono font-medium">
+                            <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>{emp.phone}</span>
+                          </div>
+                        ) : null}
+                        {emp.email ? (
+                          <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-0.5">
+                            <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="truncate max-w-[140px]">{emp.email}</span>
+                          </div>
+                        ) : null}
+                        {!emp.phone && !emp.email && <span className="text-slate-400">—</span>}
+                      </td>
 
-                          {/* SỐ NGÀY CÔNG THỰC TẾ: Gõ mượt mà, hỗ trợ số thập phân, nút +/- */}
-                          <td className="p-1.5 border-r border-slate-200 text-center bg-sky-50/40">
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleStepWorkDays(emp, -0.5)}
-                                className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                                title="Giảm 0.5 ngày công"
-                              >
-                                -
-                              </button>
+                      {/* Tài khoản nhận lương (ATM) */}
+                      <td className="p-2.5 border-r border-slate-200 font-mono text-[11px] text-slate-700">
+                        <div className="font-bold">{emp.bankAccount || '—'}</div>
+                        <div className="text-[10px] text-slate-500 font-sans">{emp.bankName || ''}</div>
+                      </td>
 
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                placeholder="0"
-                                value={rawDays}
-                                onChange={(e) => {
-                                  const valStr = e.target.value;
-                                  if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                                    setRowDaysBuffer((prev) => ({ ...prev, [emp.id]: valStr }));
-                                    if (valStr !== '' && !valStr.endsWith('.')) {
-                                      const parsed = parseFloat(valStr);
-                                      if (!isNaN(parsed) && parsed >= 0 && parsed <= 31) {
-                                        handleWorkDaysChange(emp, parsed);
-                                      }
-                                    }
-                                  }
-                                }}
-                                onBlur={() => {
-                                  if (rowDaysBuffer[emp.id] !== undefined) {
-                                    const parsed = parseFloat(rowDaysBuffer[emp.id]);
-                                    const finalDays = isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed));
-                                    handleWorkDaysChange(emp, finalDays);
-                                    setRowDaysBuffer((prev) => {
-                                      const next = { ...prev };
-                                      delete next[emp.id];
-                                      return next;
-                                    });
-                                  }
-                                }}
-                                className="w-13 px-1 py-1 border border-sky-400 focus:border-sky-600 focus:ring-1 focus:ring-sky-500 rounded text-center font-mono font-black text-xs text-slate-900 bg-white shadow-2xs"
-                                title="Nhập số ngày công làm việc (VD: 26, 25.5, 24)"
-                              />
-
-                              <button
-                                type="button"
-                                onClick={() => handleStepWorkDays(emp, 0.5)}
-                                className="w-5 h-6 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-black flex items-center justify-center cursor-pointer transition active:scale-95"
-                                title="Tăng 0.5 ngày công"
-                              >
-                                +
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleWorkDaysChange(emp, stdDays)}
-                                className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 cursor-pointer transition"
-                                title={`Đặt nhanh đủ công chuẩn (${stdDays} ngày)`}
-                              >
-                                Đủ {stdDays}
-                              </button>
-                            </div>
-                          </td>
-
-                          {/* GIỜ TĂNG CA OT */}
-                          <td className="p-1.5 border-r border-slate-200 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleStepOT(emp, -1)}
-                                className="w-4.5 h-5.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                                title="Giảm 1 giờ OT"
-                              >
-                                -
-                              </button>
-
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                placeholder="0"
-                                value={rawOt}
-                                onChange={(e) => {
-                                  const valStr = e.target.value;
-                                  if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                                    setRowOtBuffer((prev) => ({ ...prev, [emp.id]: valStr }));
-                                    if (valStr !== '' && !valStr.endsWith('.')) {
-                                      const parsed = parseFloat(valStr);
-                                      if (!isNaN(parsed) && parsed >= 0) {
-                                        handleOtChange(emp, parsed);
-                                      }
-                                    }
-                                  }
-                                }}
-                                onBlur={() => {
-                                  if (rowOtBuffer[emp.id] !== undefined) {
-                                    const parsed = parseFloat(rowOtBuffer[emp.id]);
-                                    const finalOT = isNaN(parsed) ? 0 : Math.max(0, parsed);
-                                    handleOtChange(emp, finalOT);
-                                    setRowOtBuffer((prev) => {
-                                      const next = { ...prev };
-                                      delete next[emp.id];
-                                      return next;
-                                    });
-                                  }
-                                }}
-                                className="w-11 px-1 py-0.5 border border-slate-300 focus:border-sky-500 rounded text-center font-mono font-bold text-xs text-amber-900 bg-white"
-                                title="Nhập giờ làm thêm OT"
-                              />
-
-                              <button
-                                type="button"
-                                onClick={() => handleStepOT(emp, 1)}
-                                className="w-4.5 h-5.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-black flex items-center justify-center cursor-pointer transition"
-                                title="Tăng 1 giờ OT"
-                              >
-                                +
-                              </button>
-                              <span className="text-[10px] text-slate-400">h</span>
-                            </div>
-                          </td>
-
-                          {/* TIỀN TĂNG CA OT (1.5x) */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-amber-900 bg-amber-50/20">
-                            {(emp.overtimePay || 0) > 0 ? (
-                              `${new Intl.NumberFormat('vi-VN').format(emp.overtimePay)} đ`
-                            ) : (
-                              <span className="text-slate-400 font-normal">—</span>
-                            )}
-                          </td>
-
-                          {/* NGHỈ PHÉP CÓ LƯƠNG */}
-                          <td className="p-1.5 border-r border-slate-200 text-center">
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="0"
-                              value={rawPaid}
-                              onChange={(e) => {
-                                const valStr = e.target.value;
-                                if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                                  setRowPaidLeaveBuffer((prev) => ({ ...prev, [emp.id]: valStr }));
-                                  if (valStr !== '' && !valStr.endsWith('.')) {
-                                    const parsed = parseFloat(valStr);
-                                    if (!isNaN(parsed)) handlePaidLeaveChange(emp, parsed);
-                                  }
-                                }
-                              }}
-                              onBlur={() => {
-                                if (rowPaidLeaveBuffer[emp.id] !== undefined) {
-                                  const parsed = parseFloat(rowPaidLeaveBuffer[emp.id]);
-                                  handlePaidLeaveChange(emp, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                                  setRowPaidLeaveBuffer((prev) => {
-                                    const next = { ...prev };
-                                    delete next[emp.id];
-                                    return next;
-                                  });
-                                }
-                              }}
-                              className="w-10 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                              title="Số ngày nghỉ phép hưởng nguyên lương"
-                            />
-                          </td>
-
-                          {/* NGHỈ KHÔNG LƯƠNG */}
-                          <td className="p-1.5 border-r border-slate-200 text-center">
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="0"
-                              value={rawUnpaid}
-                              onChange={(e) => {
-                                const valStr = e.target.value;
-                                if (/^[0-9]*\.?[0-9]*$/.test(valStr)) {
-                                  setRowUnpaidLeaveBuffer((prev) => ({ ...prev, [emp.id]: valStr }));
-                                  if (valStr !== '' && !valStr.endsWith('.')) {
-                                    const parsed = parseFloat(valStr);
-                                    if (!isNaN(parsed)) handleUnpaidLeaveChange(emp, parsed);
-                                  }
-                                }
-                              }}
-                              onBlur={() => {
-                                if (rowUnpaidLeaveBuffer[emp.id] !== undefined) {
-                                  const parsed = parseFloat(rowUnpaidLeaveBuffer[emp.id]);
-                                  handleUnpaidLeaveChange(emp, isNaN(parsed) ? 0 : Math.max(0, parsed));
-                                  setRowUnpaidLeaveBuffer((prev) => {
-                                    const next = { ...prev };
-                                    delete next[emp.id];
-                                    return next;
-                                  });
-                                }
-                              }}
-                              className="w-10 px-1 py-0.5 border border-slate-200 hover:border-slate-400 rounded text-center font-mono font-medium text-xs text-slate-700 bg-white"
-                              title="Số ngày nghỉ không lương"
-                            />
-                          </td>
-
-                          {/* LƯƠNG THEO CÔNG */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                            {emp.actualWorkDays === 0 ? (
-                              <span className="text-slate-400 font-normal italic text-[11px]">0 đ</span>
-                            ) : (
-                              `${new Intl.NumberFormat('vi-VN').format(emp.salaryByActualDays || 0)} đ`
-                            )}
-                          </td>
-
-                          {/* PHỤ CẤP TRÁCH NHIỆM + DỰ ÁN */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                            {((emp.responsibilityAllowance || 0) + (emp.projectAllowance || 0)) > 0 ? (
-                              `${new Intl.NumberFormat('vi-VN').format((emp.responsibilityAllowance || 0) + (emp.projectAllowance || 0))} đ`
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-
-                          {/* TRỪ BHXH 10.5% */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-700">
-                            {(emp.totalInsurance || 0) > 0 ? (
-                              `-${new Intl.NumberFormat('vi-VN').format(emp.totalInsurance)} đ`
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-
-                          {/* THỰC LĨNH */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-[#0f3d64] bg-sky-50/30 text-xs">
-                            {emp.netSalary > 0 ? (
-                              `${new Intl.NumberFormat('vi-VN').format(emp.netSalary)} đ`
-                            ) : (
-                              <span className="text-slate-400 font-normal">0 đ</span>
-                            )}
-                          </td>
-                        </>
-                      ) : (
-                        /* ========================================================================= */
-                        /* DỮ LIỆU CHẾ ĐỘ 'HỒ SƠ & HỢP ĐỒNG LAO ĐỘNG' */
-                        /* ========================================================================= */
-                        <>
-                          {/* Hợp đồng lao động */}
-                          <td className="p-2 border-r border-slate-200">
-                            <div className="font-bold text-slate-800 text-[11px] leading-snug">
-                              {emp.contractType || 'HĐLĐ Không xác định thời hạn'}
-                            </div>
-                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                              Số: {emp.contractNumber || 'Chưa cấp'}
-                            </div>
-                          </td>
-
-                          {/* Thời hạn hợp đồng */}
-                          <td className="p-2 border-r border-slate-200">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                contractInfo.status === 'UNLIMITED'
-                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                                  : contractInfo.status === 'EXPIRED'
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-300 font-black animate-pulse'
-                                  : contractInfo.status === 'EXPIRING_SOON'
-                                  ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold'
-                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                              }`}
-                            >
-                              {contractInfo.label}
-                            </span>
-                            {emp.contractEndDate && (
-                              <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                                Hết hạn: {emp.contractEndDate}
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Email & SĐT */}
-                          <td className="p-2 border-r border-slate-200">
-                            {emp.email && (
-                              <div className="flex items-center gap-1 text-[11px] text-slate-700">
-                                <Mail className="w-3 h-3 text-slate-400 shrink-0" />
-                                <span className="truncate max-w-[140px]">{emp.email}</span>
-                              </div>
-                            )}
-                            {emp.phone && (
-                              <div className="flex items-center gap-1 text-[11px] text-slate-500 font-mono mt-0.5">
-                                <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                                <span>{emp.phone}</span>
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Trạng thái làm việc */}
-                          <td className="p-2 border-r border-slate-200 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleStatus(emp)}
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer ${
-                                (emp.status || 'ACTIVE') === 'ACTIVE'
-                                  ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                  : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                              }`}
-                              title="Bấm để đổi trạng thái Đang làm việc / Nghỉ việc"
-                            >
-                              {(emp.status || 'ACTIVE') === 'ACTIVE' ? '🟢 Đang làm' : '🔴 Đã nghỉ'}
-                            </button>
-                          </td>
-
-                          {/* Lương cơ bản */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
-                            {new Intl.NumberFormat('vi-VN').format(emp.baseSalary)} đ
-                          </td>
-
-                          {/* PC Trách nhiệm */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                            {(emp.responsibilityAllowance || 0) > 0 ? (
-                              `${new Intl.NumberFormat('vi-VN').format(emp.responsibilityAllowance)} đ`
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-
-                          {/* PC Dự án */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                            {(emp.projectAllowance || 0) > 0 ? (
-                              `${new Intl.NumberFormat('vi-VN').format(emp.projectAllowance)} đ`
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-
-                          {/* NPT */}
-                          <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-700 font-bold">
-                            {emp.dependents || 0}
-                          </td>
-
-                          {/* BHXH (10.5%) */}
-                          <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-700">
-                            {(emp.totalInsurance || 0) > 0 ? (
-                              `-${new Intl.NumberFormat('vi-VN').format(emp.totalInsurance)} đ`
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-
-                          {/* Tài khoản ATM */}
-                          <td className="p-2 border-r border-slate-200 font-mono text-[11px] text-slate-700">
-                            <div className="font-bold">{emp.bankAccount || '—'}</div>
-                            <div className="text-[10px] text-slate-500 font-sans">{emp.bankName || ''}</div>
-                          </td>
-                        </>
-                      )}
+                      {/* Trạng thái làm việc */}
+                      <td className="p-2.5 border-r border-slate-200 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatus(emp)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                            (emp.status || 'ACTIVE') === 'ACTIVE'
+                              ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                              : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                          }`}
+                          title="Bấm để đổi trạng thái Đang làm việc / Nghỉ việc"
+                        >
+                          {(emp.status || 'ACTIVE') === 'ACTIVE' ? '🟢 Đang làm' : '🔴 Đã nghỉ'}
+                        </button>
+                      </td>
 
                       {/* Thao tác */}
-                      <td className="p-2 text-center sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-300 shadow-[-2px_0_4px_rgba(0,0,0,0.06)]">
+                      <td className="p-2.5 text-center sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-300 shadow-[-2px_0_4px_rgba(0,0,0,0.06)]">
                         <div className="flex items-center justify-center gap-1">
                           {/* Sửa chi tiết */}
                           <button

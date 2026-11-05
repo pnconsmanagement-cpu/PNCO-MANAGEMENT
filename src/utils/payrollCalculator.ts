@@ -347,13 +347,13 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
     }
   }
 
-  // 2. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy 26-27 công (0h OT)
+  // 2. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy công do lỗi đồng bộ mã cũ
   const rec10 = existingMonthly['2026-10'];
   if (rec10) {
     const w10 = Number(rec10.totalWorkDays || 0);
     const ot10 = Number(rec10.totalOtHours || 0);
-    const isManualUser = rec10.submittedBy === 'MANUAL_USER' || rec10.submittedBy === 'WORKER';
-    if (UNCLOCKED_OCT_2026_NAMES.has(normName) && !isManualUser && ot10 === 0 && w10 >= 24) {
+    const isManualUser = rec10.submittedBy === 'MANUAL_USER';
+    if (UNCLOCKED_OCT_2026_NAMES.has(normName) && !isManualUser && (w10 > 0 || ot10 > 0)) {
       existingMonthly['2026-10'] = {
         monthKey: '2026-10',
         month: 10,
@@ -361,7 +361,7 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
         totalWorkDays: 0,
         totalOtHours: 0,
         days: {},
-        lastSubmittedAt: '2026-09-01T00:00:00.000Z',
+        lastSubmittedAt: new Date().toISOString(),
         submittedBy: 'ADMIN',
       };
     } else if (HISTORICAL_MONTH_10_BY_NAME[normName] && !isManualUser) {
