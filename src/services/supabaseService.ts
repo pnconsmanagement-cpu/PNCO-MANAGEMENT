@@ -476,7 +476,7 @@ export const loadEmployeesFromSupabase = async (
   try {
     const { data, error } = await client
       .from('employees')
-      .select('id, code, name, department, position, employee_data');
+      .select('*');
 
     if (error || !data || data.length === 0) return null;
 
@@ -489,7 +489,7 @@ export const loadEmployeesFromSupabase = async (
     } catch {}
 
     const list = data
-      .map((item) => {
+      .map((item: any) => {
         const emp = (item.employee_data || {}) as Employee;
         return {
           ...emp,
@@ -498,6 +498,8 @@ export const loadEmployeesFromSupabase = async (
           fullName: emp.fullName || item.name || 'Nhân viên',
           department: emp.department || item.department || 'Phòng ban',
           title: emp.title || item.position || 'Nhân viên',
+          bankAccount: emp.bankAccount || item.bank_account || '',
+          bankName: emp.bankName || item.bank_name || 'Vietcombank',
         };
       })
       .filter((emp) => emp && emp.fullName);
@@ -597,13 +599,31 @@ export const syncSeasonalWorkersToSupabase = async (
     });
 
     if (error) {
-      console.error('Sync seasonal_workers failed:', error);
-      return {
-        success: false,
-        count: 0,
-        message: `Lỗi bảng seasonal_workers: ${error.message}`,
-        error: error.message,
-      };
+      console.warn('Sync seasonal_workers full payload failed, trying minimal core payload:', error.message);
+      const minimalPayload = payload.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        trade: p.trade,
+        project: p.project,
+        bank_account: p.bank_account,
+        bank_name: p.bank_name,
+        daily_rate: p.daily_rate,
+        worker_data: p.worker_data,
+        updated_at: p.updated_at,
+      }));
+      const { error: retryErr } = await client.from('seasonal_workers').upsert(minimalPayload, {
+        onConflict: 'id',
+      });
+      if (retryErr) {
+        console.error('Sync seasonal_workers minimal fallback failed:', retryErr);
+        return {
+          success: false,
+          count: 0,
+          message: `Lỗi bảng seasonal_workers: ${retryErr.message}`,
+          error: retryErr.message,
+        };
+      }
     }
 
     // Đồng bộ luôn bảng attendance_records cho các công nhân thời vụ để dữ liệu chấm công (kể cả khi xóa về 0 công) khớp 100%
@@ -667,8 +687,8 @@ export const loadSeasonalWorkersFromSupabase = async (
 
   try {
     // Luôn tải toàn bộ danh sách công nhân từ bảng seasonal_workers
-    // để đảm bảo mọi thợ và toàn bộ lịch sử chấm công (monthlyAttendance & periodRecords) không bao giờ bị lọc mất
-    let { data, error } = await client.from('seasonal_workers').select('id, code, name, trade, project, team, worker_data');
+    // để đảm bảo mọi thợ, thông tin STK ngân hàng và toàn bộ lịch sử chấm công không bao giờ bị lọc mất
+    let { data, error } = await client.from('seasonal_workers').select('*');
 
     if (error || !data || data.length === 0) return null;
 
@@ -687,7 +707,7 @@ export const loadSeasonalWorkersFromSupabase = async (
     }
 
     const list = data
-      .map((item) => {
+      .map((item: any) => {
         const w = (item.worker_data || {}) as SeasonalWorker;
         const canonicalId = item.id || w.id;
         const canonicalCode = item.code || w.code;
@@ -698,7 +718,15 @@ export const loadSeasonalWorkersFromSupabase = async (
           fullName: w.fullName || item.name || 'Công nhân',
           trade: w.trade || item.trade || '',
           project: w.project || item.project || '',
-          teamName: w.teamName || item.team || '',
+          teamName: w.teamName || item.team || item.team_name || '',
+          bankAccount: w.bankAccount || item.bank_account || '',
+          bankName:
+            w.bankName ||
+            item.bank_name ||
+            ((w.paymentMethod || item.payment_method) === 'CASH' ? 'Tiền mặt' : 'Vietcombank'),
+          paymentMethod: w.paymentMethod || item.payment_method || 'BANK',
+          phone: w.phone || item.phone || '',
+          idCard: w.idCard || item.id_card || '',
         };
       })
       .filter((w) => w && (w.fullName || w.code));
@@ -1357,10 +1385,48 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       ...(existingWorkerData?.periodRecords || {}),
       ...(worker.periodRecords || {}),
     };
+    const effectiveDailyRate = Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
+    if (effectiveDailyRate > 0) {
+      Object.keys(mergedPeriodRecords).forEach((k) => {
+        const r = mergedPeriodRecords[k];
+        if (!r) return;
+        const sByDays = Math.round(effectiveDailyRate * Number(r.actualWorkDays || 0));
+        const otPay = Math.round((effectiveDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+        const totInc =
+          sByDays +
+          otPay +
+          Number(r.mealAllowance || 0) +
+          Number(r.travelSafetyAllowance || 0) +
+          Number(r.otherBonus || 0);
+        const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+        const totDed = tax + Number(r.advancePayment || 0);
+        mergedPeriodRecords[k] = {
+          ...r,
+          dailyRate: effectiveDailyRate,
+          salaryByDays: sByDays,
+          overtimePay: otPay,
+          totalIncome: totInc,
+          personalIncomeTax: tax,
+          totalDeductions: totDed,
+          netSalary: totInc - totDed,
+        };
+      });
+    }
 
     const sortOrder = typeof worker.sortOrder === 'number'
       ? worker.sortOrder
       : (typeof existingWorkerData?.sortOrder === 'number' ? existingWorkerData.sortOrder : 99);
+
+    const hasExplicitBankEdit = Boolean((worker as any).bankUpdatedAt);
+    const effectiveBankAccount = hasExplicitBankEdit
+      ? String(worker.bankAccount || '').trim()
+      : String(worker.bankAccount || existingWorkerData?.bankAccount || '').trim();
+    const effectiveBankName = hasExplicitBankEdit
+      ? String(worker.bankName || '').trim()
+      : String(worker.bankName || existingWorkerData?.bankName || 'Vietcombank').trim();
+    const effectivePaymentMethod = hasExplicitBankEdit
+      ? (worker.paymentMethod || 'BANK')
+      : (worker.paymentMethod || existingWorkerData?.paymentMethod || 'BANK');
 
     const mergedWorker: SeasonalWorker = {
       ...(existingWorkerData || {}),
@@ -1371,6 +1437,10 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       trade: worker.trade || existingWorkerData?.trade || '',
       project: worker.project || existingWorkerData?.project || '',
       teamName: worker.teamName || existingWorkerData?.teamName || '',
+      bankAccount: effectiveBankAccount,
+      bankName: effectiveBankName,
+      paymentMethod: effectivePaymentMethod,
+      dailyRate: effectiveDailyRate > 0 ? effectiveDailyRate : Number(worker.dailyRate || 0),
       sortOrder,
       monthlyAttendance: mergedMonthlyAttendance,
       periodRecords: mergedPeriodRecords,
@@ -1413,8 +1483,28 @@ export const syncSingleSeasonalWorkerToSupabase = async (
         .update(payload)
         .eq('code', workerCode);
       if (updateErr) {
-        console.error('[Supabase Sync] Update fallback also failed:', updateErr.message);
-        return { success: false, message: updateErr.message, error: updateErr.message };
+        // Fallback tối giản tương thích với mọi phiên bản schema seasonal_workers
+        const minimalPayload = {
+          id: String(canonicalId),
+          code: String(workerCode),
+          name: String(mergedWorker.fullName || 'Công nhân'),
+          trade: String(mergedWorker.trade || ''),
+          project: String(mergedWorker.project || ''),
+          bank_account: String(mergedWorker.bankAccount || ''),
+          bank_name: String(mergedWorker.bankName || ''),
+          daily_rate: Number(mergedWorker.dailyRate || 0),
+          worker_data: mergedWorker,
+          updated_at: new Date().toISOString(),
+        };
+        const { error: minUpsertErr } = await client
+          .from('seasonal_workers')
+          .upsert(minimalPayload, { onConflict: 'id' });
+        if (minUpsertErr) {
+          await client
+            .from('seasonal_workers')
+            .update({ worker_data: mergedWorker, updated_at: new Date().toISOString() })
+            .eq('code', workerCode);
+        }
       }
     }
 

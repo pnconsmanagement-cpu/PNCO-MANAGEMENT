@@ -623,17 +623,84 @@ export default function App() {
               }
             });
 
+            const exRateTime = Number((existing as any).dailyRateUpdatedAt || 0);
+            const cwRateTime = Number((cw as any).dailyRateUpdatedAt || 0);
+            const resolvedDailyRate =
+              exRateTime > cwRateTime && existing.dailyRate > 0
+                ? existing.dailyRate
+                : cwRateTime > exRateTime && cw.dailyRate > 0
+                ? cw.dailyRate
+                : Math.max(Number(existing.dailyRate || 0), Number(cw.dailyRate || 0));
+            const mergedPeriodRecs: Record<string, any> = {
+              ...(existing.periodRecords || {}),
+              ...(cw.periodRecords || {}),
+            };
+            if (resolvedDailyRate > 0) {
+              Object.keys(mergedPeriodRecs).forEach((pKey) => {
+                const r = mergedPeriodRecs[pKey];
+                if (!r) return;
+                const sByDays = Math.round(resolvedDailyRate * Number(r.actualWorkDays || 0));
+                const otPay = Math.round((resolvedDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+                const totInc =
+                  sByDays +
+                  otPay +
+                  Number(r.mealAllowance || 0) +
+                  Number(r.travelSafetyAllowance || 0) +
+                  Number(r.otherBonus || 0);
+                const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+                const totDed = tax + Number(r.advancePayment || 0);
+                mergedPeriodRecs[pKey] = {
+                  ...r,
+                  dailyRate: resolvedDailyRate,
+                  salaryByDays: sByDays,
+                  overtimePay: otPay,
+                  totalIncome: totInc,
+                  personalIncomeTax: tax,
+                  totalDeductions: totDed,
+                  netSalary: totInc - totDed,
+                };
+              });
+            }
+
+            const exBankTime = Number((existing as any).bankUpdatedAt || 0);
+            const cwBankTime = Number((cw as any).bankUpdatedAt || 0);
+            const resolvedBankAccount =
+              exBankTime > cwBankTime
+                ? (existing.bankAccount || '')
+                : cwBankTime > exBankTime
+                ? (cw.bankAccount || '')
+                : (cw.bankAccount || existing.bankAccount || '');
+            const resolvedBankName =
+              exBankTime > cwBankTime
+                ? (existing.bankName || '')
+                : cwBankTime > exBankTime
+                ? (cw.bankName || '')
+                : (cw.bankName || existing.bankName || 'Vietcombank');
+            const resolvedPaymentMethod =
+              exBankTime > cwBankTime
+                ? (existing.paymentMethod || 'BANK')
+                : cwBankTime > exBankTime
+                ? (cw.paymentMethod || 'BANK')
+                : (cw.paymentMethod || existing.paymentMethod || 'BANK');
+
             map.set(key, {
               ...existing,
               ...cw,
+              bankAccount: resolvedBankAccount,
+              bankName: resolvedBankName,
+              paymentMethod: resolvedPaymentMethod,
+              ...(Math.max(exBankTime, cwBankTime) > 0
+                ? { bankUpdatedAt: Math.max(exBankTime, cwBankTime) }
+                : {}),
+              dailyRate: resolvedDailyRate > 0 ? resolvedDailyRate : cw.dailyRate || existing.dailyRate,
+              ...(Math.max(exRateTime, cwRateTime) > 0
+                ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
+                : {}),
               actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
               overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
               monthlyAttendance: mergedMonthly,
-              periodRecords: {
-                ...(existing.periodRecords || {}),
-                ...(cw.periodRecords || {}),
-              },
-            });
+              periodRecords: mergedPeriodRecs,
+            } as SeasonalWorker);
           } else {
             map.set(key, cw);
           }
@@ -986,11 +1053,13 @@ export default function App() {
   // Cập nhật công nhân thời vụ - đồng bộ ngay lập tức lên Máy chủ và Supabase Cloud
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
     const recalculated = recomputeSeasonal(updated);
+
     setSeasonalWorkers((prev) => {
       const idx = prev.findIndex(
         (w) => String(w.id) === String(recalculated.id) || (w.code && w.code === recalculated.code)
       );
       let next: SeasonalWorker[];
+      let finalWorkerToSync: SeasonalWorker;
       if (idx !== -1) {
         next = [...prev];
         const mergedRecords = {
@@ -1019,26 +1088,43 @@ export default function App() {
             }
           });
         }
-        next[idx] = {
+        finalWorkerToSync = {
           ...next[idx],
           ...recalculated,
+          bankAccount:
+            recalculated.bankAccount !== undefined
+              ? recalculated.bankAccount
+              : next[idx].bankAccount || '',
+          bankName:
+            recalculated.bankName !== undefined
+              ? recalculated.bankName
+              : next[idx].bankName || 'Vietcombank',
+          paymentMethod: recalculated.paymentMethod || next[idx].paymentMethod || 'BANK',
+          bankUpdatedAt: Date.now(),
+          dailyRateUpdatedAt: Date.now(),
           monthlyAttendance: {
             ...(next[idx].monthlyAttendance || {}),
             ...(recalculated.monthlyAttendance || {}),
           },
           periodRecords: mergedRecords,
-        };
+        } as SeasonalWorker;
+        next[idx] = finalWorkerToSync;
       } else {
-        next = [...prev, recalculated];
+        finalWorkerToSync = {
+          ...recalculated,
+          bankUpdatedAt: Date.now(),
+          dailyRateUpdatedAt: Date.now(),
+        } as SeasonalWorker;
+        next = [...prev, finalWorkerToSync];
       }
       localStorage.setItem('payroll_seasonal_workers', JSON.stringify(next));
+      // Lưu ngay lên máy chủ Backend và Supabase với đầy đủ periodRecords đã đồng bộ Đơn giá ngày
+      saveAttendanceToServer(finalWorkerToSync);
+      if (isSupabaseConfigured()) {
+        syncSingleSeasonalWorkerToSupabase(finalWorkerToSync, config.periodCode).then(() => notifyCrossTab());
+      }
       return next;
     });
-    // Lưu ngay lên máy chủ Backend để các thiết bị khác nhận được tức thì
-    saveAttendanceToServer(recalculated);
-    if (isSupabaseConfigured()) {
-      syncSingleSeasonalWorkerToSupabase(recalculated, config.periodCode).then(() => notifyCrossTab());
-    }
   };
 
   // Thêm mới công nhân thời vụ - đồng bộ ngay lập tức lên Supabase Cloud (không cần F5)

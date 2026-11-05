@@ -5,7 +5,7 @@ import {
   WeeklyDayAttendance,
   SeasonalPeriodRecord,
 } from '../types';
-import { getDayOfWeekInfo, recomputeSeasonalWorkerPayroll, getPayrollPeriods } from '../data/mockSeasonalWorkers';
+import { getDayOfWeekInfo, recomputeSeasonalWorkerPayroll, getPayrollPeriods, getUnifiedWorkerDailyRate } from '../data/mockSeasonalWorkers';
 import { getSupabaseConfig, isSupabaseConfigured } from '../services/supabaseService';
 
 export interface CalendarDayCell {
@@ -290,15 +290,7 @@ export function updateWorkerMonthlyAttendance(
 
     const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
     const isPeriodRecorded = roundedPeriodDays > 0 || pOtHours > 0;
-    const existingRec = worker.periodRecords?.[period.periodKey];
-    const existingPeriodDailyRate = existingRec?.dailyRate ?? (
-      existingRec && existingRec.actualWorkDays > 0 && existingRec.salaryByDays > 0
-        ? Math.round(existingRec.salaryByDays / existingRec.actualWorkDays)
-        : undefined
-    );
-    const periodDailyRate = (existingPeriodDailyRate !== undefined && existingPeriodDailyRate > 0)
-      ? existingPeriodDailyRate
-      : Math.max(0, worker.dailyRate || 0);
+    const periodDailyRate = getUnifiedWorkerDailyRate(worker);
     const salaryByDays = isPeriodRecorded ? Math.round(periodDailyRate * roundedPeriodDays) : 0;
     const hourlyRate = periodDailyRate / 8;
     const overtimePay = isPeriodRecorded ? Math.round(hourlyRate * pOtHours * 1.5) : 0;
@@ -321,7 +313,7 @@ export function updateWorkerMonthlyAttendance(
       periodLabel: period.label,
       cycleType: period.cycleType,
       isRecorded: isPeriodRecorded,
-      dailyRate: periodDailyRate, // Giữ nguyên mức lương riêng của tuần / kỳ này
+      dailyRate: periodDailyRate,
       actualWorkDays: roundedPeriodDays,
       salaryByDays,
       overtimeHours: pOtHours,
@@ -342,9 +334,12 @@ export function updateWorkerMonthlyAttendance(
     periodRecords[period.periodKey] = pRec;
   });
 
+  const unifiedDailyRate = getUnifiedWorkerDailyRate(worker);
+
   // Cập nhật công nhân và tính toán lại lương theo Thông tư 111
   const updatedWorker = recomputeSeasonalWorkerPayroll({
     ...worker,
+    dailyRate: unifiedDailyRate,
     actualWorkDays: totalWorkDays,
     overtimeHours: totalOtHours,
     selectedForAttendance: isMonthParticipating,

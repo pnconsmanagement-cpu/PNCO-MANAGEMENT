@@ -217,9 +217,13 @@ app.post('/api/attendance/mark', (req, res) => {
 
     if (seaIdx >= 0) {
       const mergedMonthly = mergeMonthlyAttendance(workers[seaIdx].monthlyAttendance, worker.monthlyAttendance);
+      const hasBankEdit = Boolean(worker.bankUpdatedAt);
       workers[seaIdx] = {
         ...workers[seaIdx],
         ...worker,
+        bankAccount: hasBankEdit ? (worker.bankAccount || '') : (worker.bankAccount || workers[seaIdx].bankAccount || ''),
+        bankName: hasBankEdit ? (worker.bankName || '') : (worker.bankName || workers[seaIdx].bankName || 'Vietcombank'),
+        paymentMethod: hasBankEdit ? (worker.paymentMethod || 'BANK') : (worker.paymentMethod || workers[seaIdx].paymentMethod || 'BANK'),
         periodRecords: {
           ...(workers[seaIdx].periodRecords || {}),
           ...(worker.periodRecords || {}),

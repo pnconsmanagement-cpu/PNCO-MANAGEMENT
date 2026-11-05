@@ -647,9 +647,19 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       finalTimesheet = createTimesheetForPeriod(activePeriod, targetDays, targetOT);
     }
 
-    // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod kèm đơn giá riêng của kỳ này
+    // Lưu vào bản ghi chu kỳ tương ứng bằng recordWorkerPeriod kèm đơn giá và thông tin tài khoản ngân hàng
+    const cleanedBankAccount = (form.bankAccount || '').trim();
+    const cleanedBankName = (form.bankName || '').trim() || (form.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Vietcombank');
+    const cleanedPaymentMethod = form.paymentMethod || 'BANK';
+
     const finalWorker = recordWorkerPeriod(
-      { ...form, payrollCycleType: cycleType },
+      {
+        ...form,
+        bankAccount: cleanedBankAccount,
+        bankName: cleanedBankName,
+        paymentMethod: cleanedPaymentMethod,
+        payrollCycleType: cycleType,
+      },
       activePeriod,
       {
         payrollCycleType: cycleType,
@@ -662,6 +672,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         otherBonus: form.otherBonus,
         advancePayment: form.advancePayment,
         hasTaxCommitment: form.hasTaxCommitment,
+        bankAccount: cleanedBankAccount,
+        bankName: cleanedBankName,
+        paymentMethod: cleanedPaymentMethod,
         notes: form.notes,
       }
     );
@@ -672,8 +685,12 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     onSave({
       ...finalWorker,
+      bankAccount: cleanedBankAccount,
+      bankName: cleanedBankName,
+      paymentMethod: cleanedPaymentMethod,
+      bankUpdatedAt: Date.now(),
       payrollCycleType: cycleType,
-    });
+    } as SeasonalWorker);
   };
 
   return (

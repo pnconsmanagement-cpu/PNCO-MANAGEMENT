@@ -470,23 +470,22 @@ export function buildSeasonalMonthlyAttendanceRecord(
  * sang Danh Sách Thời Vụ, Bản Chấm Công và Bản Lương cho bất kỳ Tháng/Năm nào.
  */
 export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
-  const currentKey = worker.currentPeriodKey;
-  if (
-    currentKey &&
-    worker.periodRecords?.[currentKey]?.dailyRate &&
-    worker.periodRecords[currentKey].dailyRate > 0
-  ) {
-    return worker.periodRecords[currentKey].dailyRate;
-  }
-  if (worker.dailyRate && worker.dailyRate > 0) {
+  if ((worker as any).dailyRateUpdatedAt && worker.dailyRate && worker.dailyRate > 0) {
     return worker.dailyRate;
+  }
+  const candidateRates: number[] = [];
+  if (worker.dailyRate && worker.dailyRate > 0) {
+    candidateRates.push(worker.dailyRate);
   }
   if (worker.periodRecords) {
     for (const rec of Object.values(worker.periodRecords)) {
       if (rec && rec.dailyRate && rec.dailyRate > 0) {
-        return rec.dailyRate;
+        candidateRates.push(rec.dailyRate);
       }
     }
+  }
+  if (candidateRates.length > 0) {
+    return Math.max(...candidateRates);
   }
   return 0;
 }
@@ -1156,6 +1155,7 @@ export function recordWorkerPeriod(
 
   return {
     ...updated,
+    ...(patch.dailyRate !== undefined ? { dailyRateUpdatedAt: Date.now() } : {}),
     selectedForAttendance: isPeriodParticipating,
     periodRecords,
     monthlyAttendance,
@@ -1778,9 +1778,17 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
  * giúp người dùng bấm xem lại Tháng 9 / Tháng 10 luôn có đầy đủ công & lương.
  */
 export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): SeasonalWorker {
-  const codeMatch = initialSeasonalWorkers.find((x) => x.code === worker.code);
+  const codeMatch = initialSeasonalWorkers.find(
+    (x) =>
+      x.code === worker.code &&
+      x.fullName.trim().toLowerCase() === (worker.fullName || '').trim().toLowerCase()
+  );
+  const unifiedRate = getUnifiedWorkerDailyRate(worker);
   const nextMonthly = { ...(worker.monthlyAttendance || {}) };
-  const nextPeriods = { ...(worker.periodRecords || {}) };
+  const nextPeriods = syncPeriodRecordsDailyRate(
+    { ...(worker.periodRecords || {}) },
+    unifiedRate
+  );
 
   if (!nextMonthly['2026-09'] && codeMatch?.monthlyAttendance?.['2026-09']) {
     nextMonthly['2026-09'] = codeMatch.monthlyAttendance['2026-09'];
@@ -1789,16 +1797,23 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
     nextMonthly['2026-10'] = codeMatch.monthlyAttendance['2026-10'];
   }
   if (!nextPeriods['2026-09_MONTH'] && codeMatch?.periodRecords?.['2026-09_MONTH']) {
-    nextPeriods['2026-09_MONTH'] = codeMatch.periodRecords['2026-09_MONTH'];
+    nextPeriods['2026-09_MONTH'] = {
+      ...codeMatch.periodRecords['2026-09_MONTH'],
+      dailyRate: unifiedRate > 0 ? unifiedRate : codeMatch.periodRecords['2026-09_MONTH'].dailyRate,
+    };
   }
   if (!nextPeriods['2026-10_MONTH'] && codeMatch?.periodRecords?.['2026-10_MONTH']) {
-    nextPeriods['2026-10_MONTH'] = codeMatch.periodRecords['2026-10_MONTH'];
+    nextPeriods['2026-10_MONTH'] = {
+      ...codeMatch.periodRecords['2026-10_MONTH'],
+      dailyRate: unifiedRate > 0 ? unifiedRate : codeMatch.periodRecords['2026-10_MONTH'].dailyRate,
+    };
   }
 
   return {
     ...worker,
+    dailyRate: unifiedRate > 0 ? unifiedRate : worker.dailyRate,
     monthlyAttendance: nextMonthly,
-    periodRecords: nextPeriods,
+    periodRecords: syncPeriodRecordsDailyRate(nextPeriods, unifiedRate),
   };
 }
 

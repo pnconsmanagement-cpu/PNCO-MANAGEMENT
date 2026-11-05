@@ -18,6 +18,8 @@ import {
   DollarSign,
   Clock,
   Sparkles,
+  Printer,
+  X,
 } from 'lucide-react';
 import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, SeasonalCycleType } from '../types';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
@@ -26,8 +28,13 @@ import {
   syncSeasonalWorkerForMonth,
   getPayrollPeriods,
   getWorkerForPeriod,
+  getUnifiedWorkerDailyRate,
+  recomputeSeasonalWorkerPayroll,
 } from '../data/mockSeasonalWorkers';
 import { MonthYearPicker } from './MonthYearPicker';
+import { SeasonalWorkerReceiptModal } from './SeasonalWorkerReceiptModal';
+import { printSeasonalWorkerReceipt } from '../utils/printPayrollReceipt';
+import { PayslipDocument } from './PayslipDocument';
 
 interface PayrollTableTabProps {
   employees: Employee[];
@@ -81,6 +88,8 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [salaryTypeFilter, setSalaryTypeFilter] = useState<'ALL' | 'MONTHLY' | 'DAILY'>('ALL');
   const [showResignedHistory, setShowResignedHistory] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [printingSeasonalWorker, setPrintingSeasonalWorker] = useState<SeasonalWorker | null>(null);
+  const [printingPermanentEmployee, setPrintingPermanentEmployee] = useState<Employee | null>(null);
 
   // 3 Tab Bản Lương Thời Vụ riêng biệt: Bản Lương 1 Tuần ('1_WEEK'), Bản Lương 2 Tuần ('2_WEEKS'), Bản Lương Tháng ('1_MONTH')
   const [seasonalCycleTab, setSeasonalCycleTab] = useState<SeasonalCycleType>(() => {
@@ -140,15 +149,32 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
   const syncedSeasonalForMonth = useMemo(() => {
     return seasonalWorkers.map((w) => {
-      const synced = syncSeasonalWorkerForMonth(w, currentMonth, currentYear);
+      const unifiedRate = getUnifiedWorkerDailyRate(w);
+      const bankAccount = w.bankAccount || '';
+      const bankName = w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Vietcombank');
+      const paymentMethod = w.paymentMethod || 'BANK';
+      const synced = syncSeasonalWorkerForMonth(
+        {
+          ...w,
+          ...(unifiedRate > 0 ? { dailyRate: unifiedRate } : {}),
+          bankAccount,
+          bankName,
+          paymentMethod,
+        },
+        currentMonth,
+        currentYear
+      );
+      const rateToUse = unifiedRate > 0 ? unifiedRate : synced.dailyRate || 0;
       const adv = w.advancePayment || synced.advancePayment || 0;
-      const totalDeductions = (synced.personalIncomeTax || 0) + adv;
-      return {
+      const recalculated = recomputeSeasonalWorkerPayroll({
         ...synced,
+        dailyRate: rateToUse,
         advancePayment: adv,
-        totalDeductions,
-        netSalary: Math.max(0, (synced.totalIncome || 0) - totalDeductions),
-      };
+        bankAccount: w.bankAccount || synced.bankAccount || '',
+        bankName: w.bankName || synced.bankName || 'Vietcombank',
+        paymentMethod: w.paymentMethod || synced.paymentMethod || 'BANK',
+      });
+      return recalculated;
     });
   }, [seasonalWorkers, currentMonth, currentYear]);
 
@@ -201,12 +227,18 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
     // Tính toán công & lương cho từng công nhân (theo kỳ con nếu chọn Tuần 1..5 / Đợt 1..2, hoặc tổng hợp tháng)
     const computedList = listByCycle.map((w) => {
+      const bankAcc = w.bankAccount || '';
+      const bankNm = w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Vietcombank');
+      const payMethod = w.paymentMethod || 'BANK';
       if (subPeriod) {
         const wSub = getWorkerForPeriod(w, subPeriod);
         const adv = w.advancePayment || wSub.advancePayment || 0;
         const totalDed = (wSub.personalIncomeTax || 0) + adv;
         return {
           ...wSub,
+          bankAccount: bankAcc || wSub.bankAccount || '',
+          bankName: bankNm || wSub.bankName || 'Vietcombank',
+          paymentMethod: payMethod,
           advancePayment: adv,
           totalDeductions: totalDed,
           netSalary: Math.max(0, (wSub.totalIncome || 0) - totalDed),
@@ -217,6 +249,9 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       if (!hasParticipated) {
         return {
           ...w,
+          bankAccount: bankAcc,
+          bankName: bankNm,
+          paymentMethod: payMethod,
           actualWorkDays: 0,
           salaryByDays: 0,
           overtimeHours: 0,
@@ -231,6 +266,9 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       const totalDed = (w.personalIncomeTax || 0) + adv;
       return {
         ...w,
+        bankAccount: bankAcc,
+        bankName: bankNm,
+        paymentMethod: payMethod,
         advancePayment: adv,
         totalDeductions: totalDed,
         netSalary: Math.max(0, (w.totalIncome || 0) - totalDed),
@@ -1186,13 +1224,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               <th className="p-2 border-r border-sky-800 text-right bg-amber-900 font-bold">TỔNG KHẤU TRỪ</th>
               <th className="p-2 border-r border-sky-800 text-right bg-emerald-900 font-bold">THỰC LĨNH</th>
               <th className="p-2 border-r border-sky-800">Số tài khoản</th>
-              <th className="p-2">Ngân hàng</th>
+              <th className="p-2 border-r border-sky-800">Ngân hàng</th>
+              <th className="p-2 text-center sticky right-0 bg-[#0f3d64] z-30">In bản lương</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={19} className="p-8 text-center text-slate-400">
+                <td colSpan={22} className="p-8 text-center text-slate-400">
                   {showResignedHistory
                     ? 'Chưa có nhân sự nào trong danh mục đã nghỉ việc'
                     : 'Không tìm thấy nhân viên đang làm việc phù hợp với bộ lọc'}
@@ -1325,8 +1364,57 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <td className="p-1.5 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/80 text-[12px]">
                   {formatNumberOnly(emp.netSalary)}
                 </td>
-                <td className="p-1.5 border-r border-slate-200 font-mono text-slate-700">{emp.bankAccount}</td>
-                <td className="p-1.5 text-slate-700 font-medium">{emp.bankName}</td>
+                <td className="p-1.5 border-r border-slate-200 font-mono text-slate-700">
+                  {onUpdateEmployee ? (
+                    <input
+                      type="text"
+                      value={emp.bankAccount || ''}
+                      placeholder="Nhập số TK..."
+                      onChange={(e) => {
+                        const original = employees.find((item) => item.id === emp.id || item.code === emp.code) || emp;
+                        onUpdateEmployee({
+                          ...original,
+                          bankAccount: e.target.value,
+                        });
+                      }}
+                      className="w-32 font-mono font-bold text-blue-900 bg-white border border-slate-200 hover:border-sky-400 focus:border-sky-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors placeholder:font-sans placeholder:font-normal placeholder:text-slate-400"
+                      title="Số tài khoản ngân hàng của nhân viên"
+                    />
+                  ) : (
+                    emp.bankAccount || '-'
+                  )}
+                </td>
+                <td className="p-1.5 border-r border-slate-200 text-slate-700 font-medium">
+                  {onUpdateEmployee ? (
+                    <input
+                      type="text"
+                      value={emp.bankName || ''}
+                      placeholder="Ngân hàng..."
+                      onChange={(e) => {
+                        const original = employees.find((item) => item.id === emp.id || item.code === emp.code) || emp;
+                        onUpdateEmployee({
+                          ...original,
+                          bankName: e.target.value,
+                        });
+                      }}
+                      className="w-28 text-slate-800 font-medium bg-white border border-slate-200 hover:border-sky-400 focus:border-sky-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors"
+                      title="Ngân hàng thụ hưởng"
+                    />
+                  ) : (
+                    emp.bankName || '-'
+                  )}
+                </td>
+                <td className="p-1.5 text-center sticky right-0 bg-white hover:bg-sky-50 z-10 border-l border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setPrintingPermanentEmployee(emp)}
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                    title={`In bản lương của ${emp.fullName}`}
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>In bản lương</span>
+                  </button>
+                </td>
               </tr>
             )))}
           </tbody>
@@ -1378,7 +1466,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               <td className="p-2 text-right border-r border-slate-300 font-mono text-emerald-900 bg-emerald-100 font-black text-[12px]">
                 {formatNumberOnly(filtered.reduce((s, e) => s + e.netSalary, 0))}
               </td>
-              <td colSpan={2} className="p-2 text-center text-slate-500 font-normal">
+              <td colSpan={3} className="p-2 text-center text-slate-500 font-normal">
                 Chi trả chuyển khoản ngân hàng
               </td>
             </tr>
@@ -1409,13 +1497,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <th className="p-2 border-r border-amber-800 text-right bg-rose-950 font-bold">TỔNG KHẤU TRỪ</th>
                 <th className="p-2 border-r border-amber-800 text-right bg-emerald-900 font-bold">THỰC LĨNH</th>
                 <th className="p-2 border-r border-amber-800">Số tài khoản</th>
-                <th className="p-2">Ngân hàng</th>
+                <th className="p-2 border-r border-amber-800">Ngân hàng</th>
+                <th className="p-2 text-center sticky right-0 bg-[#b45309] z-30">In bản lương</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {scaledSeasonal.length === 0 ? (
                 <tr>
-                  <td colSpan={19} className="p-8 text-center text-slate-500">
+                  <td colSpan={20} className="p-8 text-center text-slate-500">
                     <div className="space-y-1">
                       <p className="font-bold text-slate-700">
                         Chưa có nhân viên thời vụ nào trong{' '}
@@ -1496,7 +1585,29 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       {w.project || 'Toàn công ty'}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                      {formatNumberOnly(w.dailyRate)}
+                      {onUpdateSeasonalWorker ? (
+                        <div className="flex items-center justify-end gap-0.5">
+                          <input
+                            type="number"
+                            step="10000"
+                            min="0"
+                            value={w.dailyRate || 0}
+                            onChange={(e) => {
+                              const newRate = Math.max(0, Number(e.target.value) || 0);
+                              const baseWorker =
+                                seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+                              onUpdateSeasonalWorker({
+                                ...baseWorker,
+                                dailyRate: newRate,
+                              });
+                            }}
+                            className="w-24 text-right font-mono font-bold text-slate-800 bg-white border border-slate-200 hover:border-amber-400 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors"
+                            title="Sửa đơn giá ngày (tự động đồng bộ sang Danh sách thời vụ & mọi kỳ lương)"
+                          />
+                        </div>
+                      ) : (
+                        formatNumberOnly(w.dailyRate)
+                      )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-center font-bold text-sky-900 bg-sky-50/30">
                       {w.actualWorkDays}
@@ -1525,8 +1636,78 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/80 text-[12px]">
                       {formatNumberOnly(w.netSalary)}
                     </td>
-                    <td className="p-1.5 border-r border-slate-200 font-mono text-slate-700">{w.bankAccount || '-'}</td>
-                    <td className="p-1.5 text-slate-700 font-medium">{w.bankName || 'Tiền mặt'}</td>
+                    <td className="p-1.5 border-r border-slate-200 font-mono text-slate-800">
+                      {onUpdateSeasonalWorker ? (
+                        <input
+                          type="text"
+                          value={w.bankAccount || ''}
+                          placeholder="Nhập số TK..."
+                          onChange={(e) => {
+                            const newAcc = e.target.value;
+                            const baseWorker =
+                              seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+                            onUpdateSeasonalWorker({
+                              ...baseWorker,
+                              bankAccount: newAcc,
+                              paymentMethod: newAcc.trim() ? 'BANK' : baseWorker.paymentMethod,
+                              bankUpdatedAt: Date.now(),
+                            } as SeasonalWorker);
+                          }}
+                          className="w-32 font-mono font-bold text-blue-900 bg-white border border-slate-200 hover:border-amber-400 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors placeholder:font-sans placeholder:font-normal placeholder:text-slate-400"
+                          title="Số tài khoản ngân hàng của nhân viên (tự động đồng bộ với Hồ sơ & Phiếu lương)"
+                        />
+                      ) : (
+                        <span className="font-bold text-blue-900">{w.bankAccount || '-'}</span>
+                      )}
+                    </td>
+                    <td className="p-1.5 border-r border-slate-200 text-slate-700 font-medium">
+                      {onUpdateSeasonalWorker ? (
+                        <input
+                          type="text"
+                          value={w.paymentMethod === 'CASH' && !w.bankAccount ? 'Tiền mặt' : (w.bankName || '')}
+                          placeholder="Ngân hàng..."
+                          onChange={(e) => {
+                            const newBank = e.target.value;
+                            const baseWorker =
+                              seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+                            onUpdateSeasonalWorker({
+                              ...baseWorker,
+                              bankName: newBank,
+                              bankUpdatedAt: Date.now(),
+                            } as SeasonalWorker);
+                          }}
+                          className="w-28 text-slate-800 font-medium bg-white border border-slate-200 hover:border-amber-400 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors"
+                          title="Ngân hàng thụ hưởng"
+                        />
+                      ) : (
+                        <span>{w.bankName || 'Tiền mặt'}</span>
+                      )}
+                    </td>
+                    <td className="p-1.5 text-center sticky right-0 bg-white hover:bg-amber-50 z-10 border-l border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const subPeriod =
+                            selectedSeasonalSubPeriodId !== 'ALL_PERIODS'
+                              ? seasonalSubPeriods.find((p) => p.id === selectedSeasonalSubPeriodId)
+                              : undefined;
+                          const periodLabelText = subPeriod
+                            ? subPeriod.label
+                            : seasonalCycleTab === '1_WEEK'
+                            ? `Bản Lương 1 Tuần (Tháng ${currentMonth}/${currentYear})`
+                            : seasonalCycleTab === '2_WEEKS'
+                            ? `Bản Lương 2 Tuần (Tháng ${currentMonth}/${currentYear})`
+                            : `Kỳ lương Tháng ${currentMonth}/${currentYear}`;
+                          setPrintingSeasonalWorker(w);
+                          printSeasonalWorkerReceipt(w, config, undefined, periodLabelText);
+                        }}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                        title={`In bản lương của ${w.fullName}`}
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>In bản lương</span>
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -1571,7 +1752,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <td className="p-2 text-right border-r border-amber-300 font-mono text-emerald-950 bg-emerald-200 font-black text-[12px]">
                   {formatNumberOnly(scaledSeasonal.reduce((s, w) => s + w.netSalary, 0))}
                 </td>
-                <td colSpan={2} className="p-2 text-center text-slate-600 font-medium">
+                <td colSpan={3} className="p-2 text-center text-slate-600 font-medium">
                   Chi trả chuyển khoản / Tiền mặt
                 </td>
               </tr>
@@ -1994,6 +2175,76 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
           </table>
         )}
       </div>
+
+      {/* Modal Xem & In Bản Lương Nhân Viên Thời Vụ */}
+      <SeasonalWorkerReceiptModal
+        isOpen={!!printingSeasonalWorker}
+        worker={printingSeasonalWorker}
+        config={{
+          ...config,
+          month: currentMonth,
+          year: currentYear,
+          periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+          period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+        }}
+        periodLabel={
+          selectedSeasonalSubPeriodId !== 'ALL_PERIODS'
+            ? seasonalSubPeriods.find((p) => p.id === selectedSeasonalSubPeriodId)?.label
+            : seasonalCycleTab === '1_WEEK'
+            ? `Bản Lương 1 Tuần (Tháng ${currentMonth}/${currentYear})`
+            : seasonalCycleTab === '2_WEEKS'
+            ? `Bản Lương 2 Tuần (Tháng ${currentMonth}/${currentYear})`
+            : `Kỳ lương Tháng ${currentMonth}/${currentYear}`
+        }
+        onClose={() => setPrintingSeasonalWorker(null)}
+      />
+
+      {/* Modal Xem & In Bản Lương Nhân Viên Chính Thức */}
+      {printingPermanentEmployee && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPrintingPermanentEmployee(null);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto"
+        >
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="no-print bg-slate-100 border-b border-slate-200 p-3 px-5 flex items-center justify-between gap-2 shrink-0">
+              <div className="font-bold text-sm text-slate-800">
+                Phiếu lương nhân viên: {printingPermanentEmployee.fullName} ({printingPermanentEmployee.code})
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 bg-[#0f3d64] hover:bg-[#1a5b94] text-white rounded text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>In bản lương</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintingPermanentEmployee(null)}
+                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto bg-slate-50 flex-1">
+              <PayslipDocument
+                employee={printingPermanentEmployee}
+                config={{
+                  ...config,
+                  month: currentMonth,
+                  year: currentYear,
+                  periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                  period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

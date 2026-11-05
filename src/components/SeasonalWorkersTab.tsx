@@ -1575,7 +1575,33 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
 
                     {/* Hình thức & STK */}
                     <td className="p-2 border-r border-slate-200 text-slate-700">
-                      {w.paymentMethod === 'BANK' ? (
+                      {isQuickEditMode ? (
+                        <div className="space-y-1 min-w-[125px]">
+                          <input
+                            type="text"
+                            value={w.bankAccount || ''}
+                            placeholder="Nhập số TK..."
+                            onChange={(e) =>
+                              handleQuickUpdate(w, {
+                                bankAccount: e.target.value,
+                                paymentMethod: e.target.value.trim() ? 'BANK' : w.paymentMethod,
+                              })
+                            }
+                            className="w-full px-1.5 py-0.5 border border-sky-300 rounded bg-white font-mono text-[11px] font-bold text-blue-900 placeholder:font-sans placeholder:font-normal placeholder:text-slate-400"
+                            title="Số tài khoản ngân hàng (đồng bộ trực tiếp sang 2.3 Bản Lương)"
+                          />
+                          <input
+                            type="text"
+                            value={w.paymentMethod === 'CASH' && !w.bankAccount ? 'Tiền mặt' : (w.bankName || '')}
+                            placeholder="Ngân hàng..."
+                            onChange={(e) =>
+                              handleQuickUpdate(w, { bankName: e.target.value })
+                            }
+                            className="w-full px-1.5 py-0.5 border border-slate-200 rounded bg-white text-[10px] text-slate-600"
+                            title="Ngân hàng thụ hưởng"
+                          />
+                        </div>
+                      ) : w.paymentMethod === 'BANK' && w.bankAccount ? (
                         <div>
                           <div className="font-semibold text-blue-900 font-mono text-[10px]">
                             {w.bankAccount}
