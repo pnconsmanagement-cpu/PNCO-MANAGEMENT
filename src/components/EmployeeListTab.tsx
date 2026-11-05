@@ -1030,6 +1030,10 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                   <div className="text-[9px] text-amber-200 font-normal">Theo Tháng / Ngày</div>
                 </th>
                 <th className="p-2.5 border-r border-sky-800 text-right w-32 font-bold">
+                  <div>Lương đóng BH</div>
+                  <div className="text-[9px] text-amber-200 font-normal">Căn cứ trích BHXH</div>
+                </th>
+                <th className="p-2.5 border-r border-sky-800 text-right w-32 font-bold">
                   <div>Phụ cấp cố định</div>
                   <div className="text-[9px] text-amber-200 font-normal">Trách nhiệm + Dự án</div>
                 </th>
@@ -1051,7 +1055,7 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
             <tbody className="divide-y divide-slate-200">
               {filteredEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="p-8 text-center text-slate-500 italic">
+                  <td colSpan={14} className="p-8 text-center text-slate-500 italic">
                     Không tìm thấy nhân viên nào phù hợp với bộ lọc tìm kiếm.
                   </td>
                 </tr>
@@ -1157,6 +1161,15 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                       {/* Mức lương cơ bản */}
                       <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
                         {new Intl.NumberFormat('vi-VN').format(emp.baseSalary || 0)} đ
+                      </td>
+
+                      {/* Lương đóng BH */}
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-semibold text-sky-900">
+                        {(emp.insuranceSalary || 0) > 0 ? (
+                          `${new Intl.NumberFormat('vi-VN').format(emp.insuranceSalary || 0)} đ`
+                        ) : (
+                          <span className="text-slate-400 font-normal">—</span>
+                        )}
                       </td>
 
                       {/* Phụ cấp cố định (Trách nhiệm + Dự án) */}
