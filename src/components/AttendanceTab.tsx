@@ -100,8 +100,16 @@ function ensureMonthlyDaysForWorker(
   paidLeaveDays: number = 0,
   unpaidLeaveDays: number = 0
 ): { [dayNumber: number]: DailyAttendanceDetail } {
-  if (existingRecord && existingRecord.days && Object.keys(existingRecord.days).length > 0) {
+  if (!existingRecord) {
+    return {};
+  }
+  if (existingRecord.days && Object.keys(existingRecord.days).length > 0) {
     return existingRecord.days;
+  }
+
+  // Nếu bản ghi tháng là 11/2026 mà không có chi tiết days -> trả về trống để không tự tạo ngày công giả
+  if (month === 11 && year === 2026) {
+    return {};
   }
 
   // Nếu nhân sự chưa có công và chưa có OT -> để trống toàn bộ (-)

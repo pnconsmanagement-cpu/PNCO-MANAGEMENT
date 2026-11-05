@@ -1111,12 +1111,41 @@ export function recordWorkerPeriod(
       ? patch.dailyRate
       : getUnifiedWorkerDailyRate(worker);
 
-  // Xác định số ngày công và giờ OT mục tiêu
-  const targetDays = patch.actualWorkDays !== undefined ? Math.max(0, patch.actualWorkDays) : Math.max(0, worker.actualWorkDays || 0);
-  const targetOT = patch.overtimeHours !== undefined ? Math.max(0, patch.overtimeHours) : Math.max(0, worker.overtimeHours || 0);
+  const pYear = period.year || parseInt(pKey?.split('-')[0], 10) || 2026;
+  const pMonth = period.month || parseInt(pKey?.split('-')[1]?.split('_')[0], 10) || 9;
+  const mStr = String(pMonth).padStart(2, '0');
+  const monthKey = `${pYear}-${mStr}`;
+  const existingPeriodRec = worker.periodRecords?.[pKey];
+  const existingMonthRec = worker.monthlyAttendance?.[monthKey];
+  const isSameAttendanceMonth =
+    worker.attendanceMonth === pMonth && worker.attendanceYear === pYear;
+
+  const fallbackWorkDays =
+    existingPeriodRec?.actualWorkDays ??
+    (period.cycleType === '1_MONTH' ? existingMonthRec?.totalWorkDays : undefined) ??
+    (isSameAttendanceMonth ? worker.actualWorkDays : 0) ??
+    0;
+  const fallbackOtHours =
+    existingPeriodRec?.overtimeHours ??
+    (period.cycleType === '1_MONTH' ? existingMonthRec?.totalOtHours : undefined) ??
+    (isSameAttendanceMonth ? worker.overtimeHours : 0) ??
+    0;
+
+  // Xác định số ngày công và giờ OT mục tiêu (tuyệt đối không lấy công của tháng khác đắp sang kỳ đang sửa)
+  const targetDays =
+    patch.actualWorkDays !== undefined
+      ? Math.max(0, patch.actualWorkDays)
+      : Math.max(0, Number(fallbackWorkDays) || 0);
+  const targetOT =
+    patch.overtimeHours !== undefined
+      ? Math.max(0, patch.overtimeHours)
+      : Math.max(0, Number(fallbackOtHours) || 0);
 
   // Tự động đồng bộ và sinh weeklyTimesheet tương ứng để số ngày công luôn được ghi nhận vào lịch tháng
-  let effectiveTimesheet = patch.weeklyTimesheet || worker.weeklyTimesheet;
+  let effectiveTimesheet =
+    patch.weeklyTimesheet ||
+    existingPeriodRec?.weeklyTimesheet ||
+    (isSameAttendanceMonth ? worker.weeklyTimesheet : undefined);
   const currentTimesheetWorkUnits = effectiveTimesheet?.reduce((sum, d) => sum + (d.workUnits || 0), 0) || 0;
   if (!effectiveTimesheet || effectiveTimesheet.length === 0 || Math.abs(currentTimesheetWorkUnits - targetDays) > 0.01) {
     effectiveTimesheet = createTimesheetForPeriod(period, targetDays, targetOT);
@@ -1954,6 +1983,40 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
       ...codeMatch.periodRecords['2026-10_MONTH'],
       dailyRate: unifiedRate > 0 ? unifiedRate : codeMatch.periodRecords['2026-10_MONTH'].dailyRate,
     };
+  }
+
+  // Làm sạch bản ghi Tháng 11/2026 nếu bị tự động sao chép nhầm từ Tháng 10/2026
+  const novRec = nextMonthly['2026-11'];
+  const octRec = nextMonthly['2026-10'];
+  if (novRec) {
+    const novWork = Number(novRec.totalWorkDays || 0);
+    const novOt = Number(novRec.totalOtHours || 0);
+    const octWork = Number(octRec?.totalWorkDays || 0);
+    const octOt = Number(octRec?.totalOtHours || 0);
+    const dayVals = Object.values(novRec.days || {}) as any[];
+    const isSyntheticDays =
+      dayVals.length > 0 &&
+      dayVals.every(
+        (d) =>
+          d &&
+          (d.note === 'Thi công tại công trình' ||
+            d.note === 'Thi công bình thường' ||
+            (typeof d.note === 'string' && d.note.startsWith('Thi công + ')))
+      );
+    if (isSyntheticDays || (octWork > 0 && novWork === octWork && novOt === octOt)) {
+      delete nextMonthly['2026-11'];
+      Object.keys(nextPeriods).forEach((k) => {
+        if (k.startsWith('2026-11_')) {
+          delete nextPeriods[k];
+        }
+      });
+    }
+  } else {
+    Object.keys(nextPeriods).forEach((k) => {
+      if (k.startsWith('2026-11_')) {
+        delete nextPeriods[k];
+      }
+    });
   }
 
   return {

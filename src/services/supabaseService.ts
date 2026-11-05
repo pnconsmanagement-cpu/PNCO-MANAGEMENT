@@ -31,17 +31,98 @@ export const isValidDailyAttendanceMap = (obj: any): boolean => {
 };
 
 /**
- * Đảm bảo mọi dữ liệu ngày công & tăng ca của công nhân thời vụ (từ monthlyAttendance, periodRecords hoặc actualWorkDays)
- * đều được cụ thể hóa đầy đủ vào monthlyAttendance[monthKey].days để lưu và hiển thị nhất quán trên mọi máy tính.
+ * Nhận diện bản ghi Tháng 11/2026 bị tự động sao chép nhầm từ Tháng 10/2026
+ * (do hàm buildSeasonalMonthlyAttendanceRecord tự sinh hoặc trùng khớp 100% số công & OT của Tháng 10).
+ */
+export const isLeakedNov2026Record = (novRec: any, octRec?: any): boolean => {
+  if (!novRec) return false;
+  const novWork = Number(novRec.totalWorkDays ?? novRec.total_work_days ?? 0);
+  const novOt = Number(novRec.totalOtHours ?? novRec.total_ot_hours ?? 0);
+  if (novWork === 0 && novOt === 0) return false;
+
+  const daysObj = novRec.days || novRec.attendance_data || {};
+  const dayValues = Object.values(daysObj) as any[];
+
+  // Bản ghi do buildSeasonalMonthlyAttendanceRecord tự sinh luôn có note = 'Thi công tại công trình'
+  if (
+    dayValues.length > 0 &&
+    dayValues.every(
+      (d) =>
+        d &&
+        (d.note === 'Thi công tại công trình' ||
+          d.note === 'Thi công bình thường' ||
+          (typeof d.note === 'string' && d.note.startsWith('Thi công + ')))
+    )
+  ) {
+    return true;
+  }
+
+  if (octRec) {
+    const octWork = Number(octRec.totalWorkDays ?? octRec.total_work_days ?? 0);
+    const octOt = Number(octRec.totalOtHours ?? octRec.total_ot_hours ?? 0);
+    if (octWork > 0 && novWork === octWork && novOt === octOt) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+/**
+ * Đảm bảo dữ liệu ngày công & tăng ca của công nhân thời vụ trong từng tháng đã có
+ * được cụ thể hóa đầy đủ vào monthlyAttendance[monthKey].days mà TUYỆT ĐỐI KHÔNG sao chép công từ tháng này sang tháng khác.
  */
 export const materializeSeasonalMonthlyAttendance = (
   worker: SeasonalWorker,
-  periodCode?: string
+  _periodCode?: string
 ): SeasonalWorker => {
+  const nextMonthly: Record<string, any> = { ...(worker.monthlyAttendance || {}) };
+  const nextPeriodRecords: Record<string, any> = { ...(worker.periodRecords || {}) };
+
+  // Loại bỏ triệt để dữ liệu Tháng 11/2026 bị sao chép nhầm từ Tháng 10/2026
+  if (
+    nextMonthly['2026-11'] &&
+    isLeakedNov2026Record(nextMonthly['2026-11'], nextMonthly['2026-10'])
+  ) {
+    delete nextMonthly['2026-11'];
+    Object.keys(nextPeriodRecords).forEach((k) => {
+      if (k.startsWith('2026-11_')) {
+        delete nextPeriodRecords[k];
+      }
+    });
+  }
+
+  // Kiểm tra thêm nếu periodRecords['2026-11_MONTH'] bị dính công sao chép từ Tháng 10
+  const octWork = Number(
+    nextMonthly['2026-10']?.totalWorkDays ??
+      nextPeriodRecords['2026-10_MONTH']?.actualWorkDays ??
+      0
+  );
+  const octOt = Number(
+    nextMonthly['2026-10']?.totalOtHours ??
+      nextPeriodRecords['2026-10_MONTH']?.overtimeHours ??
+      0
+  );
+  if (nextPeriodRecords['2026-11_MONTH']) {
+    const novPRec = nextPeriodRecords['2026-11_MONTH'];
+    const novPWork = Number(novPRec.actualWorkDays || 0);
+    const novPOt = Number(novPRec.overtimeHours || 0);
+    if (
+      !nextMonthly['2026-11'] ||
+      (octWork > 0 && novPWork === octWork && novPOt === octOt)
+    ) {
+      Object.keys(nextPeriodRecords).forEach((k) => {
+        if (k.startsWith('2026-11_')) {
+          delete nextPeriodRecords[k];
+        }
+      });
+    }
+  }
+
   const w: SeasonalWorker = {
     ...worker,
-    monthlyAttendance: { ...(worker.monthlyAttendance || {}) },
-    periodRecords: { ...(worker.periodRecords || {}) },
+    monthlyAttendance: nextMonthly,
+    periodRecords: nextPeriodRecords,
   };
 
   // 1. Phục hồi các tháng trong monthlyAttendance có totalWorkDays > 0 hoặc totalOtHours > 0 nhưng bị mất chi tiết days
@@ -64,7 +145,7 @@ export const materializeSeasonalMonthlyAttendance = (
     }
   });
 
-  // 2. Đồng bộ từ periodRecords (ví dụ: 2026-10_MONTH, 2026-09_MONTH, ...) sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày
+  // 2. Đồng bộ từ periodRecords của các tháng lịch sử (2026-09, 2026-10) sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày
   Object.entries(w.periodRecords || {}).forEach(([pKey, pRec]) => {
     if (!pRec) return;
     const match = pKey.match(/^(\d{4})-(\d{2})_(.+)$/);
@@ -73,6 +154,7 @@ export const materializeSeasonalMonthlyAttendance = (
     const mNum = Number(match[2]);
     const suffix = match[3];
     const mKey = `${yNum}-${String(mNum).padStart(2, '0')}`;
+    if (mKey === '2026-11') return;
     const workDays = Number(pRec.actualWorkDays || 0);
     const otHours = Number(pRec.overtimeHours || 0);
     if (suffix === 'MONTH' && (workDays > 0 || otHours > 0)) {
@@ -89,30 +171,6 @@ export const materializeSeasonalMonthlyAttendance = (
       }
     }
   });
-
-  // 3. Nếu công nhân có actualWorkDays > 0 hoặc overtimeHours > 0 ở kỳ hiện tại mà chưa có trong monthlyAttendance
-  if (periodCode && periodCode.includes('/')) {
-    const [pM, pY] = periodCode.split('/').map(Number);
-    if (pM && pY) {
-      const activeMonthKey = `${pY}-${String(pM).padStart(2, '0')}`;
-      const workDays = Number(w.actualWorkDays || 0);
-      const otHours = Number(w.overtimeHours || 0);
-      const existing = w.monthlyAttendance![activeMonthKey];
-      if (
-        (workDays > 0 || otHours > 0) &&
-        (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0))
-      ) {
-        w.monthlyAttendance![activeMonthKey] = buildSeasonalMonthlyAttendanceRecord(
-          w,
-          pM,
-          pY,
-          workDays,
-          otHours,
-          existing?.lastSubmittedAt || new Date().toISOString()
-        );
-      }
-    }
-  }
 
   return w;
 };
@@ -812,18 +870,23 @@ export const syncSeasonalWorkersToSupabase = async (
       const canonicalId = matched?.id ? String(matched.id) : String(w.id || `SW_${idx + 1}`);
       const existingData = matched?.worker_data;
 
-      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại
+      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại (đã lọc sạch bản ghi 2026-11 bị rò rỉ)
+      const cleanedExisting = existingData ? materializeSeasonalMonthlyAttendance(existingData) : undefined;
+      const cleanedLocal = materializeSeasonalMonthlyAttendance(w);
       const mergedMonthlyAttendance: Record<string, any> = {
-        ...(existingData?.monthlyAttendance || {}),
+        ...(cleanedExisting?.monthlyAttendance || {}),
       };
-      Object.entries(w.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
+      // Nếu ở máy hiện tại đã xóa 2026-11 thì không lấy lại 2026-11 cũ từ Cloud
+      if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+        delete mergedMonthlyAttendance['2026-11'];
+      }
+      Object.entries(cleanedLocal.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
         if (!newRec) return;
         const oldRec = mergedMonthlyAttendance[mKey];
         if (!oldRec) {
           mergedMonthlyAttendance[mKey] = newRec;
         } else {
           const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
-          const newHasDays = isValidDailyAttendanceMap(newRec.days);
           const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
           const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
 
@@ -837,14 +900,19 @@ export const syncSeasonalWorkersToSupabase = async (
       });
 
       const mergedPeriodRecords = {
-        ...(existingData?.periodRecords || {}),
-        ...(w.periodRecords || {}),
+        ...(cleanedExisting?.periodRecords || {}),
+        ...(cleanedLocal.periodRecords || {}),
       };
+      if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+        Object.keys(mergedPeriodRecords).forEach((k) => {
+          if (k.startsWith('2026-11_')) delete mergedPeriodRecords[k];
+        });
+      }
 
       const fullWorker = materializeSeasonalMonthlyAttendance(
         {
-          ...(existingData || {}),
-          ...w,
+          ...(cleanedExisting || {}),
+          ...cleanedLocal,
           id: canonicalId,
           code: workerCode,
           sortOrder,
@@ -1059,17 +1127,29 @@ export const loadSeasonalWorkersFromSupabase = async (
     // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records vào monthlyAttendance của từng thợ
     // Bảo vệ tuyệt đối: không bao giờ để bản ghi attendance_data rỗng {} ghi đè mất dữ liệu ngày công thực tế!
     if (attRecords.length > 0) {
+      const leakedAttIdsToDelete: string[] = [];
       list.forEach((w) => {
         const workerCode = w.code || w.id;
         const matchingAtts = attRecords.filter(
           (a) => a.worker_code === workerCode || a.worker_code === w.code || a.worker_code === w.id
         );
+        const octAtt = matchingAtts.find((a) => Number(a.month) === 10 && Number(a.year) === 2026);
         matchingAtts.forEach((att) => {
           const mNum = Number(att.month);
           const yNum = Number(att.year);
           const mStr = String(mNum).padStart(2, '0');
           const monthKey = `${yNum}-${mStr}`;
           if (!w.monthlyAttendance) w.monthlyAttendance = {};
+
+          // Nếu là bản ghi Tháng 11/2026 bị tự động sao chép nhầm từ Tháng 10/2026 -> bỏ qua và đánh dấu xóa trên DB
+          if (
+            mNum === 11 &&
+            yNum === 2026 &&
+            isLeakedNov2026Record(att, w.monthlyAttendance['2026-10'] || octAtt)
+          ) {
+            if (att.id) leakedAttIdsToDelete.push(String(att.id));
+            return;
+          }
 
           const existingRec = w.monthlyAttendance[monthKey];
           const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
@@ -1092,8 +1172,8 @@ export const loadSeasonalWorkersFromSupabase = async (
                 submittedBy: 'WORKER',
               };
             }
-          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0)) {
-            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
+          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0) && monthKey !== '2026-11') {
+            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca của các tháng trước nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
             w.monthlyAttendance[monthKey] = buildSeasonalMonthlyAttendanceRecord(
               w,
               mNum,
@@ -1105,6 +1185,14 @@ export const loadSeasonalWorkersFromSupabase = async (
           }
         });
       });
+
+      if (leakedAttIdsToDelete.length > 0) {
+        client
+          .from('attendance_records')
+          .delete()
+          .in('id', leakedAttIdsToDelete)
+          .then(() => {});
+      }
     }
 
     // Cụ thể hóa đầy đủ monthlyAttendance cho mọi công nhân (phục hồi các tháng có công trong periodRecords hoặc totalWorkDays > 0)
@@ -1743,11 +1831,18 @@ export const syncSingleSeasonalWorkerToSupabase = async (
 
     const canonicalId = existingRowId || worker.id || workerCode;
 
-    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó
+    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó (đã lọc sạch 2026-11 bị rò rỉ)
+    const cleanedExisting = existingWorkerData
+      ? materializeSeasonalMonthlyAttendance(existingWorkerData)
+      : undefined;
+    const cleanedLocal = materializeSeasonalMonthlyAttendance(worker);
     const mergedMonthlyAttendance: Record<string, any> = {
-      ...(existingWorkerData?.monthlyAttendance || {}),
+      ...(cleanedExisting?.monthlyAttendance || {}),
     };
-    Object.entries(worker.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
+    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+      delete mergedMonthlyAttendance['2026-11'];
+    }
+    Object.entries(cleanedLocal.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
       if (!newRec) return;
       const oldRec = mergedMonthlyAttendance[mKey];
       if (!oldRec) {
@@ -1765,9 +1860,14 @@ export const syncSingleSeasonalWorkerToSupabase = async (
     });
 
     const mergedPeriodRecords = {
-      ...(existingWorkerData?.periodRecords || {}),
-      ...(worker.periodRecords || {}),
+      ...(cleanedExisting?.periodRecords || {}),
+      ...(cleanedLocal.periodRecords || {}),
     };
+    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+      Object.keys(mergedPeriodRecords).forEach((k) => {
+        if (k.startsWith('2026-11_')) delete mergedPeriodRecords[k];
+      });
+    }
     const effectiveDailyRate = Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
     if (effectiveDailyRate > 0) {
       Object.keys(mergedPeriodRecords).forEach((k) => {

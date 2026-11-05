@@ -324,18 +324,6 @@ export default function App() {
               const slotRec = foundInSlot.monthlyAttendance?.[slot.monthKey];
               if (slotRec && Object.keys(slotRec.days || {}).length > 0 && !mergedMonthly[slot.monthKey]) {
                 mergedMonthly[slot.monthKey] = slotRec;
-              } else if (
-                !mergedMonthly[slot.monthKey] &&
-                ((foundInSlot.actualWorkDays || 0) > 0 || (foundInSlot.overtimeHours || 0) > 0)
-              ) {
-                mergedMonthly[slot.monthKey] = buildMonthlyAttendanceRecord(
-                  slot.m,
-                  slot.y,
-                  foundInSlot.actualWorkDays || 0,
-                  foundInSlot.overtimeHours || 0,
-                  foundInSlot.paidLeaveDays || 0,
-                  foundInSlot.unpaidLeaveDays || 0
-                );
               }
             });
 
@@ -387,7 +375,7 @@ export default function App() {
 
       result.push(
         syncSeasonalWorkerForMonth(
-          ensureSeasonalHistoricalMonths({ ...w, id: uniqueId }),
+          ensureSeasonalHistoricalMonths(materializeSeasonalMonthlyAttendance({ ...w, id: uniqueId })),
           targetMonth,
           targetYear
         )
@@ -1679,15 +1667,6 @@ export default function App() {
             const oldRec = matchedOld.monthlyAttendance?.[targetMonthKey];
             if (oldRec && Object.keys(oldRec.days || {}).length > 0) {
               mergedMonthly[targetMonthKey] = oldRec;
-            } else if ((matchedOld.actualWorkDays || 0) > 0 || (matchedOld.overtimeHours || 0) > 0) {
-              mergedMonthly[targetMonthKey] = buildMonthlyAttendanceRecord(
-                newMonth,
-                newYear,
-                matchedOld.actualWorkDays || 0,
-                matchedOld.overtimeHours || 0,
-                matchedOld.paidLeaveDays || 0,
-                matchedOld.unpaidLeaveDays || 0
-              );
             }
           }
         }
