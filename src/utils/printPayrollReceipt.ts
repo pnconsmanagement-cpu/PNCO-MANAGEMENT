@@ -161,14 +161,16 @@ export function generateSeasonalWorkerReceiptHTML(
       .payslip-container {
         max-width: 210mm;
         margin: 0 auto;
-        padding: 8mm 12mm 6mm 12mm;
+        padding: 6mm 10mm 4mm 10mm;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
       .header-table {
         width: 100%;
         border-collapse: collapse;
-        border-bottom: 2.5px solid #0f3d64;
-        padding-bottom: 6px;
-        margin-bottom: 10px;
+        border-bottom: 2px solid #0f3d64;
+        padding-bottom: 4px;
+        margin-bottom: 6px;
       }
       .header-table td {
         border: none;
@@ -185,14 +187,14 @@ export function generateSeasonalWorkerReceiptHTML(
       .company-sub {
         font-size: 8pt;
         color: #334155;
-        margin-top: 2px;
+        margin-top: 1px;
       }
       .title-section {
         text-align: center;
-        margin: 8px 0 12px 0;
+        margin: 5px 0 8px 0;
       }
       .title-section h1 {
-        font-size: 15pt;
+        font-size: 14.5pt;
         font-weight: 800;
         text-transform: uppercase;
         margin: 0;
@@ -200,8 +202,8 @@ export function generateSeasonalWorkerReceiptHTML(
         letter-spacing: 0.5px;
       }
       .title-section p {
-        font-size: 9pt;
-        margin: 3px 0 0 0;
+        font-size: 8.5pt;
+        margin: 2px 0 0 0;
         color: #475569;
         font-weight: 500;
         font-style: italic;
@@ -210,8 +212,8 @@ export function generateSeasonalWorkerReceiptHTML(
         background-color: #f8fafc;
         border: 1px solid #cbd5e1;
         border-radius: 4px;
-        padding: 8px 12px;
-        margin-bottom: 10px;
+        padding: 6px 10px;
+        margin-bottom: 7px;
       }
       .info-table {
         width: 100%;
@@ -219,20 +221,20 @@ export function generateSeasonalWorkerReceiptHTML(
       }
       .info-table td {
         border: none;
-        padding: 3px 6px;
+        padding: 2px 6px;
         font-size: 8.5pt;
         color: #1e293b;
       }
       .data-table {
         width: 100%;
         border-collapse: collapse;
-        margin-bottom: 10px;
+        margin-bottom: 7px;
         font-size: 8.5pt;
         border: 1px solid #cbd5e1;
       }
       .data-table th, .data-table td {
         border: 1px solid #e2e8f0;
-        padding: 5px 8px;
+        padding: 4px 8px;
       }
       .data-table thead tr {
         background-color: #0f3d64 !important;
@@ -280,8 +282,8 @@ export function generateSeasonalWorkerReceiptHTML(
         border: 1px solid #cbd5e1;
         background-color: #f8fafc;
         border-radius: 4px;
-        padding: 7px 12px;
-        margin-bottom: 10px;
+        padding: 5px 10px;
+        margin-bottom: 6px;
         font-size: 8.5pt;
         color: #334155;
       }
@@ -292,14 +294,14 @@ export function generateSeasonalWorkerReceiptHTML(
         border: 1px solid #bae6fd;
         background-color: #f0f9ff;
         border-radius: 4px;
-        padding: 8px 12px;
-        margin-bottom: 10px;
+        padding: 5px 10px;
+        margin-bottom: 6px;
       }
       .signatures {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         text-align: center;
-        margin-top: 8px;
+        margin-top: 6px;
         page-break-inside: avoid;
         break-inside: avoid;
       }
@@ -316,7 +318,7 @@ export function generateSeasonalWorkerReceiptHTML(
         margin-top: 1px;
       }
       .sig-space {
-        height: 36px;
+        height: 30px;
       }
       .sig-name {
         font-weight: 700;
@@ -324,8 +326,8 @@ export function generateSeasonalWorkerReceiptHTML(
         color: #1e293b;
       }
       .payslip-footer {
-        margin-top: 10px;
-        padding-top: 5px;
+        margin-top: 6px;
+        padding-top: 4px;
         border-top: 1px solid #cbd5e1;
         display: flex;
         justify-content: space-between;
@@ -525,21 +527,6 @@ export function generateSeasonalWorkerReceiptHTML(
           </tr>
           <tr>
             <td style="text-align: center; font-weight: bold;">8</td>
-            <td style="padding-left: 14px;">
-              Thuế TNCN thời vụ 10% (Theo Thông tư 111/2013/TT-BTC)<br/>
-              <span style="font-size: 8pt; font-weight: 700; color: ${worker.hasTaxCommitment ? '#15803d' : '#991b1b'};">
-                ${worker.hasTaxCommitment ? '✓ Đã ký nộp Cam kết Mẫu 08/CK-TNCN: Miễn trừ 10%' : '⚠ Chưa có Cam kết 08: Khấu trừ 10% thuế tại nguồn'}
-              </span>
-            </td>
-            <td style="text-align: center; font-family: monospace; font-weight: bold;">
-              ${worker.hasTaxCommitment ? 'Miễn 10%' : '10%'}
-            </td>
-            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">
-              ${formatNumberOnly(worker.personalIncomeTax)}
-            </td>
-          </tr>
-          <tr>
-            <td style="text-align: center; font-weight: bold;">9</td>
             <td style="padding-left: 14px;">Tạm ứng tiền mặt tại công trường trong kỳ</td>
             <td style="text-align: center; color: #475569;">—</td>
             <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">

@@ -567,36 +567,13 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                 <tr>
                   <td className="py-1 px-3 text-center text-slate-500">8</td>
                   <td className="py-1 px-3 pl-6 text-slate-700">
-                    <div>Thuế TNCN khấu trừ 10% theo Thông tư 111/2013/TT-BTC</div>
-                    {worker.hasTaxCommitment ? (
-                      <span className="text-[10.5px] text-emerald-700 font-medium">
-                        ✓ Đã có Cam kết Mẫu 08/CK-TNCN (Miễn trừ thuế)
-                      </span>
-                    ) : (
-                      <span className="text-[10.5px] text-rose-700 font-medium">
-                        Khấu trừ 10% tại nguồn
-                      </span>
-                    )}
+                    Tạm ứng tiền mặt tại công trường trong kỳ
                   </td>
-                  <td className="py-1 px-3 text-center font-mono text-slate-700">
-                    {worker.hasTaxCommitment ? 'Miễn' : '10%'}
-                  </td>
-                  <td className="py-1 px-3 text-right font-mono font-semibold text-rose-700">
-                    {formatNumberOnly(worker.personalIncomeTax)}
+                  <td className="py-1 px-3 text-center text-slate-400">—</td>
+                  <td className="py-1 px-3 text-right font-mono font-semibold text-amber-800">
+                    {formatNumberOnly(worker.advancePayment)}
                   </td>
                 </tr>
-                {worker.advancePayment > 0 && (
-                  <tr>
-                    <td className="py-1 px-3 text-center text-slate-500">9</td>
-                    <td className="py-1 px-3 pl-6 text-slate-700">
-                      Tạm ứng tiền mặt tại công trường trong kỳ
-                    </td>
-                    <td className="py-1 px-3 text-center text-slate-400">—</td>
-                    <td className="py-1 px-3 text-right font-mono font-semibold text-amber-800">
-                      {formatNumberOnly(worker.advancePayment)}
-                    </td>
-                  </tr>
-                )}
                 <tr className="font-semibold bg-slate-50">
                   <td className="py-1 px-3 text-center"></td>
                   <td className="py-1 px-3 pl-6 text-slate-900" colSpan={2}>
