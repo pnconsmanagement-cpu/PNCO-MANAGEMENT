@@ -20,6 +20,7 @@ import {
   downloadSeasonalWorkerReceiptHTML,
 } from '../utils/printPayrollReceipt';
 import { exportPayslipToPDF } from '../utils/pdfGenerator';
+import { resolveWorkerTimesheetForReceipt } from '../data/mockSeasonalWorkers';
 
 interface SeasonalWorkerReceiptModalProps {
   isOpen: boolean;
@@ -302,8 +303,13 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
           </div>
 
           {/* Bảng chấm công chi tiết theo chu kỳ (1 tuần, 2 tuần hoặc cả tháng) */}
-          {worker.weeklyTimesheet && worker.weeklyTimesheet.length > 0 && (() => {
-            const list = worker.weeklyTimesheet;
+          {(() => {
+            const list = resolveWorkerTimesheetForReceipt(
+              worker,
+              worker.attendanceMonth || config.month,
+              worker.attendanceYear || config.year
+            );
+            if (!list || list.length === 0) return null;
             const isLongCycle = list.length > 16;
 
             if (!isLongCycle) {

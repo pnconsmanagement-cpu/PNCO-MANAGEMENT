@@ -1698,8 +1698,20 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                             : seasonalCycleTab === '2_WEEKS'
                             ? `Bản Lương 2 Tuần (Tháng ${currentMonth}/${currentYear})`
                             : `Kỳ lương Tháng ${currentMonth}/${currentYear}`;
-                          setPrintingSeasonalWorker(w);
-                          printSeasonalWorkerReceipt(w, config, undefined, periodLabelText);
+                          const printWorker = {
+                            ...w,
+                            attendanceMonth: currentMonth,
+                            attendanceYear: currentYear,
+                          };
+                          const printConfig = {
+                            ...config,
+                            month: currentMonth,
+                            year: currentYear,
+                            periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                            period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                          };
+                          setPrintingSeasonalWorker(printWorker);
+                          printSeasonalWorkerReceipt(printWorker, printConfig, undefined, periodLabelText);
                         }}
                         className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
                         title={`In bản lương của ${w.fullName}`}

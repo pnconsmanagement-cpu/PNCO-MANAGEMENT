@@ -1,6 +1,6 @@
 import { SeasonalWorker, CompanyConfig, WeeklyDayAttendance } from '../types';
 import { formatNumberOnly, numberToVietnameseWords } from './numberToVietnameseWords';
-import { getDayOfWeekInfo } from '../data/mockSeasonalWorkers';
+import { resolveWorkerTimesheetForReceipt } from '../data/mockSeasonalWorkers';
 
 /**
  * Sinh mã HTML hoàn chỉnh chuẩn in A4 cho Phiếu thanh toán thợ thời vụ (Mẫu 03-LĐTL)
@@ -11,10 +11,17 @@ export function generateSeasonalWorkerReceiptHTML(
   config: CompanyConfig,
   customPeriodLabel?: string
 ): string {
+  const activeMo = worker.attendanceMonth || config.month || 10;
+  const activeYr = worker.attendanceYear || config.year || 2026;
+  const monthSuffix = `Tháng ${activeMo}/${activeYr}`;
   const periodText = customPeriodLabel
-    ? `${customPeriodLabel} — Tháng ${worker.attendanceMonth || config.month}/${worker.attendanceYear || config.year}`
+    ? customPeriodLabel.includes(`${activeMo}/${activeYr}`) || customPeriodLabel.toLowerCase().includes('tháng')
+      ? customPeriodLabel
+      : `${customPeriodLabel} — ${monthSuffix}`
     : worker.currentWeekLabel
-    ? `${worker.currentWeekLabel} — Tháng ${worker.attendanceMonth || config.month}/${worker.attendanceYear || config.year}`
+    ? worker.currentWeekLabel.includes(`${activeMo}/${activeYr}`) || worker.currentWeekLabel.toLowerCase().includes('tháng')
+      ? worker.currentWeekLabel
+      : `${worker.currentWeekLabel} — ${monthSuffix}`
     : config.period;
 
   const qrUrl =
@@ -24,34 +31,12 @@ export function generateSeasonalWorkerReceiptHTML(
 
   const logoUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/assets/aistudio/image_1ca8dbc7.png`;
 
-  // Lấy hoặc tự động khởi tạo danh sách chấm công các ngày trong kỳ
-  let timesheetList: WeeklyDayAttendance[] = worker.weeklyTimesheet || [];
-  if (timesheetList.length === 0 && worker.monthlyAttendance) {
-    const yr = worker.attendanceYear || config.year || 2026;
-    const mo = worker.attendanceMonth || config.month || 10;
-    const mStr = String(mo).padStart(2, '0');
-    const monthKey = `${yr}-${mStr}`;
-    const monthRecord = worker.monthlyAttendance[monthKey] || Object.values(worker.monthlyAttendance)[0];
-    if (monthRecord && monthRecord.days) {
-      const daysInMo = new Date(yr, mo, 0).getDate();
-      const autoList: WeeklyDayAttendance[] = [];
-      for (let d = 1; d <= daysInMo; d++) {
-        const dStr = String(d).padStart(2, '0');
-        const dateLabel = `${dStr}/${mStr}`;
-        const dInfo = getDayOfWeekInfo(dateLabel, yr, mo);
-        const detail = monthRecord.days[d];
-        autoList.push({
-          dayOfWeek: dInfo.dayOfWeek,
-          dayName: dInfo.dayName,
-          dateLabel,
-          workUnits: detail ? Number(detail.workUnits || 0) : 0,
-          otHours: detail ? Number(detail.otHours || 0) : 0,
-          shiftType: detail?.shiftType || 'DAY',
-        });
-      }
-      timesheetList = autoList;
-    }
-  }
+  // Chuẩn hóa danh sách chấm công chi tiết các ngày trong kỳ khớp 100% với Số ngày công & Giờ tăng ca trên phiếu lương
+  const timesheetList: WeeklyDayAttendance[] = resolveWorkerTimesheetForReceipt(
+    worker,
+    activeMo,
+    activeYr
+  );
 
   // Xây dựng bảng chấm công tuần / đợt chi tiết
   // Khi nhân sự tính lương tháng (28 - 31 ngày), chia thành 2 đợt (Nửa đầu tháng: ngày 1-15, Nửa cuối tháng: ngày 16-hết tháng)

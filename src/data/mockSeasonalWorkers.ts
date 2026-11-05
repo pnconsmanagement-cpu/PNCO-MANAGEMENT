@@ -561,6 +561,9 @@ export function syncSeasonalWorkerForMonth(
       return {
         ...recomputedZero,
         dailyRate: effectiveRate,
+        attendanceMonth: month,
+        attendanceYear: year,
+        weeklyTimesheet: emptySheet,
         selectedForAttendance: false,
         monthlyAttendance: {
           ...(worker.monthlyAttendance || {}),
@@ -662,6 +665,9 @@ export function syncSeasonalWorkerForMonth(
       return {
         ...recomputed,
         dailyRate: effectiveRate,
+        attendanceMonth: month,
+        attendanceYear: year,
+        weeklyTimesheet: sheetFromDays,
         selectedForAttendance: isParticipating,
         monthlyAttendance: {
           ...(worker.monthlyAttendance || {}),
@@ -703,6 +709,7 @@ export function syncSeasonalWorkerForMonth(
   // 2. Nếu chưa có monthlyAttendance[monthKey], kiểm tra xem có các bản ghi tuần/đợt trong periodRecords của tháng này không
   const prefix = `${monthKey}_`;
   const matchingPeriodKeys = Object.keys(syncedRecords).filter((k) => k.startsWith(prefix));
+  const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
   if (matchingPeriodKeys.length > 0) {
     // Nếu có bản ghi cả tháng _MONTH
     const fullMonthRec = syncedRecords[monthPeriodKey];
@@ -714,9 +721,18 @@ export function syncSeasonalWorkerForMonth(
         fullMonthRec.actualWorkDays,
         fullMonthRec.overtimeHours
       );
+      const sheetFromFull =
+        fullMonthRec.weeklyTimesheet &&
+        fullMonthRec.weeklyTimesheet.length > 0 &&
+        fullMonthRec.weeklyTimesheet.some((d) => d.dateLabel?.endsWith(`/${mStr}`))
+          ? fullMonthRec.weeklyTimesheet
+          : createTimesheetForPeriod(mPeriodOption, fullMonthRec.actualWorkDays, fullMonthRec.overtimeHours);
       return recomputeSeasonalWorkerPayroll({
         ...worker,
         dailyRate: effectiveRate,
+        attendanceMonth: month,
+        attendanceYear: year,
+        weeklyTimesheet: sheetFromFull,
         actualWorkDays: fullMonthRec.actualWorkDays,
         overtimeHours: fullMonthRec.overtimeHours,
         mealAllowance: fullMonthRec.mealAllowance,
@@ -732,8 +748,8 @@ export function syncSeasonalWorkerForMonth(
       });
     }
 
-    // Hoặc cộng gộp các tuần W1..W5 trong tháng đó
-    const weekKeys = matchingPeriodKeys.filter((k) => k.includes('_W'));
+    // Hoặc cộng gộp các tuần W1..W5 / đợt BI1..BI2 trong tháng đó
+    const weekKeys = matchingPeriodKeys.filter((k) => k.includes('_W') || k.includes('_BI'));
     if (weekKeys.length > 0) {
       let sumDays = 0;
       let sumOt = 0;
@@ -755,9 +771,13 @@ export function syncSeasonalWorkerForMonth(
       if (sumDays > 0 || sumOt > 0) {
         const roundedDays = Math.round(sumDays * 10) / 10;
         const builtMonthly = buildSeasonalMonthlyAttendanceRecord(worker, month, year, roundedDays, sumOt);
+        const sheetFromSub = createTimesheetForPeriod(mPeriodOption, roundedDays, sumOt);
         return recomputeSeasonalWorkerPayroll({
           ...worker,
           dailyRate: effectiveRate,
+          attendanceMonth: month,
+          attendanceYear: year,
+          weeklyTimesheet: sheetFromSub,
           actualWorkDays: roundedDays,
           overtimeHours: sumOt,
           mealAllowance: sumMeal || worker.mealAllowance,
@@ -776,14 +796,129 @@ export function syncSeasonalWorkerForMonth(
   }
 
   // 3. Nếu đã có dữ liệu ở các tháng khác nhưng tháng đang chọn hoàn toàn chưa chấm công -> mặc định 0 công (Chưa chấm công)
+  const emptySheet = createEmptyTimesheetForPeriod(mPeriodOption);
   return recomputeSeasonalWorkerPayroll({
     ...worker,
     dailyRate: effectiveRate,
+    attendanceMonth: month,
+    attendanceYear: year,
+    weeklyTimesheet: emptySheet,
     periodRecords: syncedRecords,
     actualWorkDays: 0,
     overtimeHours: 0,
     selectedForAttendance: false,
   });
+}
+
+/**
+ * Chuẩn hóa bảng chấm công chi tiết (weeklyTimesheet) hiển thị trên Phiếu Lương Thời Vụ
+ * để luôn khớp 100% với Số ngày công thực tế (actualWorkDays), Giờ tăng ca (overtimeHours) và Tháng/Năm của kỳ lương đang xem/in.
+ */
+export function resolveWorkerTimesheetForReceipt(
+  worker: SeasonalWorker,
+  month?: number,
+  year?: number
+): WeeklyDayAttendance[] {
+  const yr = year || worker.attendanceYear || 2026;
+  const mo = month || worker.attendanceMonth || 10;
+  const mStr = String(mo).padStart(2, '0');
+  const monthKey = `${yr}-${mStr}`;
+  const targetWorkDays = Math.round(Number(worker.actualWorkDays || 0) * 10) / 10;
+  const targetOtHours = Math.round(Number(worker.overtimeHours || 0) * 10) / 10;
+
+  const currentSheet = worker.weeklyTimesheet || [];
+  const matchesMonth =
+    currentSheet.length > 0 && currentSheet.some((d) => d.dateLabel?.endsWith(`/${mStr}`));
+  const currentWorkSum =
+    Math.round(currentSheet.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+  const currentOtSum =
+    Math.round(currentSheet.reduce((s, d) => s + (Number(d.otHours) || 0), 0) * 10) / 10;
+
+  // 1. Nếu weeklyTimesheet hiện tại đúng tháng và tổng công + tổng OT khớp với chỉ số trên phiếu lương
+  if (
+    matchesMonth &&
+    Math.abs(currentWorkSum - targetWorkDays) < 0.1 &&
+    Math.abs(currentOtSum - targetOtHours) < 0.1
+  ) {
+    return currentSheet;
+  }
+
+  // 2. Kiểm tra dữ liệu chi tiết ngày trong monthlyAttendance[monthKey]
+  const monthRecord = worker.monthlyAttendance?.[monthKey];
+  if (monthRecord && monthRecord.days && Object.keys(monthRecord.days).length > 0) {
+    const daysInMo = new Date(yr, mo, 0).getDate();
+    const autoList: WeeklyDayAttendance[] = [];
+    for (let d = 1; d <= daysInMo; d++) {
+      const dStr = String(d).padStart(2, '0');
+      const dateLabel = `${dStr}/${mStr}`;
+      const dInfo = getDayOfWeekInfo(dateLabel, yr, mo);
+      const detail = monthRecord.days[d];
+      const workUnits =
+        detail && detail.statusType !== 'ABSENT' && detail.statusType !== 'LEAVE'
+          ? Number(detail.workUnits || 0)
+          : 0;
+      const otHours = detail ? Number(detail.otHours || 0) : 0;
+      autoList.push({
+        dayOfWeek: dInfo.dayOfWeek,
+        dayName: dInfo.dayName,
+        dateLabel,
+        workUnits,
+        otHours,
+        shiftType: detail?.shiftType || 'DAY',
+      });
+    }
+    const autoWorkSum =
+      Math.round(autoList.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+    const autoOtSum =
+      Math.round(autoList.reduce((s, d) => s + (Number(d.otHours) || 0), 0) * 10) / 10;
+
+    if (
+      Math.abs(autoWorkSum - targetWorkDays) < 0.1 &&
+      Math.abs(autoOtSum - targetOtHours) < 0.1
+    ) {
+      return autoList;
+    }
+  }
+
+  // 3. Kiểm tra trong periodRecords của kỳ hiện tại hoặc cả tháng
+  const monthPeriodRec =
+    (worker.currentPeriodKey && worker.periodRecords?.[worker.currentPeriodKey]) ||
+    worker.periodRecords?.[`${monthKey}_MONTH`];
+  if (monthPeriodRec?.weeklyTimesheet && monthPeriodRec.weeklyTimesheet.length > 0) {
+    const recSheet = monthPeriodRec.weeklyTimesheet;
+    const recWorkSum =
+      Math.round(recSheet.reduce((s, d) => s + (Number(d.workUnits) || 0), 0) * 10) / 10;
+    const recOtSum =
+      Math.round(recSheet.reduce((s, d) => s + (Number(d.otHours) || 0), 0) * 10) / 10;
+    if (
+      recSheet.some((d) => d.dateLabel?.endsWith(`/${mStr}`)) &&
+      Math.abs(recWorkSum - targetWorkDays) < 0.1 &&
+      Math.abs(recOtSum - targetOtHours) < 0.1
+    ) {
+      return recSheet;
+    }
+  }
+
+  // 4. Tự động phân bổ khớp 100% với tổng ngày công (targetWorkDays) và tổng giờ OT (targetOtHours) trong kỳ
+  if (matchesMonth && currentSheet.length > 0 && currentSheet.length <= 16) {
+    const subPeriodOpt: PayrollPeriodOption = {
+      id: worker.currentWeekId || 'W1',
+      periodKey: worker.currentPeriodKey || `${monthKey}_W1`,
+      cycleType: currentSheet.length <= 7 ? '1_WEEK' : '2_WEEKS',
+      label: worker.currentWeekLabel || `Kỳ ${mStr}/${yr}`,
+      shortLabel: `Kỳ ${mStr}/${yr}`,
+      startDay: parseInt(currentSheet[0]?.dateLabel?.split('/')[0] || '1', 10),
+      endDay: parseInt(currentSheet[currentSheet.length - 1]?.dateLabel?.split('/')[0] || '7', 10),
+      dates: currentSheet.map((d) => d.dateLabel),
+      maxStandardDays: currentSheet.length,
+      year: yr,
+      month: mo,
+    };
+    return createTimesheetForPeriod(subPeriodOpt, targetWorkDays, targetOtHours);
+  }
+
+  const mPeriodOption = getMonthlyPeriodForMonth(yr, mo)[0];
+  return createTimesheetForPeriod(mPeriodOption, targetWorkDays, targetOtHours);
 }
 
 /**
