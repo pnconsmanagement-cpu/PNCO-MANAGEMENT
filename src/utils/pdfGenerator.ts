@@ -228,7 +228,7 @@ export function printElementDirectly(element: HTMLElement, docTitle: string = 'I
       <style>
         @page {
           size: A4 portrait;
-          margin: 8mm;
+          margin: 0mm;
         }
         body {
           margin: 0;
@@ -239,8 +239,9 @@ export function printElementDirectly(element: HTMLElement, docTitle: string = 'I
         }
         .print-container {
           width: 100%;
-          max-width: 800px;
+          max-width: 210mm;
           margin: 0 auto;
+          padding: 8mm 10mm;
         }
         .print-container * {
           transform: none !important;

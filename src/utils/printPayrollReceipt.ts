@@ -141,7 +141,7 @@ export function generateSeasonalWorkerReceiptHTML(
     <style>
       @page {
         size: A4 portrait;
-        margin: 10mm 12mm;
+        margin: 0mm;
       }
       * {
         box-sizing: border-box;
@@ -151,17 +151,17 @@ export function generateSeasonalWorkerReceiptHTML(
       }
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        font-size: 9.5pt;
+        font-size: 9pt;
         color: #000000;
-        line-height: 1.4;
+        line-height: 1.35;
         margin: 0;
         padding: 0;
         background-color: #ffffff;
       }
       .payslip-container {
-        max-width: 800px;
+        max-width: 210mm;
         margin: 0 auto;
-        padding: 4px 6px;
+        padding: 8mm 12mm 6mm 12mm;
       }
       .header-table {
         width: 100%;
@@ -299,8 +299,9 @@ export function generateSeasonalWorkerReceiptHTML(
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         text-align: center;
-        margin-top: 14px;
+        margin-top: 8px;
         page-break-inside: avoid;
+        break-inside: avoid;
       }
       .sig-title {
         font-weight: 700;
@@ -315,12 +316,25 @@ export function generateSeasonalWorkerReceiptHTML(
         margin-top: 1px;
       }
       .sig-space {
-        height: 48px;
+        height: 36px;
       }
       .sig-name {
         font-weight: 700;
         font-size: 8.5pt;
         color: #1e293b;
+      }
+      .payslip-footer {
+        margin-top: 10px;
+        padding-top: 5px;
+        border-top: 1px solid #cbd5e1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 8pt;
+        color: #334155;
+        font-weight: 600;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
     </style>
   </head>
@@ -605,7 +619,7 @@ export function generateSeasonalWorkerReceiptHTML(
           <div class="sig-title">Kế toán trưởng / ĐD</div>
           <div class="sig-note">(Ký, đóng dấu)</div>
           <div class="sig-space"></div>
-          <div class="sig-name">KTT. Trần Thị Thảo</div>
+          <div class="sig-name">Nguyễn Thanh Thúy</div>
         </div>
         <div>
           <div class="sig-title">Người nhận tiền</div>
@@ -613,6 +627,11 @@ export function generateSeasonalWorkerReceiptHTML(
           <div class="sig-space"></div>
           <div class="sig-name">${worker.fullName}</div>
         </div>
+      </div>
+
+      <div class="payslip-footer">
+        <span>Công Ty TNHH Xây Dựng- Cơ Điện Phúc Nguyên &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- https://pncons.com.vn</span>
+        <span>1/1</span>
       </div>
     </div>
   </body>
@@ -853,7 +872,7 @@ export function generateSeasonalWorkersBatchHTML(
             <div style="font-weight: bold;">Kế toán trưởng</div>
             <div style="font-style: italic; font-size: 7pt; color: #64748b;">(Ký, họ tên)</div>
             <div style="height: 45px;"></div>
-            <div style="font-weight: bold;">KTT. Trần Thị Thảo</div>
+            <div style="font-weight: bold;">Nguyễn Thanh Thúy</div>
           </div>
           <div>
             <div style="font-weight: bold;">Giám đốc phê duyệt</div>
@@ -861,6 +880,10 @@ export function generateSeasonalWorkersBatchHTML(
             <div style="height: 45px;"></div>
             <div style="font-weight: bold;">GĐ. Phúc Nguyên</div>
           </div>
+        </div>
+        <div style="margin-top: 12px; padding-top: 4px; border-top: 1px solid #cbd5e1; display: flex; justify-content: space-between; font-size: 7.5pt; color: #334155; font-weight: 600;">
+          <span>Công Ty TNHH Xây Dựng- Cơ Điện Phúc Nguyên &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- https://pncons.com.vn</span>
+          <span>https://pncons.com.vn</span>
         </div>
       </body>
     </html>`;

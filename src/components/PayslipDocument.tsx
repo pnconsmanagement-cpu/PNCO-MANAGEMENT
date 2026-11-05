@@ -362,6 +362,10 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             </div>
           </div>
         </div>
+        <div className="mt-4 pt-2 border-t border-slate-200 flex items-center justify-between text-[10.5px] font-semibold text-slate-600">
+          <span>Công Ty TNHH Xây Dựng- Cơ Điện Phúc Nguyên &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- https://pncons.com.vn</span>
+          <span>1/1</span>
+        </div>
       </div>
     </div>
   );

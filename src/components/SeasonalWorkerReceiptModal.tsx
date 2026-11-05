@@ -674,10 +674,10 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                 </div>
               </div>
               <div>
-                <div className="font-bold uppercase text-slate-800">Kế toán thanh toán</div>
-                <div className="text-[10px] text-slate-500 italic mt-0.5">(Ký, họ tên)</div>
+                <div className="font-bold uppercase text-slate-800">Kế toán trưởng / ĐD</div>
+                <div className="text-[10px] text-slate-500 italic mt-0.5">(Ký, đóng dấu)</div>
                 <div className="h-14 flex items-end justify-center font-medium text-slate-700">
-                  Đặng Bích Ngọc
+                  Nguyễn Thanh Thúy
                 </div>
               </div>
               <div>
@@ -687,6 +687,10 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                   {worker.fullName}
                 </div>
               </div>
+            </div>
+            <div className="mt-4 pt-2 border-t border-slate-200 flex items-center justify-between text-[10.5px] font-semibold text-slate-600">
+              <span>Công Ty TNHH Xây Dựng- Cơ Điện Phúc Nguyên &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- https://pncons.com.vn</span>
+              <span>1/1</span>
             </div>
           </div>
         </div>
