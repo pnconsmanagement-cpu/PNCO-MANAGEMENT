@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { initialCompanyConfig, initialEmployees } from './src/data/mockPayrollData';
 import { initialSeasonalWorkers } from './src/data/mockSeasonalWorkers';
+import { sanitizeEmployeeMonthlyAttendance } from './src/utils/payrollCalculator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,10 +71,14 @@ function readStorage(): StoredData {
         const cleanedSeasonal = Array.isArray(parsed.seasonalWorkers)
           ? sanitizeSeasonalList(parsed.seasonalWorkers)
           : initialSeasonalWorkers;
+        const cleanedEmployees =
+          Array.isArray(parsed.employees) && parsed.employees.length > 0
+            ? parsed.employees.map((e: any) => (e ? sanitizeEmployeeMonthlyAttendance(e) : e))
+            : initialEmployees;
         return {
           lastUpdated: Number(parsed.lastUpdated) || 0,
           config: parsed.config || initialCompanyConfig,
-          employees: Array.isArray(parsed.employees) && parsed.employees.length > 0 ? parsed.employees : initialEmployees,
+          employees: cleanedEmployees,
           seasonalWorkers: cleanedSeasonal.length > 0 ? cleanedSeasonal : initialSeasonalWorkers,
         };
       }
