@@ -897,8 +897,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
               <option value="code">Mã thợ (PNC-TV01, TV02...)</option>
               <option value="name">Họ và tên thợ (A &rarr; Z)</option>
               <option value="dailyRate">Đơn giá ngày</option>
-              <option value="actualWorkDays">Số ngày công</option>
-              <option value="netSalary">Thực lĩnh chi trả</option>
             </select>
             <button
               type="button"
@@ -999,12 +997,12 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         </p>
       </div>
 
-      {/* Main Spreadsheet Table */}
-      <div className="border border-slate-300 rounded-xl overflow-x-auto max-h-[660px] relative text-[11px] bg-white shadow-2xs">
+      {/* Main Spreadsheet Table - Thuần thông tin khai báo nhân sự thời vụ, không viền textbox nặng nề */}
+      <div className="border border-slate-300 rounded-xl overflow-x-auto max-h-[660px] relative text-xs bg-white shadow-2xs">
         <table className="w-full border-collapse text-left whitespace-nowrap">
           <thead className="bg-[#0f3d64] text-white font-bold sticky top-0 z-20 select-none shadow-xs">
             <tr>
-              <th className="p-2 border-r border-sky-800 text-center w-10">
+              <th className="p-2.5 border-r border-sky-800 text-center w-10">
                 <input
                   type="checkbox"
                   checked={allFilteredSelected}
@@ -1013,9 +1011,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   title="Chọn tất cả công nhân"
                 />
               </th>
-              <th 
+              <th
                 onClick={() => handleToggleSort('default')}
-                className="p-2 border-r border-sky-800 text-center w-10 cursor-pointer hover:bg-sky-800/80 transition select-none"
+                className="p-2.5 border-r border-sky-800 text-center w-12 cursor-pointer hover:bg-sky-800/80 transition select-none"
                 title="Sắp xếp theo STT cố định"
               >
                 <div className="flex items-center justify-center gap-1">
@@ -1025,9 +1023,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
-              <th 
+              <th
                 onClick={() => handleToggleSort('code')}
-                className="p-2 border-r border-sky-800 text-center w-20 cursor-pointer hover:bg-sky-800/80 transition select-none"
+                className="p-2.5 border-r border-sky-800 text-center w-24 cursor-pointer hover:bg-sky-800/80 transition select-none"
                 title="Sắp xếp theo Mã thợ (PNC-TV01, TV02...)"
               >
                 <div className="flex items-center justify-center gap-1">
@@ -1039,9 +1037,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
-              <th 
+              <th
                 onClick={() => handleToggleSort('name')}
-                className="p-2 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[170px] cursor-pointer hover:bg-sky-800/80 transition select-none"
+                className="p-2.5 border-r border-sky-800 sticky left-0 bg-[#0f3d64] z-30 min-w-[180px] cursor-pointer hover:bg-sky-800/80 transition select-none"
                 title="Sắp xếp theo Họ tên (A-Z)"
               >
                 <div className="flex items-center gap-1">
@@ -1053,23 +1051,19 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[130px] bg-[#124977]">
+              <th className="p-2.5 border-r border-sky-800 text-center min-w-[120px]">
                 <div>Chu kỳ lương</div>
-                <div className="text-[9px] text-sky-200 font-normal">(1 Tuần • 2 Tuần • Tháng)</div>
               </th>
-              <th className="p-2 border-r border-sky-800 min-w-[150px]">Nghề nghiệp / Bậc thợ</th>
-              <th className="p-2 border-r border-sky-800 min-w-[140px]">Công trình / Đội</th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[100px]">SĐT / CCCD</th>
-              <th 
+              <th className="p-2.5 border-r border-sky-800 min-w-[150px]">Nghề nghiệp / Bậc thợ</th>
+              <th className="p-2.5 border-r border-sky-800 min-w-[170px]">Công trình / Đội</th>
+              <th className="p-2.5 border-r border-sky-800 text-center min-w-[110px]">SĐT / CCCD</th>
+              <th
                 onClick={() => handleToggleSort('dailyRate')}
-                className="p-2 border-r border-sky-800 text-right min-w-[110px] bg-[#124977] cursor-pointer hover:bg-[#185e99] transition select-none"
+                className="p-2.5 border-r border-sky-800 text-right min-w-[115px] bg-[#124977] cursor-pointer hover:bg-[#185e99] transition select-none"
                 title="Sắp xếp theo Đơn giá ngày"
               >
                 <div className="flex items-center justify-end gap-1">
-                  <div className="text-right">
-                    <span>Đơn giá ngày</span>
-                    <span className="text-[9px] block text-sky-200 font-normal leading-tight">({currentPeriodOption.shortLabel})</span>
-                  </div>
+                  <span>Đơn giá ngày</span>
                   {sortField === 'dailyRate' ? (
                     <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
                   ) : (
@@ -1077,58 +1071,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                   )}
                 </div>
               </th>
-              <th 
-                onClick={() => handleToggleSort('actualWorkDays')}
-                className="p-2 border-r border-sky-800 text-center min-w-[115px] bg-[#124977] cursor-pointer hover:bg-[#185e99] transition select-none"
-                title="Sắp xếp theo Số ngày công"
-              >
-                <div className="flex items-center justify-center gap-1">
-                  <span>Số ngày công</span>
-                  {sortField === 'actualWorkDays' ? (
-                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
-                  ) : (
-                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
-                  )}
-                </div>
-              </th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[110px]">Lương theo công</th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[85px]">Giờ OT</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[95px]">Tiền OT (x1.5)</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[90px]">Ăn ca / trưa</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[90px]">Phụ cấp & Thưởng</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[115px] bg-[#0c3150]">
-                TỔNG THU NHẬP
-              </th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[105px]">Cam kết 08</th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[95px] text-rose-200">
-                Thuế TNCN (10%)
-              </th>
-              <th className="p-2 border-r border-sky-800 text-right min-w-[100px] text-rose-200">
-                Tạm ứng tại CT
-              </th>
-              <th 
-                onClick={() => handleToggleSort('netSalary')}
-                className="p-2 border-r border-sky-800 text-right min-w-[125px] bg-emerald-800 text-white font-extrabold cursor-pointer hover:bg-emerald-700 transition select-none"
-                title="Sắp xếp theo Thực lĩnh chi trả"
-              >
-                <div className="flex items-center justify-end gap-1">
-                  <span>THỰC LĨNH CHI TRẢ</span>
-                  {sortField === 'netSalary' ? (
-                    <span className="text-[10px] text-amber-300">{sortDirection === 'asc' ? '▲' : '▼'}</span>
-                  ) : (
-                    <ArrowUpDown className="w-2.5 h-2.5 opacity-50" />
-                  )}
-                </div>
-              </th>
-              <th className="p-2 border-r border-sky-800 min-w-[120px]">Hình thức & STK</th>
-              <th className="p-2 border-r border-sky-800 text-center min-w-[115px]">Trạng thái làm việc</th>
-              <th className="p-2 text-center w-36 no-print sticky right-0 bg-[#0f3d64] z-30">Thao tác</th>
+              <th className="p-2.5 border-r border-sky-800 min-w-[140px]">Hình thức & STK</th>
+              <th className="p-2.5 border-r border-sky-800 text-center min-w-[100px]">Cam kết 08</th>
+              <th className="p-2.5 border-r border-sky-800 text-center min-w-[115px]">Trạng thái</th>
+              <th className="p-2.5 text-center w-36 no-print sticky right-0 bg-[#0f3d64] z-30">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filteredWorkers.length === 0 ? (
               <tr>
-                <td colSpan={23} className="p-12 text-center text-slate-400">
+                <td colSpan={13} className="p-12 text-center text-slate-400">
                   <HardHat className="w-12 h-12 mx-auto text-amber-500/70 mb-3" />
                   <p className="font-bold text-base text-slate-700">
                     {workers.length === 0
@@ -1168,7 +1120,6 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             ) : (
               filteredWorkers.map((w, index) => {
                 const isSelected = selectedWorkerIds.includes(w.id);
-                const isParticipating = (w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0;
 
                 return (
                   <tr
@@ -1178,11 +1129,13 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                         ? 'bg-slate-100/70 opacity-75'
                         : isSelected
                         ? 'bg-sky-50/90'
-                        : 'hover:bg-sky-50/40'
+                        : index % 2 === 0
+                        ? 'bg-white hover:bg-sky-50/40'
+                        : 'bg-slate-50/30 hover:bg-sky-50/40'
                     }`}
                   >
                     {/* Checkbox chọn hàng */}
-                    <td className="p-2 border-r border-slate-200 text-center">
+                    <td className="p-2.5 border-r border-slate-200 text-center">
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -1192,7 +1145,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                     </td>
 
                     {/* STT */}
-                    <td className="p-2 border-r border-slate-200 text-center text-slate-500 font-mono">
+                    <td className="p-2.5 border-r border-slate-200 text-center text-slate-500 font-mono">
                       {index + 1}
                     </td>
 
@@ -1202,101 +1155,52 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                         setEditingWorker(w);
                         setIsFormOpen(true);
                       }}
-                      className="p-2 border-r border-slate-200 font-mono font-bold text-[#0f3d64] text-center cursor-pointer hover:underline"
+                      className="p-2.5 border-r border-slate-200 font-mono font-bold text-[#0f3d64] text-center cursor-pointer hover:underline"
                       title="Bấm để chỉnh sửa hồ sơ"
                     >
                       {w.code}
                     </td>
 
-                    {/* Họ và tên */}
-                    <td className="p-2 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50/60 font-bold text-slate-900 z-10">
-                      {isQuickEditMode ? (
-                        <div className="space-y-1">
-                          <input
-                            type="text"
-                            value={w.fullName}
-                            onChange={(e) =>
-                              handleQuickUpdate(w, { fullName: e.target.value })
-                            }
-                            className="w-full text-xs font-bold text-slate-900 px-1.5 py-0.5 border border-sky-400 rounded bg-white focus:ring-1 focus:ring-sky-500"
-                            placeholder="Họ và tên..."
-                          />
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingWorker(w);
-                                setIsFormOpen(true);
-                              }}
-                              className="text-[10px] text-sky-700 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
-                            >
-                              <Edit2 className="w-2.5 h-2.5" /> Sửa chi tiết
-                            </button>
-                            <span className="text-slate-300">|</span>
-                            <button
-                              type="button"
-                              onClick={() => setWorkerToDelete(w)}
-                              className="text-[10px] text-rose-600 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
-                            >
-                              <Trash2 className="w-2.5 h-2.5" /> Xóa
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div
-                            onClick={() => {
-                              setEditingWorker(w);
-                              setIsFormOpen(true);
-                            }}
-                            className="flex items-center gap-1.5 cursor-pointer group"
-                            title="Bấm để chỉnh sửa công nhân này"
-                          >
-                            <span className="group-hover:text-sky-700 group-hover:underline">
-                              {w.fullName}
-                            </span>
-                            <Edit2 className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition" />
-                            {w.paymentMethod === 'CASH' && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-amber-100 text-amber-900 font-bold border border-amber-200 shrink-0">
-                                Tiền mặt
-                              </span>
-                            )}
-                          </div>
-                          {/* Nút Sửa & Xóa nhanh tiện lợi ngay cột tên cố định */}
-                          <div className="flex items-center gap-2 mt-1 no-print">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditingWorker(w);
-                                setIsFormOpen(true);
-                              }}
-                              className="text-[10.5px] text-sky-700 hover:text-sky-900 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                              title="Chỉnh sửa chi tiết hồ sơ & chấm công"
-                            >
-                              <Edit2 className="w-2.5 h-2.5" />
-                              <span>Sửa hồ sơ</span>
-                            </button>
-                            <span className="text-slate-300">|</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setWorkerToDelete(w);
-                              }}
-                              className="text-[10.5px] text-rose-600 hover:text-rose-800 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                              title="Xóa công nhân này khỏi danh sách"
-                            >
-                              <Trash2 className="w-2.5 h-2.5" />
-                              <span>Xóa thợ</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                    {/* Họ và tên công nhân - trình bày chữ đơn giản, gọn nhẹ */}
+                    <td className="p-2.5 border-r border-slate-200 sticky left-0 bg-white hover:bg-sky-50/60 font-bold text-slate-900 z-10">
+                      <div
+                        onClick={() => {
+                          setEditingWorker(w);
+                          setIsFormOpen(true);
+                        }}
+                        className="cursor-pointer hover:text-sky-700 hover:underline"
+                        title="Bấm để chỉnh sửa thông tin công nhân"
+                      >
+                        {w.fullName}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 no-print font-normal">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingWorker(w);
+                            setIsFormOpen(true);
+                          }}
+                          className="text-[10px] text-sky-700 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Edit2 className="w-2.5 h-2.5" /> Sửa
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setWorkerToDelete(w);
+                          }}
+                          className="text-[10px] text-rose-600 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" /> Xóa
+                        </button>
+                      </div>
                     </td>
 
-                    {/* Chu kỳ tính lương (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng) */}
-                    <td className="p-2 border-r border-slate-200 text-center bg-slate-50/40">
+                    {/* Chu kỳ tính lương */}
+                    <td className="p-2.5 border-r border-slate-200 text-center">
                       <select
                         value={w.payrollCycleType || '1_MONTH'}
                         onChange={(e) => {
@@ -1315,12 +1219,12 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                             }!`
                           );
                         }}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition shadow-2xs ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer bg-transparent focus:outline-none ${
                           (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
-                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            ? 'text-amber-800'
                             : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
-                            ? 'bg-sky-50 text-sky-900 border-sky-300'
-                            : 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                            ? 'text-sky-800'
+                            : 'text-emerald-800'
                         }`}
                         title="Chọn chu kỳ lương: Lương 1 Tuần, Lương 2 Tuần hoặc Lương Tháng"
                       >
@@ -1331,200 +1235,55 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                     </td>
 
                     {/* Nghề nghiệp / Bậc thợ */}
-                    <td className="p-2 border-r border-slate-200 text-slate-800">
-                      {isQuickEditMode ? (
-                        <input
-                          type="text"
-                          value={w.trade}
-                          onChange={(e) =>
-                            handleQuickUpdate(w, { trade: e.target.value })
-                          }
-                          className="w-full text-xs font-semibold text-slate-900 px-1 py-0.5 border border-sky-400 rounded bg-white"
-                          placeholder="Nghề nghiệp..."
-                        />
-                      ) : (
-                        <>
-                          <div className="font-semibold text-slate-900">{w.trade}</div>
-                          <div className="text-[10px] text-slate-500">{w.skillLevel}</div>
-                        </>
-                      )}
+                    <td className="p-2.5 border-r border-slate-200 text-slate-800">
+                      <div className="font-semibold text-slate-900">{w.trade || '—'}</div>
+                      <div className="text-[10px] text-slate-500">{w.skillLevel}</div>
                     </td>
 
                     {/* Công trình / Đội */}
-                    <td className="p-2 border-r border-slate-200 text-slate-700">
-                      {isQuickEditMode ? (
-                        <div className="space-y-1">
-                          <select
-                            value={w.project}
-                            onChange={(e) => {
-                              const newProjName = e.target.value;
-                              const matchedProj = availableProjects.find((p) => p.name === newProjName);
-                              handleQuickUpdate(w, {
-                                project: newProjName,
-                                ...(matchedProj?.managerName ? { teamLeader: matchedProj.managerName } : {}),
-                              });
-                            }}
-                            className="w-full text-xs font-bold text-[#0f3d64] px-1 py-0.5 border border-sky-400 rounded bg-white cursor-pointer"
-                            title="Chọn Công trình / Dự án (Ref từ Bản Dự Án)"
-                          >
-                            {w.project && !availableProjects.some((p) => p.name === w.project) && (
-                              <option value={w.project}>{w.project} (Hiện tại)</option>
-                            )}
-                            {availableProjects.map((p) => (
-                              <option key={p.id || p.code} value={p.name}>
-                                {p.code ? `[${p.code}] ` : ''}{p.name}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="text-[10px] text-slate-500 truncate">
-                            {w.teamName} — {w.teamLeader}
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="font-semibold text-sky-950">{w.project}</div>
-                          <div className="text-[10px] text-slate-500">
-                            {w.teamName} — {w.teamLeader}
-                          </div>
-                        </>
-                      )}
+                    <td className="p-2.5 border-r border-slate-200 text-slate-700">
+                      <div className="font-semibold text-[#0f3d64]">{w.project || '—'}</div>
+                      <div className="text-[10px] text-slate-500">
+                        {w.teamName} {w.teamLeader ? `— ${w.teamLeader}` : ''}
+                      </div>
                     </td>
 
                     {/* SĐT / CCCD */}
-                    <td className="p-2 border-r border-slate-200 text-center font-mono text-[10px] text-slate-600">
+                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-[11px] text-slate-600">
                       <div>{w.phone || '—'}</div>
-                      <div className="text-slate-400">{w.idCard || '—'}</div>
+                      <div className="text-[10px] text-slate-400">{w.idCard || '—'}</div>
                     </td>
 
-                    {/* Đơn giá ngày (Chỉnh sửa trực tiếp theo từng tuần, độc lập 100%) */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-sky-900 bg-slate-50/50">
-                      <div className="flex items-center justify-end gap-1">
-                        <input
-                          type="number"
-                          step={10000}
-                          min={0}
-                          value={w.dailyRate !== undefined ? w.dailyRate : 0}
-                          title={`Đơn giá ngày riêng của ${currentPeriodOption.shortLabel}. Khi đổi mức lương tuần này, các tuần khác (Tuần 1, Tuần 2...) giữ nguyên độc lập.`}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                            handleQuickUpdate(w, { dailyRate: isNaN(val) ? 0 : Math.max(0, val) });
-                          }}
-                          className="w-24 text-right px-1.5 py-0.5 border border-sky-300 hover:border-sky-500 focus:border-sky-600 rounded bg-white font-mono text-xs font-bold text-sky-950 focus:ring-1 focus:ring-sky-500 shadow-2xs"
-                        />
-                        <span className="text-[10.5px] text-slate-400 font-normal">đ</span>
-                      </div>
+                    {/* Đơn giá ngày - chỉ hiển thị số gọn nhẹ, không có ô textbox */}
+                    <td
+                      onClick={() => {
+                        setEditingWorker(w);
+                        setIsFormOpen(true);
+                      }}
+                      className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-[#0f3d64] cursor-pointer hover:bg-sky-50"
+                      title="Bấm để sửa đơn giá ngày"
+                    >
+                      {formatNumberOnly(w.dailyRate || 0)} <span className="text-[10px] font-normal text-slate-500">đ</span>
                     </td>
 
-                    {/* Số ngày công (Hỗ trợ nhập trực tiếp + stepper -/+) */}
-                    <td className="p-2 border-r border-slate-200 text-center font-mono font-black text-slate-900 bg-slate-50/50">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleQuickAdjustDays(w, -0.5)}
-                          className="no-print w-4.5 h-4.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center justify-center cursor-pointer active:scale-95 transition"
-                          title="Giảm 0.5 công"
-                        >
-                          -
-                        </button>
-
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={rowDaysBuffer[w.id] !== undefined ? rowDaysBuffer[w.id] : (w.actualWorkDays !== undefined ? String(w.actualWorkDays) : '0')}
-                          title={`Nhập số ngày công làm việc của ${currentPeriodOption.shortLabel}`}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (/^[0-9]*\.?[0-9]*$/.test(raw)) {
-                              setRowDaysBuffer((prev) => ({ ...prev, [w.id]: raw }));
-                              if (raw !== '' && !raw.endsWith('.')) {
-                                const parsed = parseFloat(raw);
-                                if (!isNaN(parsed) && parsed >= 0) {
-                                  handleQuickUpdate(w, { actualWorkDays: Math.min(31, parsed) });
-                                }
-                              }
-                            }
-                          }}
-                          onBlur={() => {
-                            if (rowDaysBuffer[w.id] !== undefined) {
-                              const parsed = parseFloat(rowDaysBuffer[w.id]);
-                              handleQuickUpdate(w, { actualWorkDays: isNaN(parsed) ? 0 : Math.max(0, Math.min(31, parsed)) });
-                              setRowDaysBuffer((prev) => {
-                                const next = { ...prev };
-                                delete next[w.id];
-                                return next;
-                              });
-                            }
-                          }}
-                          className="w-13 text-center px-1 py-0.5 border border-sky-300 hover:border-sky-500 focus:border-sky-600 rounded bg-white font-mono text-xs font-black text-slate-950 focus:ring-1 focus:ring-sky-500 shadow-2xs"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => handleQuickAdjustDays(w, 0.5)}
-                          className="no-print w-4.5 h-4.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center justify-center cursor-pointer active:scale-95 transition"
-                          title="Tăng 0.5 công"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <div
-                        className="no-print text-[9px] text-sky-700 font-semibold cursor-pointer hover:underline mt-0.5"
-                        onClick={() => {
-                          setEditingWorker(w);
-                          setIsFormOpen(true);
-                        }}
-                        title="Bấm để xem & chấm chi tiết từng ngày"
-                      >
-                        {currentPeriodOption.shortLabel}
-                      </div>
+                    {/* Hình thức & STK */}
+                    <td className="p-2.5 border-r border-slate-200 text-slate-700">
+                      {w.paymentMethod === 'BANK' && w.bankAccount ? (
+                        <div>
+                          <div className="font-bold text-blue-900 font-mono text-[11px]">
+                            {w.bankAccount}
+                          </div>
+                          <div className="text-[10px] text-slate-500">{w.bankName}</div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-600 text-[11px]">
+                          {w.bankName || 'Tiền mặt'}
+                        </span>
+                      )}
                     </td>
 
-                    {/* Lương theo công */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono font-semibold text-slate-800">
-                      {formatNumberOnly(w.salaryByDays)}
-                    </td>
-
-                    {/* Giờ OT (Nhập trực tiếp) */}
-                    <td className="p-2 border-r border-slate-200 text-center font-mono font-medium text-slate-700">
-                      <div className="flex items-center justify-center gap-0.5">
-                        <input
-                          type="number"
-                          step={1}
-                          min={0}
-                          value={w.overtimeHours !== undefined ? w.overtimeHours : 0}
-                          title={`Nhập giờ làm thêm OT của ${currentPeriodOption.shortLabel}`}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                            handleQuickUpdate(w, { overtimeHours: isNaN(val) ? 0 : Math.max(0, val) });
-                          }}
-                          className="w-11 text-center px-1 py-0.5 border border-slate-200 hover:border-sky-400 focus:border-sky-500 rounded bg-white font-mono text-xs font-semibold text-amber-900"
-                        />
-                        <span className="text-[10px] text-slate-400">h</span>
-                      </div>
-                    </td>
-
-                    {/* Tiền OT */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                      {w.overtimePay > 0 ? formatNumberOnly(w.overtimePay) : '—'}
-                    </td>
-
-                    {/* Phụ cấp ăn ca */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                      {formatNumberOnly(w.mealAllowance)}
-                    </td>
-
-                    {/* Phụ cấp & Thưởng */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                      {formatNumberOnly(w.travelSafetyAllowance + w.otherBonus)}
-                    </td>
-
-                    {/* Tổng thu nhập */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-sky-950 bg-sky-50/40">
-                      {formatNumberOnly(w.totalIncome)}
-                    </td>
-
-                    {/* Cam kết 08 (Click để toggle nhanh) */}
-                    <td className="p-2 border-r border-slate-200 text-center">
+                    {/* Cam kết 08 */}
+                    <td className="p-2.5 border-r border-slate-200 text-center">
                       <button
                         type="button"
                         onClick={() =>
@@ -1534,173 +1293,70 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                         title="Bấm để bật/tắt Cam kết 08 (Miễn hoặc Khấu trừ 10%)"
                       >
                         {w.hasTaxCommitment ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 hover:bg-emerald-200 transition">
+                          <span className="text-[11px] text-emerald-700 font-bold hover:underline">
                             Có CK 08
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-amber-100 text-amber-900 font-bold border border-amber-200 hover:bg-amber-200 transition">
+                          <span className="text-[11px] text-amber-800 font-bold hover:underline">
                             Trừ 10%
                           </span>
                         )}
                       </button>
                     </td>
 
-                    {/* Thuế TNCN */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-700 font-semibold">
-                      {w.personalIncomeTax > 0 ? formatNumberOnly(w.personalIncomeTax) : '—'}
-                    </td>
-
-                    {/* Tạm ứng tại CT (Hỗ trợ sửa nhanh) */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-700 font-semibold">
-                      {isQuickEditMode ? (
-                        <input
-                          type="number"
-                          step={50000}
-                          min={0}
-                          value={w.advancePayment}
-                          onChange={(e) =>
-                            handleQuickUpdate(w, { advancePayment: Number(e.target.value) || 0 })
-                          }
-                          className="w-20 text-right px-1 py-0.5 border border-rose-300 rounded bg-white font-mono text-xs font-semibold text-rose-800"
-                        />
-                      ) : (
-                        <span>{w.advancePayment > 0 ? formatNumberOnly(w.advancePayment) : '—'}</span>
-                      )}
-                    </td>
-
-                    {/* Thực lĩnh chi trả */}
-                    <td className="p-2 border-r border-slate-200 text-right font-mono font-black text-emerald-800 text-xs bg-emerald-50/50">
-                      {formatNumberOnly(w.netSalary)} đ
-                    </td>
-
-                    {/* Hình thức & STK */}
-                    <td className="p-2 border-r border-slate-200 text-slate-700">
-                      {isQuickEditMode ? (
-                        <div className="space-y-1 min-w-[125px]">
-                          <input
-                            type="text"
-                            value={w.bankAccount || ''}
-                            placeholder="Nhập số TK..."
-                            onChange={(e) =>
-                              handleQuickUpdate(w, {
-                                bankAccount: e.target.value,
-                                paymentMethod: e.target.value.trim() ? 'BANK' : w.paymentMethod,
-                              })
-                            }
-                            className="w-full px-1.5 py-0.5 border border-sky-300 rounded bg-white font-mono text-[11px] font-bold text-blue-900 placeholder:font-sans placeholder:font-normal placeholder:text-slate-400"
-                            title="Số tài khoản ngân hàng (đồng bộ trực tiếp sang 2.3 Bản Lương)"
-                          />
-                          <input
-                            type="text"
-                            value={w.paymentMethod === 'CASH' && !w.bankAccount ? 'Tiền mặt' : (w.bankName || '')}
-                            placeholder="Ngân hàng..."
-                            onChange={(e) =>
-                              handleQuickUpdate(w, { bankName: e.target.value })
-                            }
-                            className="w-full px-1.5 py-0.5 border border-slate-200 rounded bg-white text-[10px] text-slate-600"
-                            title="Ngân hàng thụ hưởng"
-                          />
-                        </div>
-                      ) : w.paymentMethod === 'BANK' && w.bankAccount ? (
-                        <div>
-                          <div className="font-semibold text-blue-900 font-mono text-[10px]">
-                            {w.bankAccount}
-                          </div>
-                          <div className="text-[9px] text-slate-500">{w.bankName}</div>
-                        </div>
-                      ) : (
-                        <span className="text-amber-800 font-semibold text-[10px] italic">
-                          Ký nhận tiền mặt tại CT
-                        </span>
-                      )}
-                    </td>
-
-
-                    {/* Trạng thái làm việc (Bấm để chuyển Đang làm việc <-> Đã nghỉ) */}
-                    <td className="p-2 border-r border-slate-200 text-center">
+                    {/* Trạng thái làm việc */}
+                    <td className="p-2.5 border-r border-slate-200 text-center">
                       <button
                         type="button"
                         onClick={() => handleToggleWorkerStatus(w)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                           w.status === 'ACTIVE'
-                            ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
-                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+                            ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
-                        title="Chỉ nhân viên Đang làm việc mới hiện sang Bản Chấm Công, Bản Lương và Bản Ứng Lương. Bấm để chuyển đổi trạng thái."
+                        title="Bấm để chuyển đổi Đang làm việc / Đã nghỉ việc"
                       >
                         {w.status === 'ACTIVE' ? '🟢 Đang làm việc' : '⚪ Đã nghỉ việc'}
                       </button>
                     </td>
 
-                    {/* CỘT THAO TÁC RÕ RÀNG, DỄ BẤM */}
-                    <td className="p-2 text-center no-print sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-300 shadow-[-2px_0_4px_rgba(0,0,0,0.06)]">
+                    {/* CỘT THAO TÁC */}
+                    <td className="p-2 text-center no-print sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-200">
                       <div className="flex items-center justify-center gap-1.5">
-                        {/* Nút Link Chấm Công Điện Thoại */}
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedWorkerIdForShare(String(w.id));
                             setIsMobileShareOpen(true);
                           }}
-                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-bold text-xs flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                           title="Tạo link & mã QR chấm công trên điện thoại cho thợ này"
                         >
-                          <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
+                          <Smartphone className="w-3 h-3 text-emerald-700" />
                           <span>Link thợ</span>
                         </button>
 
-                        {/* Nút Sửa rõ ràng */}
                         <button
                           type="button"
                           onClick={() => {
                             setEditingWorker(w);
                             setIsFormOpen(true);
                           }}
-                          className="px-2.5 py-1 bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 rounded font-bold text-xs flex items-center gap-1 transition cursor-pointer shadow-2xs"
-                          title="Chỉnh sửa chi tiết hồ sơ & bảng chấm công tuần"
+                          className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                          title="Chỉnh sửa thông tin khai báo công nhân"
                         >
-                          <Edit2 className="w-3.5 h-3.5 text-sky-700" />
+                          <Edit2 className="w-3 h-3 text-sky-700" />
                           <span>Sửa</span>
                         </button>
 
-                        {/* Nút Xóa có chữ Xóa rõ ràng */}
                         <button
                           type="button"
                           onClick={() => setWorkerToDelete(w)}
-                          className="px-2.5 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 border border-rose-300 rounded font-bold text-xs flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                          className="px-2 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 border border-rose-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                           title="Xóa công nhân thời vụ này khỏi hệ thống"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3" />
                           <span>Xóa</span>
-                        </button>
-
-                        {/* Nút Xem phiếu */}
-                        <button
-                          type="button"
-                          onClick={() => setViewingReceiptWorker(w)}
-                          className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition cursor-pointer"
-                          title="Xem phiếu cá nhân Mẫu 03-LĐTL"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Nút In */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            printSeasonalWorkerReceipt(
-                              w,
-                              config,
-                              () => {
-                                setViewingReceiptWorker(w);
-                              },
-                              currentPeriodOption.label
-                            );
-                          }}
-                          className="p-1 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded transition cursor-pointer"
-                          title="In phiếu chi trả tiền công"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -1711,49 +1367,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           </tbody>
 
           {/* Dòng tổng cộng chân bảng */}
-          <tfoot className="bg-slate-100 font-bold text-slate-900 sticky bottom-0 border-t-2 border-slate-400 z-20">
+          <tfoot className="bg-slate-100 font-bold text-slate-900 sticky bottom-0 border-t border-slate-300 z-20">
             <tr>
-              <td colSpan={8} className="p-2 border-r border-slate-300 uppercase text-right tracking-wider font-extrabold text-[#0f3d64]">
-                TỔNG CỘNG ({filteredWorkers.length} CÔNG NHÂN):
+              <td colSpan={8} className="p-2.5 border-r border-slate-300 uppercase text-right tracking-wider font-extrabold text-[#0f3d64]">
+                TỔNG CỘNG DANH SÁCH ({filteredWorkers.length} CÔNG NHÂN):
               </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-black text-sky-900">
+              <td className="p-2.5 border-r border-slate-300 text-right font-mono font-bold text-sky-900">
                 —
               </td>
-              <td className="p-2 border-r border-slate-300 text-center font-mono font-black text-slate-900">
-                {stats.totalWorkDays}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-slate-900">
-                {formatNumberOnly(stats.totalSalaryByDays)}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-center font-mono font-bold text-slate-900">
-                {stats.totalOvertimeHours > 0 ? `${stats.totalOvertimeHours}h` : '—'}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-slate-900">
-                {stats.totalOvertimePay > 0 ? formatNumberOnly(stats.totalOvertimePay) : '—'}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-slate-900">
-                {formatNumberOnly(filteredWorkers.reduce((sum, w) => sum + (w.mealAllowance || 0), 0))}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-slate-900">
-                {formatNumberOnly(filteredWorkers.reduce((sum, w) => sum + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0), 0))}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-black text-[#0f3d64] bg-sky-100/60">
-                {formatNumberOnly(stats.totalIncome)}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-center text-slate-500 font-normal">
-                —
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-rose-700">
-                {formatNumberOnly(stats.totalTax)}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-bold text-rose-700">
-                {formatNumberOnly(stats.totalAdvance)}
-              </td>
-              <td className="p-2 border-r border-slate-300 text-right font-mono font-black text-emerald-800 text-xs bg-emerald-100/60">
-                {formatNumberOnly(stats.totalNet)} đ
-              </td>
-              <td colSpan={3} className="p-2 font-normal text-slate-600 text-[10px] italic">
-                Bằng chữ: {numberToVietnameseWords(stats.totalNet)}
+              <td colSpan={4} className="p-2.5 text-slate-600 text-[11px] font-semibold">
+                🟢 {stats.activeWorkers} đang làm việc &bull; {filteredWorkers.length - stats.activeWorkers} đã nghỉ
               </td>
             </tr>
           </tfoot>
