@@ -49,6 +49,7 @@ import {
   PayrollRecord,
   AttendanceRecord,
 } from '../types';
+import { saveAllToServer } from '../services/backendSyncService';
 
 interface SupabaseSyncModalProps {
   isOpen: boolean;
@@ -150,6 +151,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     setSupabaseConfig(rawUrl, rawKey);
     setIsConfigured(true);
     setUrlInput(rawUrl);
+    saveAllToServer(config, employees, seasonalWorkers).catch(() => {});
 
     setIsTesting(true);
     setSaveSuccessMsg('Đang kiểm tra kết nối tới cơ sở dữ liệu Supabase...');
@@ -356,6 +358,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         });
       }
 
+      saveAllToServer(config, employees, seasonalWorkers).catch(() => {});
       if (onSyncSuccess) onSyncSuccess();
     } catch (e: any) {
       alert(`Lỗi khi đẩy dữ liệu: ${e.message || String(e)}`);

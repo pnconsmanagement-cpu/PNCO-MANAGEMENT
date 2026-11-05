@@ -278,30 +278,41 @@ export function normalizeEmpName(name?: string): string {
 // Chỉ những nhân viên thực sự có chấm công mới có số công > 0; nhân viên không chấm công giữ nguyên 0 công.
 // Lưu ý: Tháng 09/2026 nhóm Nhân Viên Chính Thức KHÔNG chấm công nên mặc định toàn bộ 0 công.
 const HISTORICAL_MONTH_10_BY_NAME: Record<string, { work: number; ot: number; np: number; vm: number }> = {
+  'NGUYEN THANH THUY': { work: 27, ot: 0, np: 0, vm: 0 },
+  'TRAN ANH MINH': { work: 27, ot: 0, np: 0, vm: 0 },
   'HAN VAN QUANG': { work: 27, ot: 90, np: 0, vm: 3 },
-  'HAN KIEU DUY PHON': { work: 26, ot: 38, np: 0, vm: 3 },
-  'LE DINH NGOC': { work: 26, ot: 100, np: 1, vm: 3 },
-  'TRAN NGOC HOANG HUY': { work: 24.5, ot: 71, np: 2, vm: 3 },
-  'DAO VAN BINH': { work: 25, ot: 42, np: 0, vm: 1 },
-  'BUI THANH LICH': { work: 26, ot: 24, np: 0, vm: 0 },
-  'NGUYEN TOAN PHUC': { work: 25.5, ot: 61, np: 1, vm: 0 },
-  'HUYNH VAN BUA': { work: 26, ot: 20, np: 0, vm: 0 },
-  'NGUYEN TUAN NHAT': { work: 25, ot: 36, np: 0, vm: 1 },
-  'NGUYEN VAN NGUYEN': { work: 26, ot: 28, np: 0, vm: 0 },
+  'HAN KIEU DUY PHON': { work: 26, ot: 38, np: 0, vm: 2 },
+  'LE DINH NGOC': { work: 26, ot: 100, np: 0, vm: 3 },
+  'TRAN NGOC HOANG HUY': { work: 24.5, ot: 71, np: 0, vm: 3 },
+  'DANG TAN PHIEU': { work: 24, ot: 73, np: 0, vm: 3 },
+  'NGUYEN TAN VIET': { work: 27, ot: 98, np: 0, vm: 0 },
+  'PHAM VAN KHOA': { work: 25.5, ot: 59.5, np: 0, vm: 0 },
 };
 
-// Danh sách nhân sự văn phòng / quản lý chưa chấm công Tháng 10/2026 (bị tự nhảy 26-27 công 0 OT do lỗi đồng bộ mã cũ)
+// Danh sách nhân sự chưa chấm công Tháng 10/2026
 const UNCLOCKED_OCT_2026_NAMES = new Set([
   'ADMIN',
-  'NGUYEN THANH THUY',
-  'TRAN ANH MINH',
   'TRAN TAN DAT',
   'HO PHAN THANH LONG',
-  'NGUYEN TAN VIET',
-  'DANG TAN PHIEU',
-  'PHAM TUAN CUONG',
-  'PHAN VAN TUAN',
 ]);
+
+// Nhận diện danh sách 19 nhân viên mẫu cũ (chứa các mã PNC0004, PNC0008, PNC0014..PNC0019 hoặc Admin)
+export function isLegacy19MockEmployeeList(list?: Employee[] | null): boolean {
+  if (!Array.isArray(list) || list.length === 0) return false;
+  if (list.length >= 14) return true;
+  return list.some((e) => {
+    if (!e) return false;
+    const code = String(e.code || '').trim();
+    const norm = normalizeEmpName(e.fullName);
+    if (['PNC0004', 'PNC0008', 'PNC0014', 'PNC0015', 'PNC0016', 'PNC0017', 'PNC0018', 'PNC0019'].includes(code)) {
+      return true;
+    }
+    if (norm === 'ADMIN') return true;
+    if (code === 'PNC0003' && norm === 'TRAN ANH MINH') return true;
+    if (code === 'PNC0002' && norm === 'NGUYEN THANH THUY') return true;
+    return false;
+  });
+}
 
 /**
  * Làm sạch dữ liệu chấm công tự nhảy của nhân viên chính thức:

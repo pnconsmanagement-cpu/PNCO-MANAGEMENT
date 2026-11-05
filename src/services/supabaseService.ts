@@ -14,6 +14,7 @@ import {
   buildMonthlyAttendanceRecord,
   sanitizeEmployeeMonthlyAttendance,
   normalizeEmpName,
+  isLegacy19MockEmployeeList,
 } from '../utils/payrollCalculator';
 
 const env = (import.meta as any).env || {};
@@ -495,7 +496,16 @@ export const syncCompanyConfigToSupabase = async (
   }
 
   try {
-    const { error } = await client.from('company_config').upsert(
+    const sbCfg = getSupabaseConfig();
+    const fullConfigJson = {
+      ...config,
+      ...(sbCfg.url && sbCfg.anonKey
+        ? { supabaseUrl: sbCfg.url, supabaseAnonKey: sbCfg.anonKey }
+        : {}),
+    };
+    const nowIso = new Date().toISOString();
+
+    let { error } = await client.from('company_config').upsert(
       {
         id: 'default',
         name: config.name || '',
@@ -503,17 +513,29 @@ export const syncCompanyConfigToSupabase = async (
         tax_code: config.taxCode || '',
         phone: config.phone || '',
         email: (config as any).email || '',
-        website: (config as any).website || '',
         period: config.period || '',
         period_code: config.periodCode || '',
         payment_date: config.paymentDate || '',
         standard_work_days: config.standardWorkDays || 26,
         zalo_oa: config.zaloOA || {},
-        config_json: config,
-        updated_at: new Date().toISOString(),
+        config_json: fullConfigJson,
+        updated_at: nowIso,
       },
       { onConflict: 'id' }
     );
+
+    if (error) {
+      const retryMin = await client.from('company_config').upsert(
+        {
+          id: 'default',
+          name: config.name || '',
+          config_json: fullConfigJson,
+          updated_at: nowIso,
+        },
+        { onConflict: 'id' }
+      );
+      error = retryMin.error;
+    }
 
     if (error) {
       console.error('Sync company_config failed:', error);
@@ -591,7 +613,10 @@ export const syncEmployeesToSupabase = async (
       const sortOrder = typeof emp.sortOrder === 'number' ? emp.sortOrder : idx + 1;
       const empCode = String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`).trim();
       const matched = existingByCode.get(empCode) || existingById.get(String(emp.id || '').trim());
-      const canonicalId = matched?.id ? String(matched.id) : String(emp.id || empCode || `EMP_${idx + 1}`);
+      // Luôn ưu tiên dùng empCode làm ID chuẩn hoặc ID theo đúng dòng có cùng code để không bao giờ xung đột giữa id và code
+      const canonicalId = existingByCode.get(empCode)?.id
+        ? String(existingByCode.get(empCode)!.id)
+        : String(emp.id || empCode || `EMP_${idx + 1}`);
       const existingData = matched?.employee_data
         ? sanitizeEmployeeMonthlyAttendance(matched.employee_data)
         : undefined;
@@ -643,8 +668,8 @@ export const syncEmployeesToSupabase = async (
         id: canonicalId,
         code: empCode,
         name: String(mergedEmp.fullName || 'Nhân viên'),
+        title: String(mergedEmp.title || ''),
         department: String(mergedEmp.department || 'Phòng ban'),
-        position: String(mergedEmp.title || ''),
         phone: String(mergedEmp.phone || ''),
         email: String(mergedEmp.email || ''),
         tax_code: String(mergedEmp.taxCode || ''),
@@ -661,10 +686,38 @@ export const syncEmployeesToSupabase = async (
         advance_payment: Number(mergedEmp.advancePayment || 0),
         net_salary: Number(mergedEmp.netSalary || 0),
         period_code: String(periodCode || '09/2026'),
+        sort_order: sortOrder,
         employee_data: mergedEmp,
         updated_at: new Date().toISOString(),
       };
     });
+
+    // Đảm bảo không có 2 phần tử nào trùng id trong payload
+    const usedIds = new Set<string>();
+    payload.forEach((p) => {
+      if (usedIds.has(p.id)) {
+        p.id = p.code;
+        p.employee_data.id = p.code;
+      }
+      usedIds.add(p.id);
+    });
+
+    // Xóa triệt để các dòng nhân viên cũ đã bị xóa hoặc bị lệch id/code trên Supabase trước khi upsert
+    try {
+      const activeCodes = new Set(payload.map((p) => p.code));
+      const activeIds = new Set(payload.map((p) => p.id));
+      const staleIdsToDelete: string[] = [];
+      existingById.forEach((row: any, rowId: string) => {
+        const rowCode = String(row.code || '').trim();
+        const expectedRowForCode = existingByCode.get(rowCode);
+        if (!activeCodes.has(rowCode) || !activeIds.has(rowId) || (expectedRowForCode && String(expectedRowForCode.id) !== rowId)) {
+          staleIdsToDelete.push(rowId);
+        }
+      });
+      if (staleIdsToDelete.length > 0) {
+        await client.from('employees').delete().in('id', staleIdsToDelete);
+      }
+    } catch {}
 
     let { error } = await client.from('employees').upsert(payload, {
       onConflict: 'id',
@@ -675,6 +728,31 @@ export const syncEmployeesToSupabase = async (
         onConflict: 'code',
       });
       error = retryByCode.error;
+    }
+
+    if (error) {
+      console.warn('Sync employees full payload failed, trying minimal core payload:', error.message);
+      const minimalPayload = payload.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        department: p.department,
+        bank_account: p.bank_account,
+        bank_name: p.bank_name,
+        base_salary: p.base_salary,
+        employee_data: p.employee_data,
+        updated_at: p.updated_at,
+      }));
+      let { error: minErr } = await client.from('employees').upsert(minimalPayload, {
+        onConflict: 'id',
+      });
+      if (minErr) {
+        const retryMinCode = await client.from('employees').upsert(minimalPayload, {
+          onConflict: 'code',
+        });
+        minErr = retryMinCode.error;
+      }
+      error = minErr;
     }
 
     if (error) {
@@ -783,12 +861,20 @@ export const loadEmployeesFromSupabase = async (
           code: String(item.code || emp.code),
           fullName: emp.fullName || item.name || 'Nhân viên',
           department: emp.department || item.department || 'Phòng ban',
-          title: emp.title || item.position || 'Nhân viên',
+          title: emp.title || item.title || item.position || 'Nhân viên',
+          baseSalary: Number(emp.baseSalary ?? item.base_salary ?? 0),
+          insuranceSalary: Number(emp.insuranceSalary ?? item.insurance_salary ?? 0),
           bankAccount: emp.bankAccount || item.bank_account || '',
           bankName: emp.bankName || item.bank_name || 'Vietcombank',
+          sortOrder: typeof emp.sortOrder === 'number' ? emp.sortOrder : Number(item.sort_order || 99),
         };
       })
       .filter((emp) => emp && emp.fullName);
+
+    // Nếu trên Supabase vẫn đang chứa bộ 19 nhân viên mẫu cũ chưa được dọn dẹp -> bỏ qua để tự động đẩy bộ 11 nhân viên chuẩn lên
+    if (isLegacy19MockEmployeeList(list)) {
+      return null;
+    }
 
     if (attRecords.length > 0) {
       list.forEach((emp) => {
@@ -947,7 +1033,7 @@ export const syncSeasonalWorkersToSupabase = async (
         trade: String(fullWorker.trade || ''),
         skill_level: String(fullWorker.skillLevel || ''),
         project: String(fullWorker.project || ''),
-        team: String(fullWorker.teamName || ''),
+        team_name: String(fullWorker.teamName || ''),
         phone: String(fullWorker.phone || ''),
         id_card: String(fullWorker.idCard || ''),
         bank_account: String(fullWorker.bankAccount || ''),
@@ -962,10 +1048,27 @@ export const syncSeasonalWorkersToSupabase = async (
         status: String(fullWorker.status || 'ACTIVE'),
         net_salary: Number(fullWorker.netSalary || 0),
         period_code: String(periodCode || '09/2026'),
+        sort_order: sortOrder,
         worker_data: fullWorker,
         updated_at: new Date().toISOString(),
       };
     });
+
+    // Xóa các dòng thợ thời vụ cũ đã bị xóa trên máy hiện tại khỏi bảng seasonal_workers
+    try {
+      const activeCodes = new Set(payload.map((p) => p.code));
+      const activeIds = new Set(payload.map((p) => p.id));
+      const staleIds: string[] = [];
+      existingById.forEach((row: any, rowId: string) => {
+        const rowCode = String(row.code || '').trim();
+        if (!activeCodes.has(rowCode) || !activeIds.has(rowId)) {
+          staleIds.push(rowId);
+        }
+      });
+      if (staleIds.length > 0) {
+        await client.from('seasonal_workers').delete().in('id', staleIds);
+      }
+    } catch {}
 
     let { error } = await client.from('seasonal_workers').upsert(payload, {
       onConflict: 'id',
@@ -1955,7 +2058,7 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       trade: String(mergedWorker.trade || ''),
       skill_level: String(mergedWorker.skillLevel || ''),
       project: String(mergedWorker.project || ''),
-      team: String(mergedWorker.teamName || ''),
+      team_name: String(mergedWorker.teamName || ''),
       phone: String(mergedWorker.phone || ''),
       id_card: String(mergedWorker.idCard || ''),
       bank_account: String(mergedWorker.bankAccount || ''),
@@ -2243,8 +2346,8 @@ export const syncSingleEmployeeToSupabase = async (
       id: String(canonicalId),
       code: empCode,
       name: String(mergedEmployee.fullName || 'Nhân viên'),
+      title: String(mergedEmployee.title || ''),
       department: String(mergedEmployee.department || 'Phòng ban'),
-      position: String(mergedEmployee.title || ''),
       phone: String(mergedEmployee.phone || ''),
       email: String(mergedEmployee.email || ''),
       tax_code: String(mergedEmployee.taxCode || ''),
@@ -2274,6 +2377,30 @@ export const syncSingleEmployeeToSupabase = async (
         onConflict: 'code',
       });
       error = retry.error;
+    }
+
+    if (error) {
+      const minimalPayload = {
+        id: payload.id,
+        code: payload.code,
+        name: payload.name,
+        department: payload.department,
+        bank_account: payload.bank_account,
+        bank_name: payload.bank_name,
+        base_salary: payload.base_salary,
+        employee_data: payload.employee_data,
+        updated_at: payload.updated_at,
+      };
+      let { error: minErr } = await client.from('employees').upsert(minimalPayload, {
+        onConflict: 'id',
+      });
+      if (minErr) {
+        const retryMinCode = await client.from('employees').upsert(minimalPayload, {
+          onConflict: 'code',
+        });
+        minErr = retryMinCode.error;
+      }
+      error = minErr;
     }
 
     if (error) {

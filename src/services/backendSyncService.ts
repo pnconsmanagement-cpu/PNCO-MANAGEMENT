@@ -18,22 +18,15 @@ let pollingInterval: any = null;
  */
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
-    // 1. Nếu người dùng cấu hình URL tùy chỉnh
-    try {
-      const custom = localStorage.getItem('payroll_public_app_url');
-      if (custom && custom.startsWith('http')) {
-        return custom.replace(/\/$/, '');
-      }
-    } catch {}
-
     const origin = window.location.origin || '';
-
-    // 2. Nếu đang mở trực tiếp trên app (*.run.app hoặc localhost)
-    if (origin.includes('.run.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      return origin;
+    if (
+      origin.includes('.run.app') ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.includes('.vercel.app')
+    ) {
+      return '';
     }
-
-    // 3. Nếu đang trong AI Studio preview (aistudio.google.com), dùng VITE_APP_URL từ server
     const envAppUrl = (import.meta as any).env?.VITE_APP_URL;
     if (envAppUrl && envAppUrl.startsWith('http')) {
       return envAppUrl.replace(/\/$/, '');
@@ -49,11 +42,22 @@ export async function fetchServerData(): Promise<ServerSyncData | null> {
   try {
     const baseUrl = getApiBaseUrl();
     const res = await fetch(`${baseUrl}/api/sync`, {
-      headers: { 'Accept': 'application/json' },
+      headers: { Accept: 'application/json' },
     });
     if (!res.ok) return null;
     const data = await res.json();
     if (data && typeof data.lastUpdated === 'number') {
+      // Tự động đồng bộ cấu hình Supabase từ máy chủ sang máy tính mới nếu máy này chưa có
+      if (data.config?.supabaseUrl && data.config?.supabaseAnonKey) {
+        try {
+          const curUrl = localStorage.getItem('supabase_config_url') || '';
+          const curKey = localStorage.getItem('supabase_config_anon_key') || '';
+          if (!curUrl || !curKey) {
+            localStorage.setItem('supabase_config_url', String(data.config.supabaseUrl).trim());
+            localStorage.setItem('supabase_config_anon_key', String(data.config.supabaseAnonKey).trim());
+          }
+        } catch {}
+      }
       if (data.lastUpdated > 0) {
         lastSyncedTimestamp = data.lastUpdated;
         lastSyncTimeString = new Date(data.lastUpdated).toLocaleTimeString('vi-VN', {
@@ -72,7 +76,7 @@ export async function fetchServerData(): Promise<ServerSyncData | null> {
 }
 
 /**
- * Lưu toàn bộ dữ liệu lên máy chủ
+ * Lưu toàn bộ dữ liệu lên máy chủ (đính kèm tự động thông tin kết nối Supabase để các máy tính khác tự nhận)
  */
 export async function saveAllToServer(
   config: CompanyConfig,
@@ -81,10 +85,23 @@ export async function saveAllToServer(
 ): Promise<boolean> {
   try {
     const baseUrl = getApiBaseUrl();
+    let enrichedConfig: any = { ...config };
+    try {
+      const sbUrl = localStorage.getItem('supabase_config_url') || '';
+      const sbKey = localStorage.getItem('supabase_config_anon_key') || '';
+      if (sbUrl && sbKey) {
+        enrichedConfig = {
+          ...enrichedConfig,
+          supabaseUrl: sbUrl.trim(),
+          supabaseAnonKey: sbKey.trim(),
+        };
+      }
+    } catch {}
+
     const res = await fetch(`${baseUrl}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config, employees, seasonalWorkers }),
+      body: JSON.stringify({ config: enrichedConfig, employees, seasonalWorkers }),
     });
     if (!res.ok) return false;
     const result = await res.json();

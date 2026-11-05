@@ -5,7 +5,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { initialCompanyConfig, initialEmployees } from './src/data/mockPayrollData';
 import { initialSeasonalWorkers } from './src/data/mockSeasonalWorkers';
-import { sanitizeEmployeeMonthlyAttendance } from './src/utils/payrollCalculator';
+import {
+  sanitizeEmployeeMonthlyAttendance,
+  isLegacy19MockEmployeeList,
+} from './src/utils/payrollCalculator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,16 +74,21 @@ function readStorage(): StoredData {
         const cleanedSeasonal = Array.isArray(parsed.seasonalWorkers)
           ? sanitizeSeasonalList(parsed.seasonalWorkers)
           : initialSeasonalWorkers;
+        const isLegacy19 = isLegacy19MockEmployeeList(parsed.employees);
         const cleanedEmployees =
-          Array.isArray(parsed.employees) && parsed.employees.length > 0
+          !isLegacy19 && Array.isArray(parsed.employees) && parsed.employees.length > 0
             ? parsed.employees.map((e: any) => (e ? sanitizeEmployeeMonthlyAttendance(e) : e))
             : initialEmployees;
-        return {
-          lastUpdated: Number(parsed.lastUpdated) || 0,
+        const result: StoredData = {
+          lastUpdated: isLegacy19 ? Date.now() : Number(parsed.lastUpdated) || Date.now(),
           config: parsed.config || initialCompanyConfig,
           employees: cleanedEmployees,
           seasonalWorkers: cleanedSeasonal.length > 0 ? cleanedSeasonal : initialSeasonalWorkers,
         };
+        if (isLegacy19) {
+          writeStorage(result);
+        }
+        return result;
       }
     }
   } catch (err) {
@@ -126,10 +134,28 @@ app.post('/api/sync', (req, res) => {
   const { config, employees, seasonalWorkers } = req.body;
   const current = readStorage();
 
+  const mergedConfig =
+    config !== undefined
+      ? {
+          ...(current.config?.supabaseUrl && current.config?.supabaseAnonKey
+            ? {
+                supabaseUrl: current.config.supabaseUrl,
+                supabaseAnonKey: current.config.supabaseAnonKey,
+              }
+            : {}),
+          ...config,
+        }
+      : current.config;
+
+  const incomingEmpsValid =
+    Array.isArray(employees) &&
+    employees.length > 0 &&
+    !isLegacy19MockEmployeeList(employees);
+
   const updated: StoredData = {
     lastUpdated: Date.now(),
-    config: config !== undefined ? config : current.config,
-    employees: Array.isArray(employees) && employees.length > 0 ? employees : current.employees,
+    config: mergedConfig,
+    employees: incomingEmpsValid ? employees : current.employees,
     seasonalWorkers: seasonalWorkers !== undefined ? sanitizeSeasonalList(seasonalWorkers) : current.seasonalWorkers,
   };
 

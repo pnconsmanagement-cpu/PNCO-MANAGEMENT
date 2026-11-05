@@ -63,6 +63,7 @@ import {
   normalizeEmpName,
   syncEmployeeForMonth,
   buildMonthlyAttendanceRecord,
+  isLegacy19MockEmployeeList,
 } from './utils/payrollCalculator';
 import { ensureEmployeeContract } from './utils/contractHelper';
 import {
@@ -158,7 +159,7 @@ function removeDeletedKeys(storageKey: string, keys: (string | undefined | null)
   } catch {}
 }
 
-// Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng mà không tự nhảy công)
+// Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (lấy danh sách từ Cloud/Server làm chuẩn để đồng bộ xóa/sửa giữa 2 máy tính)
 function mergeEmployeeListsPreservingAttendance(
   localList: Employee[],
   remoteList: Employee[],
@@ -167,24 +168,36 @@ function mergeEmployeeListsPreservingAttendance(
   stdDays: number = 26
 ): Employee[] {
   const deletedSet = getDeletedKeys(DELETED_EMP_STORAGE_KEY);
-  const map = new Map<string, Employee>();
-  localList.forEach((rawEmp) => {
-    if (!rawEmp) return;
-    if (deletedSet.has(String(rawEmp.id)) || (rawEmp.code && deletedSet.has(String(rawEmp.code)))) return;
-    const emp = sanitizeEmployeeMonthlyAttendance(rawEmp);
-    map.set(emp.code || emp.id, emp);
-  });
+  const localByCodeOrId = new Map<string, Employee>();
+  if (!isLegacy19MockEmployeeList(localList)) {
+    localList.forEach((rawEmp) => {
+      if (!rawEmp) return;
+      if (deletedSet.has(String(rawEmp.id)) || (rawEmp.code && deletedSet.has(String(rawEmp.code)))) return;
+      const emp = sanitizeEmployeeMonthlyAttendance(rawEmp);
+      localByCodeOrId.set(emp.code || emp.id, emp);
+    });
+  }
 
-  remoteList.forEach((rawRem) => {
+  const effectiveRemote =
+    Array.isArray(remoteList) && remoteList.length > 0 && !isLegacy19MockEmployeeList(remoteList)
+      ? remoteList
+      : localByCodeOrId.size > 0
+      ? Array.from(localByCodeOrId.values())
+      : initialEmployees;
+
+  const map = new Map<string, Employee>();
+  effectiveRemote.forEach((rawRem) => {
     if (!rawRem) return;
     if (deletedSet.has(String(rawRem.id)) || (rawRem.code && deletedSet.has(String(rawRem.code)))) return;
     const rEmp = sanitizeEmployeeMonthlyAttendance(rawRem);
     const key = rEmp.code || rEmp.id;
-    const existing = map.get(key);
+    const existing = localByCodeOrId.get(key);
     if (existing) {
       const samePerson =
         normalizeEmpName(existing.fullName) === normalizeEmpName(rEmp.fullName);
-      const mergedMonthly = { ...(existing.monthlyAttendance || {}) };
+      const mergedMonthly = samePerson
+        ? { ...(existing.monthlyAttendance || {}) }
+        : { ...(rEmp.monthlyAttendance || {}) };
 
       if (samePerson) {
         Object.entries(rEmp.monthlyAttendance || {}).forEach(([mKey, rRec]) => {
@@ -202,7 +215,7 @@ function mergeEmployeeListsPreservingAttendance(
               mergedMonthly[mKey] = rRec;
             } else if (!exIsDefault && rIsDefault) {
               mergedMonthly[mKey] = exRec;
-            } else if (rTime > exTime) {
+            } else if (rTime >= exTime) {
               mergedMonthly[mKey] = rRec;
             } else {
               mergedMonthly[mKey] = exRec;
@@ -213,14 +226,14 @@ function mergeEmployeeListsPreservingAttendance(
 
       map.set(key, {
         ...existing,
-        ...(samePerson ? rEmp : {}),
+        ...rEmp,
         monthlyAttendance: mergedMonthly,
         periodRecords: samePerson
           ? {
               ...(existing.periodRecords || {}),
               ...(rEmp.periodRecords || {}),
             }
-          : existing.periodRecords,
+          : rEmp.periodRecords || {},
       });
     } else {
       map.set(key, rEmp);
@@ -340,7 +353,7 @@ export default function App() {
     if (saved) {
       try {
         const parsed: Employee[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed) && parsed.length > 0 && !isLegacy19MockEmployeeList(parsed)) {
           // Gộp thêm dữ liệu các tháng đã lưu trong các slot payroll_month_YYYY_MM (nếu có) để không bao giờ mất lịch sử
           const legacyMonthSlots: Array<{ m: number; y: number; key: string; monthKey: string }> = [
             { m: 9, y: 2026, key: 'payroll_month_2026_09', monthKey: '2026-09' },
@@ -354,7 +367,9 @@ export default function App() {
               const rawSlot = localStorage.getItem(slot.key);
               if (rawSlot) {
                 const arr = JSON.parse(rawSlot);
-                if (Array.isArray(arr)) legacyByMonth[slot.monthKey] = arr;
+                if (Array.isArray(arr) && !isLegacy19MockEmployeeList(arr)) {
+                  legacyByMonth[slot.monthKey] = arr;
+                }
               }
             } catch {}
           });
@@ -379,9 +394,9 @@ export default function App() {
                 const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
                 withContract.projectAllowance = defaultEmp ? defaultEmp.projectAllowance || 0 : 0;
               }
-              if (!withContract.insuranceSalary) {
+              if (withContract.insuranceSalary === undefined) {
                 const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
-                withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 7000000;
+                withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 0;
               }
 
               const mergedMonthly = { ...(withContract.monthlyAttendance || {}) };
@@ -412,6 +427,13 @@ export default function App() {
             }
             return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
           });
+        } else if (isLegacy19MockEmployeeList(parsed)) {
+          // Tự động dọn dẹp dữ liệu 19 nhân viên mẫu cũ trong LocalStorage trên máy tính thứ 2
+          try {
+            ['payroll_month_2026_09', 'payroll_month_2026_10', 'payroll_month_2026_11', 'payroll_month_2026_12'].forEach(
+              (k) => localStorage.removeItem(k)
+            );
+          } catch {}
         }
       } catch (e) {
         console.error('Error parsing saved employees', e);
@@ -1226,7 +1248,10 @@ export default function App() {
         // Cập nhật sang máy chủ cục bộ để đồng nhất 100%
         saveAllToServer(nextCfg, nextEmps, nextSeas).catch(() => {});
 
-        if (!hasAnyDataOnCloud || shouldPushSeasonalToCloud) {
+        const shouldPushEmployeesToCloud =
+          !cloudEmp || cloudEmp.length === 0 || cloudEmp.length !== nextEmps.length;
+
+        if (!hasAnyDataOnCloud || shouldPushSeasonalToCloud || shouldPushEmployeesToCloud) {
           isSyncingRef.current = true;
           try {
             const report = await syncAllDataToSupabase(nextCfg, nextEmps, nextSeas);
