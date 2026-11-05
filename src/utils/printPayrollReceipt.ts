@@ -22,6 +22,8 @@ export function generateSeasonalWorkerReceiptHTML(
       ? `https://img.vietqr.io/image/${encodeURIComponent(worker.bankName)}-${encodeURIComponent(worker.bankAccount)}-compact.png?amount=${worker.netSalary}&addInfo=${encodeURIComponent(`Thanh toan luong ${worker.code} ${config.periodCode || ''}`)}&accountName=${encodeURIComponent(worker.fullName)}`
       : null;
 
+  const logoUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/assets/aistudio/image_1ca8dbc7.png`;
+
   // Lấy hoặc tự động khởi tạo danh sách chấm công các ngày trong kỳ
   let timesheetList: WeeklyDayAttendance[] = worker.weeklyTimesheet || [];
   if (timesheetList.length === 0 && worker.monthlyAttendance) {
@@ -348,7 +350,10 @@ export function generateSeasonalWorkerReceiptHTML(
             <div class="company-sub">Mã số thuế: <strong>${config.taxCode}</strong> — Điện thoại: <strong>${config.phone}</strong></div>
           </td>
           <td style="text-align: right;">
-            <div style="display: inline-block; padding: 3px 8px; background-color: #ffffff; border: 1.5px solid #0f3d64; border-radius: 4px; font-weight: 800; font-size: 8.5pt; color: #0f3d64;">
+            <div style="margin-bottom: 4px;">
+              <img src="${logoUrl}" alt="PNCO Construction Logo" style="height: 38px; width: auto; object-fit: contain; display: inline-block;" />
+            </div>
+            <div style="display: inline-block; padding: 2px 8px; background-color: #ffffff; border: 1.5px solid #0f3d64; border-radius: 4px; font-weight: 800; font-size: 8.5pt; color: #0f3d64;">
               Mẫu: 03-LĐTL
             </div>
             <div style="font-size: 7.5pt; color: #334155; margin-top: 2px; font-weight: 600;">(Ban hành theo TT 200 & TT 133/BTC)</div>
@@ -797,6 +802,9 @@ export function generateSeasonalWorkersBatchHTML(
             <div style="font-size: 7.5pt; color: #475569;">Địa chỉ: ${config.address} — MST: ${config.taxCode}</div>
           </div>
           <div style="text-align: right;">
+            <div style="margin-bottom: 3px;">
+              <img src="${typeof window !== 'undefined' ? window.location.origin : ''}/assets/aistudio/image_1ca8dbc7.png" alt="PNCO Construction Logo" style="height: 34px; width: auto; object-fit: contain; display: inline-block;" />
+            </div>
             <div style="font-weight: bold; font-size: 8pt;">Mẫu số: 02a-LĐTL</div>
             <div style="font-size: 7.5pt; color: #64748b;">(Bảng thanh toán tiền lương công nhân thời vụ)</div>
           </div>

@@ -223,9 +223,14 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                 MST: {config.taxCode} | ĐT: {config.phone}
               </div>
             </div>
-            <div className="text-right text-[11px] text-slate-600">
+            <div className="flex flex-col items-end text-right text-[11px] text-slate-600">
+              <img
+                src="/assets/aistudio/image_1ca8dbc7.png"
+                alt="PNCO Construction Logo"
+                className="h-11 w-auto object-contain mb-1"
+              />
               <div className="font-semibold">{config.formNumber || 'Mẫu: 03-LĐTL'}</div>
-              <div className="mt-1">
+              <div className="mt-0.5">
                 Số phiếu: <span className="font-bold text-slate-800">PLTV{config.periodCode?.replace('/', '') || `${config.month}${config.year}`}-{worker.code}</span>
               </div>
             </div>

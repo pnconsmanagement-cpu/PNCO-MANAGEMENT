@@ -390,6 +390,9 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
             <div style="font-size: 12px;">MST: ${config.taxCode} - Hotline: ${config.phone}</div>
           </div>
           <div style="text-align: right;">
+            <div style="margin-bottom: 4px;">
+              <img src="${window.location.origin}/assets/aistudio/image_1ca8dbc7.png" alt="PNCO Construction Logo" style="height: 38px; width: auto; object-fit: contain; display: inline-block;" />
+            </div>
             <div style="font-weight: bold; font-size: 13px;">MẪU SỐ: 03-TT</div>
             <div style="font-size: 12px;">Số: <strong>${adv.advanceCode}</strong></div>
             <div style="font-size: 12px;">Ngày: ${adv.requestDate}</div>
