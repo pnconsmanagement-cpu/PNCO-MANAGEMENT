@@ -33,7 +33,12 @@ import {
 } from '../data/mockSeasonalWorkers';
 import { MonthYearPicker } from './MonthYearPicker';
 import { SeasonalWorkerReceiptModal } from './SeasonalWorkerReceiptModal';
-import { printSeasonalWorkerReceipt } from '../utils/printPayrollReceipt';
+import {
+  printSeasonalWorkerReceipt,
+  printPermanentEmployeeReceipt,
+  openPermanentEmployeeReceiptInNewTab,
+  downloadPermanentEmployeeReceiptHTML,
+} from '../utils/printPayrollReceipt';
 import { PayslipDocument } from './PayslipDocument';
 
 interface PayrollTableTabProps {
@@ -2220,32 +2225,78 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
           onClick={(e) => {
             if (e.target === e.currentTarget) setPrintingPermanentEmployee(null);
           }}
-          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto"
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-3 overflow-y-auto"
         >
-          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden">
-            <div className="no-print bg-slate-100 border-b border-slate-200 p-3 px-5 flex items-center justify-between gap-2 shrink-0">
-              <div className="font-bold text-sm text-slate-800">
-                Phiếu lương nhân viên: {printingPermanentEmployee.fullName} ({printingPermanentEmployee.code})
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="no-print bg-slate-100 border-b border-slate-200 p-3 px-4 sm:px-5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#0f3d64]" />
+                <span>
+                  Phiếu thanh toán tiền lương: {printingPermanentEmployee.fullName} ({printingPermanentEmployee.code})
+                </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 bg-[#0f3d64] hover:bg-[#1a5b94] text-white rounded text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  onClick={() =>
+                    printPermanentEmployeeReceipt(printingPermanentEmployee, {
+                      ...config,
+                      month: currentMonth,
+                      year: currentYear,
+                      periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                      period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                    })
+                  }
+                  className="px-3 py-1.5 bg-[#0f3d64] hover:bg-[#1a5b94] text-white rounded text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  title="In trực tiếp phiếu lương qua hộp thoại máy in"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>In bản lương</span>
+                  <span>In phiếu ngay</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openPermanentEmployeeReceiptInNewTab(printingPermanentEmployee, {
+                      ...config,
+                      month: currentMonth,
+                      year: currentYear,
+                      periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                      period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                    })
+                  }
+                  className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  title="Mở sang tab mới riêng biệt để in"
+                >
+                  <span>Mở tab in riêng</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadPermanentEmployeeReceiptHTML(printingPermanentEmployee, {
+                      ...config,
+                      month: currentMonth,
+                      year: currentYear,
+                      periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                      period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                    })
+                  }
+                  className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded text-xs font-medium flex items-center gap-1 transition cursor-pointer"
+                  title="Tải file HTML độc lập để mở hoặc in trên mọi thiết bị"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Tải file in</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintingPermanentEmployee(null)}
-                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded transition cursor-pointer"
+                  className="flex items-center gap-1 px-3 py-1.5 bg-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-700 border border-slate-300 hover:border-rose-300 rounded text-xs font-bold transition cursor-pointer ml-1 shadow-xs"
                 >
                   <X className="w-4 h-4" />
+                  <span>Đóng</span>
                 </button>
               </div>
             </div>
-            <div className="p-4 overflow-y-auto bg-slate-50 flex-1">
+            <div className="p-4 sm:p-6 overflow-y-auto bg-slate-100 flex-1">
               <PayslipDocument
                 employee={printingPermanentEmployee}
                 config={{

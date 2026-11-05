@@ -1,4 +1,4 @@
-import { SeasonalWorker, CompanyConfig, WeeklyDayAttendance } from '../types';
+import { SeasonalWorker, Employee, CompanyConfig, WeeklyDayAttendance } from '../types';
 import { formatNumberOnly, numberToVietnameseWords } from './numberToVietnameseWords';
 import { resolveWorkerTimesheetForReceipt } from '../data/mockSeasonalWorkers';
 
@@ -979,3 +979,653 @@ export function downloadSeasonalWorkersBatchHTML(
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/**
+ * Sinh mã HTML chuẩn in A4 cho Phiếu thanh toán tiền lương Nhân Viên Chính Thức (Mẫu 02-LĐTL)
+ * Đồng bộ 100% phông chữ, màu sắc, bố cục bảng 4 cột và chữ ký với phiếu lương nhân viên thời vụ (không kèm bảng chấm công chi tiết)
+ */
+export function generatePermanentEmployeeReceiptHTML(
+  employee: Employee,
+  config: CompanyConfig
+): string {
+  const stdDays = employee.standardWorkDays || config.standardWorkDays || 26;
+  const periodCodeClean = (config.periodCode || `${String(config.month || 10).padStart(2, '0')}/${config.year || 2026}`).replace('/', '');
+  const logoUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/assets/aistudio/image_1ca8dbc7.png`;
+
+  const currentDateStr = new Date();
+  const printDay = String(currentDateStr.getDate()).padStart(2, '0');
+  const printMonth = String(currentDateStr.getMonth() + 1).padStart(2, '0');
+  const printYear = currentDateStr.getFullYear();
+
+  let stt = 1;
+
+  const leaveRowHtml =
+    (employee.paidLeaveDays || 0) > 0 || (employee.unpaidLeaveDays || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${stt + 2}</td>
+            <td style="padding-left: 14px;">Số ngày nghỉ trong kỳ (Nghỉ phép: ${employee.paidLeaveDays || 0} • Không lương: ${employee.unpaidLeaveDays || 0})</td>
+            <td style="text-align: center; font-family: monospace;">${(employee.paidLeaveDays || 0) + (employee.unpaidLeaveDays || 0)} ngày</td>
+            <td style="text-align: right; font-family: monospace;">${(employee.paidLeaveDays || 0) + (employee.unpaidLeaveDays || 0)} ngày</td>
+          </tr>`
+      : '';
+
+  let bStt = leaveRowHtml ? 4 : 3;
+
+  const respHtml =
+    (employee.responsibilityAllowance || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++bStt + 1}</td>
+            <td style="padding-left: 14px;">Phụ cấp trách nhiệm công việc</td>
+            <td style="text-align: center; color: #475569;">Theo tháng</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.responsibilityAllowance)}</td>
+          </tr>`
+      : '';
+
+  const projHtml =
+    (employee.projectAllowance || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++bStt + 1}</td>
+            <td style="padding-left: 14px;">Phụ cấp dự án / công trường</td>
+            <td style="text-align: center; color: #475569;">Theo tháng</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.projectAllowance || 0)}</td>
+          </tr>`
+      : '';
+
+  const mealHtml =
+    (employee.mealAllowance || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++bStt + 1}</td>
+            <td style="padding-left: 14px;">Phụ cấp tiền ăn ca / ăn trưa</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.mealAllowance)}</td>
+          </tr>`
+      : '';
+
+  const travelHtml =
+    (employee.phoneTravelAllowance || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++bStt + 1}</td>
+            <td style="padding-left: 14px;">Phụ cấp xăng xe, điện thoại</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.phoneTravelAllowance)}</td>
+          </tr>`
+      : '';
+
+  const kpiHtml =
+    (employee.kpiBonus || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++bStt + 1}</td>
+            <td style="padding-left: 14px;">Thưởng chuyên cần / KPI / Vượt tiến độ</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.kpiBonus)}</td>
+          </tr>`
+      : '';
+
+  let cStt = bStt + 1;
+
+  const insHtml =
+    (employee.totalInsurance || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++cStt}</td>
+            <td style="padding-left: 14px;">Khấu trừ BHXH (8%), BHYT (1.5%), BHTN (1%)</td>
+            <td style="text-align: center; font-family: monospace; color: #475569;">10.5%</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.totalInsurance)}</td>
+          </tr>`
+      : '';
+
+  const unionHtml =
+    (employee.unionFee || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++cStt}</td>
+            <td style="padding-left: 14px;">Đoàn phí công đoàn</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.unionFee)}</td>
+          </tr>`
+      : '';
+
+  const taxHtml =
+    (employee.personalIncomeTax || 0) > 0
+      ? `
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++cStt}</td>
+            <td style="padding-left: 14px;">Thuế thu nhập cá nhân (TNCN)</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.personalIncomeTax)}</td>
+          </tr>`
+      : '';
+
+  return `<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phieu_Luong_${employee.code}_${employee.fullName.replace(/\s+/g, '_')}</title>
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 0mm;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 9pt;
+        color: #000000;
+        line-height: 1.35;
+        margin: 0;
+        padding: 0;
+        background-color: #ffffff;
+      }
+      .payslip-container {
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 8mm 10mm 6mm 10mm;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .header-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-bottom: 2px solid #0f3d64;
+        padding-bottom: 4px;
+        margin-bottom: 6px;
+      }
+      .header-table td {
+        border: none;
+        padding: 0;
+        vertical-align: top;
+      }
+      .company-name {
+        font-weight: 900;
+        font-size: 11pt;
+        text-transform: uppercase;
+        color: #0f3d64;
+        letter-spacing: 0.3px;
+      }
+      .company-sub {
+        font-size: 8pt;
+        color: #334155;
+        margin-top: 1px;
+      }
+      .title-section {
+        text-align: center;
+        margin: 6px 0 9px 0;
+      }
+      .title-section h1 {
+        font-size: 14.5pt;
+        font-weight: 800;
+        text-transform: uppercase;
+        margin: 0;
+        color: #0f3d64;
+        letter-spacing: 0.5px;
+      }
+      .title-section p {
+        font-size: 8.5pt;
+        margin: 2px 0 0 0;
+        color: #475569;
+        font-weight: 500;
+        font-style: italic;
+      }
+      .info-box {
+        background-color: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 7px 10px;
+        margin-bottom: 8px;
+      }
+      .info-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .info-table td {
+        border: none;
+        padding: 2.5px 6px;
+        font-size: 8.5pt;
+        color: #1e293b;
+      }
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 8px;
+        font-size: 8.5pt;
+        border: 1px solid #cbd5e1;
+      }
+      .data-table th, .data-table td {
+        border: 1px solid #e2e8f0;
+        padding: 4.5px 8px;
+      }
+      .data-table thead tr {
+        background-color: #0f3d64 !important;
+        color: #ffffff !important;
+      }
+      .data-table th {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 8pt;
+        letter-spacing: 0.3px;
+      }
+      .section-row-a {
+        background-color: #e0f2fe !important;
+        color: #082f49 !important;
+        font-weight: 700;
+        font-size: 8pt;
+        border-bottom: 1px solid #bae6fd;
+      }
+      .section-row-b {
+        background-color: #f0fdf4 !important;
+        color: #14532d !important;
+        font-weight: 700;
+        font-size: 8pt;
+        border-bottom: 1px solid #bbf7d0;
+      }
+      .section-row-c {
+        background-color: #fef3c7 !important;
+        color: #78350f !important;
+        font-weight: 700;
+        font-size: 8pt;
+        border-bottom: 1px solid #fde68a;
+      }
+      .subtotal-row {
+        background-color: #f8fafc !important;
+        font-weight: 700;
+        border-top: 1px solid #cbd5e1;
+      }
+      .net-salary-row {
+        background-color: #14532d !important;
+        color: #ffffff !important;
+        font-weight: 800;
+        border-top: 1.5px solid #0f3d64;
+      }
+      .words-box {
+        border: 1px solid #cbd5e1;
+        background-color: #f8fafc;
+        border-radius: 4px;
+        padding: 5.5px 10px;
+        margin-bottom: 8px;
+        font-size: 8.5pt;
+        color: #334155;
+      }
+      .signatures {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        text-align: center;
+        margin-top: 8px;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .sig-title {
+        font-weight: 700;
+        font-size: 8.5pt;
+        text-transform: uppercase;
+        color: #1e293b;
+      }
+      .sig-note {
+        font-style: italic;
+        font-size: 7.5pt;
+        color: #64748b;
+        margin-top: 1px;
+      }
+      .sig-space {
+        height: 36px;
+      }
+      .sig-name {
+        font-weight: 700;
+        font-size: 8.5pt;
+        color: #1e293b;
+      }
+      .payslip-footer {
+        margin-top: 8px;
+        padding-top: 4px;
+        border-top: 1px solid #cbd5e1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 8pt;
+        color: #334155;
+        font-weight: 600;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="payslip-container">
+      <!-- Header công ty & mẫu biểu chuẩn -->
+      <table class="header-table">
+        <tr>
+          <td>
+            <div class="company-name">${config.name}</div>
+            <div class="company-sub">Địa chỉ: <strong>${config.address}</strong></div>
+            <div class="company-sub">Mã số thuế: <strong>${config.taxCode}</strong> — Điện thoại: <strong>${config.phone}</strong></div>
+          </td>
+          <td style="text-align: right; vertical-align: middle;">
+            <img src="${logoUrl}" alt="PNCO Construction Logo" style="height: 42px; width: auto; object-fit: contain; display: inline-block;" />
+          </td>
+        </tr>
+      </table>
+
+      <!-- Tiêu đề phiếu chuẩn -->
+      <div class="title-section">
+        <h1>PHIẾU THANH TOÁN TIỀN LƯƠNG</h1>
+        <p>
+          Kỳ thanh toán: <span style="color: #0f3d64; font-weight: 800;">${config.period}</span>
+          ${config.paymentDate ? ` — Ngày chi trả: <strong style="color: #0f3d64;">${config.paymentDate}</strong>` : ''}
+        </p>
+      </div>
+
+      <!-- Khung thông tin nhân sự & Số phiếu bên phải -->
+      <div class="info-box" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+        <table class="info-table" style="flex: 1;">
+          <tr>
+            <td style="width: 52%;">
+              Họ và tên: <strong style="text-transform: uppercase; font-size: 9.5pt; color: #0f172a;">${employee.fullName}</strong>
+            </td>
+            <td style="width: 48%;">
+              Mã nhân viên: <strong style="font-family: monospace; font-size: 9pt; color: #0f3d64;">${employee.code}</strong>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Chức danh: <strong>${employee.title}</strong>
+            </td>
+            <td>
+              Bộ phận: <strong>${employee.department}</strong>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Hợp đồng LĐ: <span>${employee.contractType || 'HĐLĐ Chính thức'}</span>
+            </td>
+            <td>
+              Điện thoại: <span style="font-family: monospace;">${employee.phone || '—'}</span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Hình thức lương: <span>${
+                employee.salaryType === 'DAILY'
+                  ? `Theo ngày công (${formatNumberOnly(employee.baseSalary)} đ/ngày)`
+                  : `Theo tháng (${formatNumberOnly(employee.baseSalary)} đ/tháng)`
+              }</span>
+            </td>
+            <td>
+              Ngày công: <strong style="color: #0f3d64;">${employee.actualWorkDays} / ${stdDays} ngày</strong> ${employee.overtimeHours > 0 ? `(+${employee.overtimeHours}h OT)` : ''}
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Phụ trách / Quản lý: <span>Ban Giám Đốc / Chỉ huy</span>
+            </td>
+            <td>
+              Chi trả qua: <strong style="color: #0f3d64;">
+                ${employee.bankAccount ? `${employee.bankName || 'Ngân hàng'} - ${employee.bankAccount}` : employee.bankName || 'Chuyển khoản / Tiền mặt'}
+              </strong>
+            </td>
+          </tr>
+        </table>
+        <div style="text-align: right; flex-shrink: 0; border-left: 1px dashed #cbd5e1; padding-left: 10px; min-width: 170px;">
+          <div style="display: inline-block; padding: 2px 8px; background-color: #ffffff; border: 1.5px solid #0f3d64; border-radius: 4px; font-weight: 800; font-size: 8.5pt; color: #0f3d64;">
+            Mẫu: 02-LĐTL
+          </div>
+          <div style="font-size: 7.5pt; color: #334155; margin-top: 3px; font-weight: 600;">(Ban hành theo TT 200 & TT 133/BTC)</div>
+          <div style="font-size: 8.5pt; font-family: monospace; font-weight: 800; color: #000000; margin-top: 3px;">
+            Số phiếu: PLNV-${periodCodeClean}-${employee.code}
+          </div>
+        </div>
+      </div>
+
+      <!-- BẢNG CHI TIẾT THANH TOÁN TIỀN LƯƠNG THEO PHOM PHIẾU LƯƠNG CHUẨN -->
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width: 38px; text-align: center;">STT</th>
+            <th style="text-align: left;">NỘI DUNG THANH TOÁN / GIẢM TRỪ</th>
+            <th style="width: 130px; text-align: center;">ĐƠN VỊ / SỐ LƯỢNG</th>
+            <th style="width: 155px; text-align: right;">SỐ LIỆU / THÀNH TIỀN (VNĐ)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- PHẦN A: SỐ CÔNG & THỐNG KÊ LÀM VIỆC -->
+          <tr class="section-row-a">
+            <td style="text-align: center;">A</td>
+            <td colspan="2" style="text-transform: uppercase;">SỐ NGÀY CÔNG ĐI LÀM & DỮ LIỆU ĐẦU VÀO</td>
+            <td style="text-align: right;">THỐNG KÊ</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">1</td>
+            <td style="padding-left: 14px;">Số ngày công đi làm thực tế (Công chuẩn: ${stdDays} ngày)</td>
+            <td style="text-align: center; font-family: monospace; font-weight: bold; color: #0f3d64;">${employee.actualWorkDays} ngày</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #0f3d64;">${employee.actualWorkDays} công</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">2</td>
+            <td style="padding-left: 14px;">Số giờ làm thêm / tăng ca công trình (OT hệ số 150%)</td>
+            <td style="text-align: center; font-family: monospace; font-weight: bold; color: #c2410c;">${employee.overtimeHours || 0} giờ</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #c2410c;">${(employee.overtimeHours || 0) > 0 ? `${employee.overtimeHours} giờ OT` : '0 giờ OT'}</td>
+          </tr>
+          ${leaveRowHtml}
+
+          <!-- PHẦN B: CÁC KHOẢN TIỀN CÔNG VÀ THU NHẬP -->
+          <tr class="section-row-b">
+            <td style="text-align: center;">B</td>
+            <td colspan="2" style="text-transform: uppercase;">CÁC KHOẢN TIỀN CÔNG VÀ THU NHẬP</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(employee.totalIncome)}</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${leaveRowHtml ? 4 : 3}</td>
+            <td style="padding-left: 14px;">
+              ${
+                employee.salaryType === 'DAILY'
+                  ? `Lương theo đơn giá ngày công (${employee.actualWorkDays} ngày × ${formatNumberOnly(employee.baseSalary)} đ/ngày)`
+                  : `Lương theo ngày công thực tế (${formatNumberOnly(employee.baseSalary)} đ / ${stdDays} ngày × ${employee.actualWorkDays} công)`
+              }
+            </td>
+            <td style="text-align: center; font-family: monospace;">${employee.actualWorkDays} công</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #000000;">${formatNumberOnly(employee.salaryByActualDays)}</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${leaveRowHtml ? 5 : 4}</td>
+            <td style="padding-left: 14px;">
+              Tiền làm thêm giờ / tăng ca (${employee.overtimeHours || 0} giờ × hệ số 150%)
+            </td>
+            <td style="text-align: center; font-family: monospace;">${employee.overtimeHours || 0} giờ</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #c2410c;">${formatNumberOnly(employee.overtimePay || 0)}</td>
+          </tr>
+          ${respHtml}
+          ${projHtml}
+          ${mealHtml}
+          ${travelHtml}
+          ${kpiHtml}
+          <tr class="subtotal-row">
+            <td colspan="2" style="text-align: right; text-transform: uppercase; color: #000000; font-weight: 800;">
+              TỔNG THU NHẬP (B):
+            </td>
+            <td colspan="2" style="text-align: right; font-family: monospace; font-weight: 900; color: #0f3d64; font-size: 10.5pt;">
+              ${formatNumberOnly(employee.totalIncome)} đ
+            </td>
+          </tr>
+
+          <!-- PHẦN C: CÁC KHOẢN GIẢM TRỪ VÀ KHẤU TRỪ -->
+          <tr class="section-row-c">
+            <td style="text-align: center;">C</td>
+            <td colspan="2" style="text-transform: uppercase;">CÁC KHOẢN GIẢM TRỪ VÀ KHẤU TRỪ</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.totalDeductions)}</td>
+          </tr>
+          ${insHtml}
+          ${unionHtml}
+          ${taxHtml}
+          <tr>
+            <td style="text-align: center; font-weight: bold;">${++cStt}</td>
+            <td style="padding-left: 14px;">Tạm ứng tiền lương trong kỳ</td>
+            <td style="text-align: center; color: #475569;">—</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">
+              ${formatNumberOnly(employee.advancePayment || 0)}
+            </td>
+          </tr>
+          <tr class="subtotal-row">
+            <td colspan="2" style="text-align: right; text-transform: uppercase; color: #991b1b; font-weight: 800;">
+              TỔNG KHẤU TRỪ (C):
+            </td>
+            <td colspan="2" style="text-align: right; font-family: monospace; font-weight: 900; color: #991b1b; font-size: 10.5pt;">
+              ${formatNumberOnly(employee.totalDeductions)} đ
+            </td>
+          </tr>
+
+          <!-- HÀNG THỰC LĨNH CHI TRẢ ĐẶC TRƯNG CHUẨN PHIẾU LƯƠNG -->
+          <tr class="net-salary-row">
+            <td style="text-align: center; font-size: 10pt; font-weight: 900;">★</td>
+            <td colspan="2" style="text-transform: uppercase; font-size: 10.5pt; font-weight: 900; letter-spacing: 0.5px; padding: 8px 10px;">
+              THỰC LĨNH CHI TRẢ (B - C)
+            </td>
+            <td style="text-align: right; font-family: monospace; font-size: 13.5pt; font-weight: 900; color: #f0fdf4; padding: 8px 10px;">
+              ${formatNumberOnly(employee.netSalary)} đ
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Số tiền bằng chữ -->
+      <div class="words-box">
+        <span style="font-weight: 800; color: #000000;">Số tiền bằng chữ: </span>
+        <span style="font-style: italic; font-weight: 700; color: #0f3d64;">${numberToVietnameseWords(employee.netSalary)}</span>
+      </div>
+
+      <!-- 4 Chữ ký xác nhận chuẩn mẫu kế toán xây dựng -->
+      <div style="margin-top: 8px; text-align: right; font-style: italic; font-size: 8.5pt; color: #1e293b; font-weight: 600;">
+        Tp. Hồ Chí Minh, ngày ${printDay} tháng ${printMonth} năm ${printYear}
+      </div>
+
+      <div class="signatures">
+        <div>
+          <div class="sig-title">Người lập phiếu</div>
+          <div class="sig-note">(Ký, họ tên)</div>
+          <div class="sig-space"></div>
+          <div class="sig-name">Nguyễn Thanh Thúy</div>
+        </div>
+        <div>
+          <div class="sig-title">Tổ trưởng / Chỉ huy</div>
+          <div class="sig-note">(Ký, họ tên)</div>
+          <div class="sig-space"></div>
+          <div class="sig-name">Trần Anh Minh</div>
+        </div>
+        <div>
+          <div class="sig-title">Kế toán trưởng / ĐD</div>
+          <div class="sig-note">(Ký, đóng dấu)</div>
+          <div class="sig-space"></div>
+          <div class="sig-name">Nguyễn Thanh Thúy</div>
+        </div>
+        <div>
+          <div class="sig-title">Người nhận tiền</div>
+          <div class="sig-note">(Ký, ghi rõ họ tên)</div>
+          <div class="sig-space"></div>
+          <div class="sig-name" style="text-transform: uppercase;">${employee.fullName}</div>
+        </div>
+      </div>
+
+      <div class="payslip-footer">
+        <span>Công Ty TNHH Xây Dựng- Cơ Điện Phúc Nguyên &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- https://pncons.com.vn</span>
+        <span>1/1</span>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
+
+export function printPermanentEmployeeReceipt(
+  employee: Employee,
+  config: CompanyConfig,
+  onBlocked?: () => void
+): void {
+  const htmlContent = generatePermanentEmployeeReceiptHTML(employee, config);
+
+  const printFrame = document.createElement('iframe');
+  printFrame.style.position = 'fixed';
+  printFrame.style.left = '-9999px';
+  printFrame.style.top = '0';
+  printFrame.style.width = '800px';
+  printFrame.style.height = '1120px';
+  printFrame.style.border = '0';
+  printFrame.style.opacity = '0';
+  printFrame.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(printFrame);
+
+  const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+  if (!frameDoc) {
+    onBlocked?.();
+    return;
+  }
+
+  frameDoc.open();
+  frameDoc.write(htmlContent);
+  frameDoc.close();
+
+  setTimeout(() => {
+    try {
+      printFrame.contentWindow?.focus();
+      printFrame.contentWindow?.print();
+    } catch (e) {
+      console.warn('Iframe print error:', e);
+      try {
+        window.print();
+      } catch (wErr) {
+        onBlocked?.();
+      }
+    } finally {
+      setTimeout(() => {
+        if (document.body.contains(printFrame)) {
+          document.body.removeChild(printFrame);
+        }
+      }, 3000);
+    }
+  }, 450);
+}
+
+export function openPermanentEmployeeReceiptInNewTab(
+  employee: Employee,
+  config: CompanyConfig
+): boolean {
+  const htmlContent = generatePermanentEmployeeReceiptHTML(employee, config);
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const newWin = window.open(url, '_blank');
+  if (newWin) {
+    newWin.onload = () => {
+      setTimeout(() => {
+        try {
+          newWin.focus();
+          newWin.print();
+        } catch (e) {
+          console.warn('Auto print in new window:', e);
+        }
+      }, 400);
+    };
+    return true;
+  }
+  return false;
+}
+
+export function downloadPermanentEmployeeReceiptHTML(
+  employee: Employee,
+  config: CompanyConfig
+): void {
+  const htmlContent = generatePermanentEmployeeReceiptHTML(employee, config);
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Phieu_Thanh_Toan_${employee.code}_${employee.fullName.replace(/\s+/g, '_')}.html`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
