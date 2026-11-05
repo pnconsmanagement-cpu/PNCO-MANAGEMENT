@@ -156,7 +156,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       const synced = syncSeasonalWorkerForMonth(
         {
           ...w,
-          ...(unifiedRate > 0 ? { dailyRate: unifiedRate } : {}),
+          dailyRate: unifiedRate,
           bankAccount,
           bankName,
           paymentMethod,
@@ -164,8 +164,8 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         currentMonth,
         currentYear
       );
-      const rateToUse = unifiedRate > 0 ? unifiedRate : synced.dailyRate || 0;
-      const adv = w.advancePayment || synced.advancePayment || 0;
+      const rateToUse = unifiedRate;
+      const adv = w.advancePayment ?? synced.advancePayment ?? 0;
       const recalculated = recomputeSeasonalWorkerPayroll({
         ...synced,
         dailyRate: rateToUse,
@@ -1591,15 +1591,18 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                             type="number"
                             step="10000"
                             min="0"
-                            value={w.dailyRate || 0}
+                            placeholder="0"
+                            value={w.dailyRate ? w.dailyRate : ''}
                             onChange={(e) => {
-                              const newRate = Math.max(0, Number(e.target.value) || 0);
+                              const rawVal = e.target.value;
+                              const newRate = rawVal === '' ? 0 : Math.max(0, Number(rawVal) || 0);
                               const baseWorker =
                                 seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
                               onUpdateSeasonalWorker({
                                 ...baseWorker,
                                 dailyRate: newRate,
-                              });
+                                dailyRateUpdatedAt: Date.now(),
+                              } as SeasonalWorker);
                             }}
                             className="w-24 text-right font-mono font-bold text-slate-800 bg-white border border-slate-200 hover:border-amber-400 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors"
                             title="Sửa đơn giá ngày (tự động đồng bộ sang Danh sách thời vụ & mọi kỳ lương)"

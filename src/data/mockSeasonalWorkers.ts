@@ -471,22 +471,18 @@ export function buildSeasonalMonthlyAttendanceRecord(
  * sang Danh Sách Thời Vụ, Bản Chấm Công và Bản Lương cho bất kỳ Tháng/Năm nào.
  */
 export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
-  if ((worker as any).dailyRateUpdatedAt && worker.dailyRate && worker.dailyRate > 0) {
-    return worker.dailyRate;
+  if ((worker as any).dailyRateUpdatedAt !== undefined && typeof worker.dailyRate === 'number') {
+    return Math.max(0, worker.dailyRate);
   }
-  const candidateRates: number[] = [];
-  if (worker.dailyRate && worker.dailyRate > 0) {
-    candidateRates.push(worker.dailyRate);
+  if (typeof worker.dailyRate === 'number' && worker.dailyRate > 0) {
+    return worker.dailyRate;
   }
   if (worker.periodRecords) {
     for (const rec of Object.values(worker.periodRecords)) {
       if (rec && rec.dailyRate && rec.dailyRate > 0) {
-        candidateRates.push(rec.dailyRate);
+        return rec.dailyRate;
       }
     }
-  }
-  if (candidateRates.length > 0) {
-    return Math.max(...candidateRates);
   }
   return 0;
 }
@@ -500,7 +496,7 @@ function syncPeriodRecordsDailyRate(
   Object.keys(records).forEach((key) => {
     const rec = records[key];
     if (!rec) return;
-    const rate = unifiedRate > 0 ? unifiedRate : rec.dailyRate || 0;
+    const rate = typeof unifiedRate === 'number' ? unifiedRate : rec.dailyRate || 0;
     const workDays = Number(rec.actualWorkDays || 0);
     const otHours = Number(rec.overtimeHours || 0);
     const salaryByDays = Math.round(rate * workDays);
