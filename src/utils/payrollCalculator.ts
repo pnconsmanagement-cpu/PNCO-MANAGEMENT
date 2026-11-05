@@ -257,7 +257,7 @@ export function buildMonthlyAttendanceRecord(
     totalWorkDays: summary.totalCong,
     totalOtHours: summary.totalOT,
     days,
-    lastSubmittedAt: new Date().toISOString(),
+    lastSubmittedAt: '2026-09-01T00:00:00.000Z',
     submittedBy: 'ADMIN',
   };
 }

@@ -24,6 +24,8 @@ import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { MobileAttendanceApp } from './components/MobileAttendanceApp';
 import {
   isSupabaseConfigured,
+  getSupabaseConfig,
+  setSupabaseConfig,
   loadCompanyConfigFromSupabase,
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
@@ -41,6 +43,8 @@ import {
   subscribeToSupabaseRealtime,
   autoApplyUrlConfig,
   getLastSyncedTime,
+  isValidDailyAttendanceMap,
+  materializeSeasonalMonthlyAttendance,
 } from './services/supabaseService';
 import { initialCompanyConfig, initialEmployees } from './data/mockPayrollData';
 import {
@@ -71,21 +75,46 @@ import {
 // Tự động kiểm tra URL chia sẻ cấu hình nếu có
 autoApplyUrlConfig();
 
+const DEFAULT_MOCK_TIMESTAMP = '2026-09-01T00:00:00.000Z';
+const INITIAL_SEASONAL_CODES = new Set(initialSeasonalWorkers.map((w) => w.code));
+
+function isUnmodifiedMockSeasonalWorker(w: SeasonalWorker): boolean {
+  if (!INITIAL_SEASONAL_CODES.has(w.code)) return false;
+  if ((w as any).dailyRateUpdatedAt || (w as any).bankUpdatedAt) return false;
+  const initW = initialSeasonalWorkers.find((iw) => iw.code === w.code);
+  if (!initW) return false;
+  if (w.fullName !== initW.fullName || w.project !== initW.project) return false;
+  const mAtt = w.monthlyAttendance || {};
+  for (const rec of Object.values(mAtt)) {
+    if (rec && rec.lastSubmittedAt && rec.lastSubmittedAt !== DEFAULT_MOCK_TIMESTAMP) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Hàm gộp cấu hình từ Cloud/Server nhưng LUÔN GIỮ NGUYÊN tháng/năm đang xem của người dùng
 function mergeRemoteConfigPreservingPeriod(
   currentCfg: CompanyConfig,
   remoteCfg?: CompanyConfig | null
 ): CompanyConfig {
-  if (!remoteCfg) return currentCfg;
+  if (remoteCfg && (remoteCfg as any).supabaseUrl && (remoteCfg as any).supabaseAnonKey && !isSupabaseConfigured()) {
+    setSupabaseConfig((remoteCfg as any).supabaseUrl, (remoteCfg as any).supabaseAnonKey);
+  }
+  const sbCfg = getSupabaseConfig();
+  const base = remoteCfg ? { ...remoteCfg } : { ...currentCfg };
   return {
-    ...remoteCfg,
+    ...base,
     month: currentCfg.month,
     year: currentCfg.year,
     period: currentCfg.period,
     periodCode: currentCfg.periodCode,
     paymentDate: currentCfg.paymentDate,
-    standardWorkDays: remoteCfg.standardWorkDays || currentCfg.standardWorkDays || 26,
-  };
+    standardWorkDays: remoteCfg?.standardWorkDays || currentCfg.standardWorkDays || 26,
+    ...(sbCfg.url && sbCfg.anonKey
+      ? { supabaseUrl: sbCfg.url, supabaseAnonKey: sbCfg.anonKey }
+      : {}),
+  } as CompanyConfig;
 }
 
 // Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng)
@@ -569,6 +598,205 @@ export default function App() {
     } catch {}
   };
 
+  // Hợp nhất danh sách công nhân thời vụ giữa máy hiện tại và Cloud/Server, bảo toàn 100% dữ liệu chấm công các tháng
+  const mergeSeasonalListsPreservingAttendance = (
+    localList: SeasonalWorker[],
+    cloudList: SeasonalWorker[],
+    activeMonth: number,
+    activeYear: number,
+    periodCodeStr?: string
+  ): { mergedList: SeasonalWorker[]; needsPushToCloud: boolean } => {
+    const localMap = new Map<string, SeasonalWorker>();
+    const resultMap = new Map<string, SeasonalWorker>();
+    let needsPushToCloud = false;
+
+    localList.forEach((rawW) => {
+      const w = materializeSeasonalMonthlyAttendance(rawW, periodCodeStr);
+      const key = w.code || w.id;
+      localMap.set(key, w);
+      // Chỉ giữ sẵn những công nhân thực tế của người dùng (không giữ 12 công nhân mẫu mặc định nếu Cloud đã có danh sách riêng)
+      if (!isUnmodifiedMockSeasonalWorker(w)) {
+        resultMap.set(key, w);
+      }
+    });
+
+    const cloudKeys = new Set<string>();
+    cloudList.forEach((rawCw) => {
+      const cw = materializeSeasonalMonthlyAttendance(rawCw, periodCodeStr);
+      const key = cw.code || cw.id;
+      cloudKeys.add(key);
+      const existing = localMap.get(key);
+
+      if (existing) {
+        const mergedMonthly: Record<string, any> = { ...(existing.monthlyAttendance || {}) };
+
+        // Kiểm tra xem ở máy hiện tại có tháng nào đã chấm công thật mà trên Cloud chưa có hoặc bị rỗng không
+        Object.entries(existing.monthlyAttendance || {}).forEach(([mKey, exRec]) => {
+          if (!exRec) return;
+          const exIsDefault = exRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
+          const exWork = Number(exRec.totalWorkDays || 0);
+          const exOt = Number(exRec.totalOtHours || 0);
+          const cRec = cw.monthlyAttendance?.[mKey];
+          const cWork = Number(cRec?.totalWorkDays || 0);
+          const cOt = Number(cRec?.totalOtHours || 0);
+          if (!exIsDefault && (exWork > 0 || exOt > 0) && (!cRec || (cWork === 0 && cOt === 0))) {
+            needsPushToCloud = true;
+          }
+        });
+
+        Object.entries(cw.monthlyAttendance || {}).forEach(([mKey, cRec]) => {
+          if (!cRec) return;
+          const exRec = mergedMonthly[mKey];
+          if (!exRec) {
+            mergedMonthly[mKey] = cRec;
+          } else {
+            const exIsDefault = exRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
+            const cIsDefault = cRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
+            const exTime = exRec.lastSubmittedAt ? new Date(exRec.lastSubmittedAt).getTime() : 0;
+            const cTime = cRec.lastSubmittedAt ? new Date(cRec.lastSubmittedAt).getTime() : 0;
+            const exHasDays = isValidDailyAttendanceMap(exRec.days);
+            const cHasDays = isValidDailyAttendanceMap(cRec.days);
+
+            let chosenRec = cRec;
+            if (exIsDefault && !cIsDefault) {
+              chosenRec = cRec;
+            } else if (!exIsDefault && cIsDefault) {
+              chosenRec = exRec;
+              needsPushToCloud = true;
+            } else if (!cHasDays && exHasDays && Number(exRec.totalWorkDays || 0) > 0) {
+              chosenRec = exRec;
+              needsPushToCloud = true;
+            } else if (exTime > cTime && exHasDays) {
+              chosenRec = exRec;
+              needsPushToCloud = true;
+            } else {
+              chosenRec = cRec;
+            }
+
+            const chosenDays = { ...(chosenRec.days || {}) };
+            let totDays = 0;
+            let totOt = 0;
+            Object.values(chosenDays).forEach((d: any) => {
+              if (!d) return;
+              if (d.statusType === 'LATE') {
+                totDays += Number(d.workUnits || 0) > 0 ? Number(d.workUnits) : 1;
+              } else if (d.statusType !== 'ABSENT' && d.statusType !== 'LEAVE') {
+                totDays += Number(d.workUnits || 0);
+              }
+              totOt += Number(d.otHours || 0);
+            });
+            const finalWorkDays =
+              Object.keys(chosenDays).length > 0
+                ? Math.round(totDays * 10) / 10
+                : Number(chosenRec.totalWorkDays || 0);
+            const finalOtHours =
+              Object.keys(chosenDays).length > 0 ? totOt : Number(chosenRec.totalOtHours || 0);
+
+            mergedMonthly[mKey] = {
+              ...exRec,
+              ...chosenRec,
+              days: chosenDays,
+              totalWorkDays: finalWorkDays,
+              totalOtHours: finalOtHours,
+            };
+          }
+        });
+
+        const exRateTime = Number((existing as any).dailyRateUpdatedAt || 0);
+        const cwRateTime = Number((cw as any).dailyRateUpdatedAt || 0);
+        const resolvedDailyRate =
+          exRateTime > cwRateTime && existing.dailyRate > 0
+            ? existing.dailyRate
+            : cwRateTime > exRateTime && cw.dailyRate > 0
+            ? cw.dailyRate
+            : Math.max(Number(existing.dailyRate || 0), Number(cw.dailyRate || 0));
+
+        const mergedPeriodRecs: Record<string, any> = {
+          ...(existing.periodRecords || {}),
+          ...(cw.periodRecords || {}),
+        };
+        if (resolvedDailyRate > 0) {
+          Object.keys(mergedPeriodRecs).forEach((pKey) => {
+            const r = mergedPeriodRecs[pKey];
+            if (!r) return;
+            const sByDays = Math.round(resolvedDailyRate * Number(r.actualWorkDays || 0));
+            const otPay = Math.round((resolvedDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+            const totInc =
+              sByDays +
+              otPay +
+              Number(r.mealAllowance || 0) +
+              Number(r.travelSafetyAllowance || 0) +
+              Number(r.otherBonus || 0);
+            const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+            const totDed = tax + Number(r.advancePayment || 0);
+            mergedPeriodRecs[pKey] = {
+              ...r,
+              dailyRate: resolvedDailyRate,
+              salaryByDays: sByDays,
+              overtimePay: otPay,
+              totalIncome: totInc,
+              personalIncomeTax: tax,
+              totalDeductions: totDed,
+              netSalary: totInc - totDed,
+            };
+          });
+        }
+
+        const exBankTime = Number((existing as any).bankUpdatedAt || 0);
+        const cwBankTime = Number((cw as any).bankUpdatedAt || 0);
+        const resolvedBankAccount =
+          exBankTime > cwBankTime
+            ? (existing.bankAccount || '')
+            : cwBankTime > exBankTime
+            ? (cw.bankAccount || '')
+            : (cw.bankAccount || existing.bankAccount || '');
+        const resolvedBankName =
+          exBankTime > cwBankTime
+            ? (existing.bankName || '')
+            : cwBankTime > exBankTime
+            ? (cw.bankName || '')
+            : (cw.bankName || existing.bankName || 'Vietcombank');
+        const resolvedPaymentMethod =
+          exBankTime > cwBankTime
+            ? (existing.paymentMethod || 'BANK')
+            : cwBankTime > exBankTime
+            ? (cw.paymentMethod || 'BANK')
+            : (cw.paymentMethod || existing.paymentMethod || 'BANK');
+
+        resultMap.set(key, {
+          ...existing,
+          ...cw,
+          bankAccount: resolvedBankAccount,
+          bankName: resolvedBankName,
+          paymentMethod: resolvedPaymentMethod,
+          ...(Math.max(exBankTime, cwBankTime) > 0
+            ? { bankUpdatedAt: Math.max(exBankTime, cwBankTime) }
+            : {}),
+          dailyRate: resolvedDailyRate > 0 ? resolvedDailyRate : cw.dailyRate || existing.dailyRate,
+          ...(Math.max(exRateTime, cwRateTime) > 0
+            ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
+            : {}),
+          actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
+          overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
+          monthlyAttendance: mergedMonthly,
+          periodRecords: mergedPeriodRecs,
+        } as SeasonalWorker);
+      } else {
+        resultMap.set(key, cw);
+      }
+    });
+
+    // Kiểm tra xem có công nhân thực tế nào ở máy hiện tại chưa có trên Cloud không
+    resultMap.forEach((_, key) => {
+      if (!cloudKeys.has(key)) {
+        needsPushToCloud = true;
+      }
+    });
+
+    const mergedList = cleanSeasonalList(Array.from(resultMap.values()), activeMonth, activeYear);
+    return { mergedList, needsPushToCloud };
+  };
+
   // Hàm tải dữ liệu mới nhất từ Supabase Cloud và áp dụng an toàn vào ứng dụng (không kích hoạt auto-save ngược lại)
   const reloadLatestFromCloud = async (options?: { silent?: boolean }) => {
     if (!isSupabaseConfigured()) return;
@@ -589,123 +817,19 @@ export default function App() {
       }
 
       let nextSea = seasonalWorkers;
+      let shouldPushBackSeasonal = false;
       if (cloudSea && cloudSea.length > 0) {
-        const map = new Map<string, SeasonalWorker>();
-        seasonalWorkers.forEach((w) => map.set(w.code || w.id, w));
-        cloudSea.forEach((cw) => {
-          const key = cw.code || cw.id;
-          const existing = map.get(key);
-          if (existing) {
-            const mergedMonthly = { ...(existing.monthlyAttendance || {}) };
-            Object.entries(cw.monthlyAttendance || {}).forEach(([mKey, cRec]) => {
-              const exRec = mergedMonthly[mKey];
-              if (!exRec) {
-                mergedMonthly[mKey] = cRec;
-              } else {
-                const exTime = exRec.lastSubmittedAt ? new Date(exRec.lastSubmittedAt).getTime() : 0;
-                const cTime = cRec.lastSubmittedAt ? new Date(cRec.lastSubmittedAt).getTime() : 0;
-                // Chọn bản ghi mới hơn thay vì gộp nông { ...exRec.days, ...cRec.days } để các ngày đã xóa không bị phục hồi lại
-                const chosenRec = cTime >= exTime ? cRec : exRec;
-                const chosenDays = { ...(chosenRec.days || {}) };
-                let totDays = 0;
-                let totOt = 0;
-                Object.values(chosenDays).forEach((d: any) => {
-                  totDays += Number(d.workUnits || 0);
-                  totOt += Number(d.otHours || 0);
-                });
-                mergedMonthly[mKey] = {
-                  ...exRec,
-                  ...chosenRec,
-                  days: chosenDays,
-                  totalWorkDays: Math.round(totDays * 10) / 10,
-                  totalOtHours: totOt,
-                };
-              }
-            });
-
-            const exRateTime = Number((existing as any).dailyRateUpdatedAt || 0);
-            const cwRateTime = Number((cw as any).dailyRateUpdatedAt || 0);
-            const resolvedDailyRate =
-              exRateTime > cwRateTime && existing.dailyRate > 0
-                ? existing.dailyRate
-                : cwRateTime > exRateTime && cw.dailyRate > 0
-                ? cw.dailyRate
-                : Math.max(Number(existing.dailyRate || 0), Number(cw.dailyRate || 0));
-            const mergedPeriodRecs: Record<string, any> = {
-              ...(existing.periodRecords || {}),
-              ...(cw.periodRecords || {}),
-            };
-            if (resolvedDailyRate > 0) {
-              Object.keys(mergedPeriodRecs).forEach((pKey) => {
-                const r = mergedPeriodRecs[pKey];
-                if (!r) return;
-                const sByDays = Math.round(resolvedDailyRate * Number(r.actualWorkDays || 0));
-                const otPay = Math.round((resolvedDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
-                const totInc =
-                  sByDays +
-                  otPay +
-                  Number(r.mealAllowance || 0) +
-                  Number(r.travelSafetyAllowance || 0) +
-                  Number(r.otherBonus || 0);
-                const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
-                const totDed = tax + Number(r.advancePayment || 0);
-                mergedPeriodRecs[pKey] = {
-                  ...r,
-                  dailyRate: resolvedDailyRate,
-                  salaryByDays: sByDays,
-                  overtimePay: otPay,
-                  totalIncome: totInc,
-                  personalIncomeTax: tax,
-                  totalDeductions: totDed,
-                  netSalary: totInc - totDed,
-                };
-              });
-            }
-
-            const exBankTime = Number((existing as any).bankUpdatedAt || 0);
-            const cwBankTime = Number((cw as any).bankUpdatedAt || 0);
-            const resolvedBankAccount =
-              exBankTime > cwBankTime
-                ? (existing.bankAccount || '')
-                : cwBankTime > exBankTime
-                ? (cw.bankAccount || '')
-                : (cw.bankAccount || existing.bankAccount || '');
-            const resolvedBankName =
-              exBankTime > cwBankTime
-                ? (existing.bankName || '')
-                : cwBankTime > exBankTime
-                ? (cw.bankName || '')
-                : (cw.bankName || existing.bankName || 'Vietcombank');
-            const resolvedPaymentMethod =
-              exBankTime > cwBankTime
-                ? (existing.paymentMethod || 'BANK')
-                : cwBankTime > exBankTime
-                ? (cw.paymentMethod || 'BANK')
-                : (cw.paymentMethod || existing.paymentMethod || 'BANK');
-
-            map.set(key, {
-              ...existing,
-              ...cw,
-              bankAccount: resolvedBankAccount,
-              bankName: resolvedBankName,
-              paymentMethod: resolvedPaymentMethod,
-              ...(Math.max(exBankTime, cwBankTime) > 0
-                ? { bankUpdatedAt: Math.max(exBankTime, cwBankTime) }
-                : {}),
-              dailyRate: resolvedDailyRate > 0 ? resolvedDailyRate : cw.dailyRate || existing.dailyRate,
-              ...(Math.max(exRateTime, cwRateTime) > 0
-                ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
-                : {}),
-              actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
-              overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
-              monthlyAttendance: mergedMonthly,
-              periodRecords: mergedPeriodRecs,
-            } as SeasonalWorker);
-          } else {
-            map.set(key, cw);
-          }
-        });
-        nextSea = Array.from(map.values()).map((w) => syncSeasonalWorkerForMonth(w, curM, curY));
+        const mergedRes = mergeSeasonalListsPreservingAttendance(
+          seasonalWorkers,
+          cloudSea,
+          curM,
+          curY,
+          curPeriod
+        );
+        nextSea = mergedRes.mergedList;
+        shouldPushBackSeasonal = mergedRes.needsPushToCloud;
+      } else if (seasonalWorkers.length > 0) {
+        shouldPushBackSeasonal = true;
       }
 
       const nextCfg = mergeRemoteConfigPreservingPeriod(config, cloudCfg);
@@ -719,6 +843,14 @@ export default function App() {
               nextCfg.standardWorkDays || 26
             )
           : employees;
+
+      // Nếu máy hiện tại có dữ liệu chấm công / công nhân mới hơn chưa có trên Cloud -> tự động đồng bộ ngay lên Supabase
+      if (shouldPushBackSeasonal) {
+        syncSeasonalWorkersToSupabase(nextSea, curPeriod).catch(() => {});
+      }
+
+      // Đồng bộ luôn sang máy chủ cục bộ để 2 kênh khớp nhau 100%
+      saveAllToServer(nextCfg, nextEmp, nextSea).catch(() => {});
 
       // So sánh với snapshot hiện tại: nếu giống hệt, DỪNG NGAY KHÔNG GÂY LẶP VÀ KHÔNG GÂY TREO APP
       const newSnapshot = serializeDataSnapshot(nextCfg, nextEmp, nextSea);
@@ -775,9 +907,24 @@ export default function App() {
         if (!isMounted) return;
 
         if (serverData && serverData.lastUpdated > 0) {
+          const wasSupabaseConfigured = isSupabaseConfigured();
           const curM = activeMonthRef.current;
           const curY = activeYearRef.current;
           const nextCfg = mergeRemoteConfigPreservingPeriod(config, serverData.config);
+
+          // Nếu máy chủ vừa cung cấp thông tin kết nối Supabase cho máy tính mới này -> tải ngay từ Supabase Cloud!
+          if (!wasSupabaseConfigured && isSupabaseConfigured()) {
+            setConfig(nextCfg);
+            localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
+            await reloadLatestFromCloud();
+            return;
+          }
+
+          // Nếu đã cấu hình Supabase Cloud thì ưu tiên dữ liệu từ Supabase Cloud, không để dữ liệu mẫu trên server ghi đè
+          if (isSupabaseConfigured()) {
+            return;
+          }
+
           const nextEmps =
             serverData.employees && serverData.employees.length > 0
               ? mergeEmployeeListsPreservingAttendance(
@@ -790,7 +937,13 @@ export default function App() {
               : employees;
           const nextSeas =
             serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-              ? cleanSeasonalList(serverData.seasonalWorkers, curM, curY)
+              ? mergeSeasonalListsPreservingAttendance(
+                  seasonalWorkers,
+                  serverData.seasonalWorkers,
+                  curM,
+                  curY,
+                  nextCfg.periodCode
+                ).mergedList
               : seasonalWorkers;
 
           const initSnap = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
@@ -836,7 +989,13 @@ export default function App() {
           : employees;
       const nextSeas =
         serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0
-          ? cleanSeasonalList(serverData.seasonalWorkers, curM, curY)
+          ? mergeSeasonalListsPreservingAttendance(
+              seasonalWorkers,
+              serverData.seasonalWorkers,
+              curM,
+              curY,
+              nextCfg.periodCode
+            ).mergedList
           : seasonalWorkers;
 
       const snapshot = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
@@ -890,6 +1049,7 @@ export default function App() {
         }
 
         let hasAnyDataOnCloud = false;
+        let shouldPushSeasonalToCloud = false;
 
         const nextCfg = mergeRemoteConfigPreservingPeriod(config, cloudCfg);
         const nextEmps =
@@ -902,10 +1062,21 @@ export default function App() {
                 nextCfg.standardWorkDays || 26
               )
             : employees;
-        const nextSeas =
-          cloudSea && cloudSea.length > 0
-            ? cleanSeasonalList(cloudSea, curM, curY)
-            : seasonalWorkers;
+
+        let nextSeas = seasonalWorkers;
+        if (cloudSea && cloudSea.length > 0) {
+          const mergedRes = mergeSeasonalListsPreservingAttendance(
+            seasonalWorkers,
+            cloudSea,
+            curM,
+            curY,
+            nextCfg.periodCode
+          );
+          nextSeas = mergedRes.mergedList;
+          shouldPushSeasonalToCloud = mergedRes.needsPushToCloud;
+        } else if (seasonalWorkers.length > 0) {
+          shouldPushSeasonalToCloud = true;
+        }
 
         if (cloudCfg) {
           setConfig(nextCfg);
@@ -927,7 +1098,10 @@ export default function App() {
         lastSavedSnapshotRef.current = snapshot;
         lastServerSnapshotRef.current = snapshot;
 
-        if (!hasAnyDataOnCloud) {
+        // Cập nhật sang máy chủ cục bộ để đồng nhất 100%
+        saveAllToServer(nextCfg, nextEmps, nextSeas).catch(() => {});
+
+        if (!hasAnyDataOnCloud || shouldPushSeasonalToCloud) {
           const report = await syncAllDataToSupabase(nextCfg, nextEmps, nextSeas);
           if (report.success) {
             setCloudSyncStatus('synced');
@@ -1239,37 +1413,67 @@ export default function App() {
     }
   };
 
-  // Nút cưỡng bức làm mới / đồng bộ ngay tức thì
+  // Nút cưỡng bức làm mới & đẩy đồng bộ 2 chiều ngay tức thì lên Supabase Cloud + Máy chủ
   const handleManualForceSync = async () => {
     setCloudSyncStatus('syncing');
     try {
-      const curM = config.month || realDateInfo.realMonth;
-      const curY = config.year || realDateInfo.realYear;
-      const serverData = await fetchServerData();
-      if (serverData && serverData.lastUpdated > 0) {
-        if (serverData.config) {
-          setConfig((prev) => mergeRemoteConfigPreservingPeriod(prev, serverData.config));
-        }
-        if (serverData.employees && serverData.employees.length > 0) {
-          setEmployees((prev) =>
-            mergeEmployeeListsPreservingAttendance(
-              prev,
-              serverData.employees,
-              curM,
-              curY,
-              config.standardWorkDays || 26
-            )
-          );
-        }
-        if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
-          setSeasonalWorkers(cleanSeasonalList(serverData.seasonalWorkers, curM, curY));
-        }
-        setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
-      }
+      const sbCfg = getSupabaseConfig();
+      const cfgToSync: CompanyConfig = {
+        ...config,
+        ...(sbCfg.url && sbCfg.anonKey
+          ? { supabaseUrl: sbCfg.url, supabaseAnonKey: sbCfg.anonKey }
+          : {}),
+      } as CompanyConfig;
+
       if (isSupabaseConfigured()) {
+        // 1. Đẩy và hợp nhất toàn bộ dữ liệu chấm công từ máy hiện tại lên Supabase trước
+        await syncAllDataToSupabase(
+          cfgToSync,
+          employees,
+          seasonalWorkers,
+          teamWorkers,
+          projects,
+          salaryAdvances
+        );
+        // 2. Tải lại trạng thái chuẩn nhất từ Supabase Cloud về máy
         await reloadLatestFromCloud();
+        notifyCrossTab();
+      } else {
+        const curM = config.month || realDateInfo.realMonth;
+        const curY = config.year || realDateInfo.realYear;
+        await saveAllToServer(cfgToSync, employees, seasonalWorkers);
+        const serverData = await fetchServerData();
+        if (serverData && serverData.lastUpdated > 0) {
+          if (serverData.config) {
+            setConfig((prev) => mergeRemoteConfigPreservingPeriod(prev, serverData.config));
+          }
+          if (serverData.employees && serverData.employees.length > 0) {
+            setEmployees((prev) =>
+              mergeEmployeeListsPreservingAttendance(
+                prev,
+                serverData.employees,
+                curM,
+                curY,
+                config.standardWorkDays || 26
+              )
+            );
+          }
+          if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
+            setSeasonalWorkers(
+              mergeSeasonalListsPreservingAttendance(
+                seasonalWorkers,
+                serverData.seasonalWorkers,
+                curM,
+                curY,
+                config.periodCode
+              ).mergedList
+            );
+          }
+          setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
+        }
       }
       setCloudSyncStatus('synced');
+      setLastSyncedText(getLastSyncedTime() || getServerLastSyncedTime());
     } catch {
       setCloudSyncStatus('error');
     }
@@ -1944,6 +2148,9 @@ export default function App() {
                       }}
                       forcedGroup="PERMANENT"
                       seasonalCount={syncedSeasonalWorkers.length}
+                      onManualSync={handleManualForceSync}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                      cloudSyncStatus={cloudSyncStatus}
                     />
                   )}
 
@@ -2150,6 +2357,9 @@ export default function App() {
                       }}
                       forcedGroup="SEASONAL"
                       seasonalCount={syncedSeasonalWorkers.length}
+                      onManualSync={handleManualForceSync}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                      cloudSyncStatus={cloudSyncStatus}
                     />
                   )}
 

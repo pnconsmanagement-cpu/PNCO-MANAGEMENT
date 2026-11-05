@@ -35,6 +35,7 @@ import {
   fetchSalaryAdvancesFromSupabase,
   getLastSyncedTime,
   getShareableConfigUrl,
+  materializeSeasonalMonthlyAttendance,
   ConnectionHealth,
   FullSyncResult,
 } from '../services/supabaseService';
@@ -275,48 +276,55 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         })),
       ];
 
-      // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records
-      const attendancePayload: AttendanceRecord[] = [
-        ...employees.map((e) => ({
-          id: `ATT-EMP-${config.year}-${config.month}-${e.code}`,
-          workerType: 'PERMANENT' as const,
-          workerCode: e.code,
-          workerName: e.fullName,
-          projectCode: e.department,
-          month: config.month || 9,
-          year: config.year || 2026,
-          periodKey: config.periodCode,
-          totalWorkDays: e.actualWorkDays || 0,
-          totalOtHours: e.overtimeHours || 0,
-          attendanceData: e.monthlyAttendance || {},
-        })),
-        ...seasonalWorkers.map((w) => ({
-          id: `ATT-SEA-${config.year}-${config.month}-${w.code}`,
-          workerType: 'SEASONAL' as const,
-          workerCode: w.code,
-          workerName: w.fullName,
-          projectCode: w.project,
-          month: config.month || 9,
-          year: config.year || 2026,
-          periodKey: config.periodCode,
-          totalWorkDays: w.actualWorkDays || 0,
-          totalOtHours: w.overtimeHours || 0,
-          attendanceData: w.dailyAttendance || {},
-        })),
-        ...teamWorkers.map((t) => ({
-          id: `ATT-TEAM-${config.year}-${config.month}-${t.code}`,
-          workerType: 'TEAM' as const,
-          workerCode: t.code,
-          workerName: t.teamName,
-          projectCode: t.project,
-          month: config.month || 9,
-          year: config.year || 2026,
-          periodKey: config.periodCode,
-          totalWorkDays: t.actualWorkDays || 0,
-          totalOtHours: t.overtimeHours || 0,
-          attendanceData: t.monthlyAttendance || {},
-        })),
-      ];
+      // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records cho TẤT CẢ các tháng đã chấm công
+      const attendancePayload: AttendanceRecord[] = [];
+
+      employees.forEach((e) => {
+        if (e.monthlyAttendance) {
+          Object.entries(e.monthlyAttendance).forEach(([, mRec]: [string, any]) => {
+            if (mRec && mRec.month && mRec.year) {
+              const mStr = String(mRec.month).padStart(2, '0');
+              attendancePayload.push({
+                id: `ATT-EMP-${mRec.year}-${mStr}-${e.code}`,
+                workerType: 'PERMANENT' as const,
+                workerCode: e.code,
+                workerName: e.fullName,
+                projectCode: e.department,
+                month: Number(mRec.month),
+                year: Number(mRec.year),
+                periodKey: `${mStr}/${mRec.year}`,
+                totalWorkDays: Number(mRec.totalWorkDays || 0),
+                totalOtHours: Number(mRec.totalOtHours || 0),
+                attendanceData: mRec.days || {},
+              });
+            }
+          });
+        }
+      });
+
+      seasonalWorkers.forEach((rawW) => {
+        const w = materializeSeasonalMonthlyAttendance(rawW, config.periodCode);
+        if (w.monthlyAttendance) {
+          Object.entries(w.monthlyAttendance).forEach(([, mRec]: [string, any]) => {
+            if (mRec && mRec.month && mRec.year) {
+              const mStr = String(mRec.month).padStart(2, '0');
+              attendancePayload.push({
+                id: `ATT-SEA-${mRec.year}-${mStr}-${w.code}`,
+                workerType: 'SEASONAL' as const,
+                workerCode: w.code,
+                workerName: w.fullName,
+                projectCode: w.project,
+                month: Number(mRec.month),
+                year: Number(mRec.year),
+                periodKey: `${mStr}/${mRec.year}`,
+                totalWorkDays: Number(mRec.totalWorkDays || 0),
+                totalOtHours: Number(mRec.totalOtHours || 0),
+                attendanceData: mRec.days || {},
+              });
+            }
+          });
+        }
+      });
 
       const report = await syncAllDataToSupabase(
         config,

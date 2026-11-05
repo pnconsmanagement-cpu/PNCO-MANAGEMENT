@@ -9,8 +9,114 @@ import {
   PayrollRecord,
   AttendanceRecord,
 } from '../types';
+import { buildSeasonalMonthlyAttendanceRecord } from '../data/mockSeasonalWorkers';
+import { buildMonthlyAttendanceRecord } from '../utils/payrollCalculator';
 
 const env = (import.meta as any).env || {};
+
+/**
+ * Kiểm tra xem object attendance_data có phải là bản đồ ngày công hợp lệ (key từ 1..31) hay không.
+ * Ngăn chặn lỗi ghi đè toàn bộ monthlyAttendance hoặc object rỗng {} lên dữ liệu ngày công thực tế.
+ */
+export const isValidDailyAttendanceMap = (obj: any): boolean => {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return false;
+  return keys.some((k) => {
+    const n = Number(k);
+    if (!Number.isInteger(n) || n < 1 || n > 31) return false;
+    const val = obj[k];
+    return val && typeof val === 'object' && ('workUnits' in val || 'otHours' in val || 'statusType' in val || 'day' in val);
+  });
+};
+
+/**
+ * Đảm bảo mọi dữ liệu ngày công & tăng ca của công nhân thời vụ (từ monthlyAttendance, periodRecords hoặc actualWorkDays)
+ * đều được cụ thể hóa đầy đủ vào monthlyAttendance[monthKey].days để lưu và hiển thị nhất quán trên mọi máy tính.
+ */
+export const materializeSeasonalMonthlyAttendance = (
+  worker: SeasonalWorker,
+  periodCode?: string
+): SeasonalWorker => {
+  const w: SeasonalWorker = {
+    ...worker,
+    monthlyAttendance: { ...(worker.monthlyAttendance || {}) },
+    periodRecords: { ...(worker.periodRecords || {}) },
+  };
+
+  // 1. Phục hồi các tháng trong monthlyAttendance có totalWorkDays > 0 hoặc totalOtHours > 0 nhưng bị mất chi tiết days
+  Object.entries(w.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
+    if (!mRec) return;
+    const mNum = Number(mRec.month || mKey.split('-')[1] || 0);
+    const yNum = Number(mRec.year || mKey.split('-')[0] || 0);
+    if (!mNum || !yNum) return;
+    const workDays = Number(mRec.totalWorkDays || 0);
+    const otHours = Number(mRec.totalOtHours || 0);
+    if ((workDays > 0 || otHours > 0) && !isValidDailyAttendanceMap(mRec.days)) {
+      w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
+        w,
+        mNum,
+        yNum,
+        workDays,
+        otHours,
+        mRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
+      );
+    }
+  });
+
+  // 2. Đồng bộ từ periodRecords (ví dụ: 2026-10_MONTH, 2026-09_MONTH, ...) sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày
+  Object.entries(w.periodRecords || {}).forEach(([pKey, pRec]) => {
+    if (!pRec) return;
+    const match = pKey.match(/^(\d{4})-(\d{2})_(.+)$/);
+    if (!match) return;
+    const yNum = Number(match[1]);
+    const mNum = Number(match[2]);
+    const suffix = match[3];
+    const mKey = `${yNum}-${String(mNum).padStart(2, '0')}`;
+    const workDays = Number(pRec.actualWorkDays || 0);
+    const otHours = Number(pRec.overtimeHours || 0);
+    if (suffix === 'MONTH' && (workDays > 0 || otHours > 0)) {
+      const existing = w.monthlyAttendance![mKey];
+      if (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0)) {
+        w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
+          w,
+          mNum,
+          yNum,
+          workDays,
+          otHours,
+          existing?.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
+        );
+      }
+    }
+  });
+
+  // 3. Nếu công nhân có actualWorkDays > 0 hoặc overtimeHours > 0 ở kỳ hiện tại mà chưa có trong monthlyAttendance
+  if (periodCode && periodCode.includes('/')) {
+    const [pM, pY] = periodCode.split('/').map(Number);
+    if (pM && pY) {
+      const activeMonthKey = `${pY}-${String(pM).padStart(2, '0')}`;
+      const workDays = Number(w.actualWorkDays || 0);
+      const otHours = Number(w.overtimeHours || 0);
+      const existing = w.monthlyAttendance![activeMonthKey];
+      if (
+        (workDays > 0 || otHours > 0) &&
+        (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0))
+      ) {
+        w.monthlyAttendance![activeMonthKey] = buildSeasonalMonthlyAttendanceRecord(
+          w,
+          pM,
+          pY,
+          workDays,
+          otHours,
+          existing?.lastSubmittedAt || new Date().toISOString()
+        );
+      }
+    }
+  }
+
+  return w;
+};
+
 
 /**
  * Tự động phát hiện và áp dụng cấu hình Supabase từ URL hash (#sb_url=...&sb_key=...)
@@ -403,41 +509,94 @@ export const syncEmployeesToSupabase = async (
   }
 
   try {
+    // 1. Tra cứu các dòng hiện có trong bảng employees để đồng nhất ID theo CODE, tránh lỗi duplicate key employees_code_key
+    const existingByCode = new Map<string, { id: string; employee_data?: Employee }>();
+    const existingById = new Map<string, { id: string; employee_data?: Employee }>();
+    try {
+      const { data: existingRows } = await client
+        .from('employees')
+        .select('id, code, employee_data');
+      if (existingRows && Array.isArray(existingRows)) {
+        existingRows.forEach((row: any) => {
+          if (row.code) existingByCode.set(String(row.code).trim(), row);
+          if (row.id) existingById.set(String(row.id).trim(), row);
+        });
+      }
+    } catch {}
+
     const payload = employees.map((emp, idx) => {
       const sortOrder = typeof emp.sortOrder === 'number' ? emp.sortOrder : idx + 1;
-      return {
-        id: String(emp.id || emp.code || `EMP_${idx + 1}`),
-        code: String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`),
-        name: String(emp.fullName || 'Nhân viên'),
-        department: String(emp.department || 'Phòng ban'),
-        position: String(emp.title || ''),
-        phone: String(emp.phone || ''),
-        email: String(emp.email || ''),
-        tax_code: String(emp.taxCode || ''),
-        id_card: String(emp.idCard || ''),
-        bank_account: String(emp.bankAccount || ''),
-        bank_name: String(emp.bankName || ''),
-        join_date: String(emp.joinDate || ''),
-        status: String(emp.status || 'ACTIVE'),
-        base_salary: Number(emp.baseSalary || 0),
-        insurance_salary: Number(emp.insuranceSalary || 0),
-        standard_work_days: Number(emp.standardWorkDays || 26),
-        actual_work_days: Number(emp.actualWorkDays || 0),
-        overtime_hours: Number(emp.overtimeHours || 0),
-        advance_payment: Number(emp.advancePayment || 0),
-        net_salary: Number(emp.netSalary || 0),
-        period_code: String(periodCode || '09/2026'),
-        employee_data: {
-          ...emp,
-          sortOrder,
+      const empCode = String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`).trim();
+      const matched = existingByCode.get(empCode) || existingById.get(String(emp.id || '').trim());
+      const canonicalId = matched?.id ? String(matched.id) : String(emp.id || empCode || `EMP_${idx + 1}`);
+      const existingData = matched?.employee_data;
+
+      // Hợp nhất lịch sử chấm công các tháng
+      const mergedMonthly = { ...(existingData?.monthlyAttendance || {}) };
+      Object.entries(emp.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
+        if (!mRec) return;
+        const oldRec = mergedMonthly[mKey];
+        if (!oldRec) {
+          mergedMonthly[mKey] = mRec;
+        } else {
+          const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
+          const newTs = mRec.lastSubmittedAt ? new Date(mRec.lastSubmittedAt).getTime() : 0;
+          if (newTs >= oldTs || isValidDailyAttendanceMap(mRec.days)) {
+            mergedMonthly[mKey] = mRec;
+          }
+        }
+      });
+
+      const mergedEmp: Employee = {
+        ...(existingData || {}),
+        ...emp,
+        id: canonicalId,
+        code: empCode,
+        sortOrder,
+        monthlyAttendance: mergedMonthly,
+        periodRecords: {
+          ...(existingData?.periodRecords || {}),
+          ...(emp.periodRecords || {}),
         },
+      };
+
+      return {
+        id: canonicalId,
+        code: empCode,
+        name: String(mergedEmp.fullName || 'Nhân viên'),
+        department: String(mergedEmp.department || 'Phòng ban'),
+        position: String(mergedEmp.title || ''),
+        phone: String(mergedEmp.phone || ''),
+        email: String(mergedEmp.email || ''),
+        tax_code: String(mergedEmp.taxCode || ''),
+        id_card: String(mergedEmp.idCard || ''),
+        bank_account: String(mergedEmp.bankAccount || ''),
+        bank_name: String(mergedEmp.bankName || ''),
+        join_date: String(mergedEmp.joinDate || ''),
+        status: String(mergedEmp.status || 'ACTIVE'),
+        base_salary: Number(mergedEmp.baseSalary || 0),
+        insurance_salary: Number(mergedEmp.insuranceSalary || 0),
+        standard_work_days: Number(mergedEmp.standardWorkDays || 26),
+        actual_work_days: Number(mergedEmp.actualWorkDays || 0),
+        overtime_hours: Number(mergedEmp.overtimeHours || 0),
+        advance_payment: Number(mergedEmp.advancePayment || 0),
+        net_salary: Number(mergedEmp.netSalary || 0),
+        period_code: String(periodCode || '09/2026'),
+        employee_data: mergedEmp,
         updated_at: new Date().toISOString(),
       };
     });
 
-    const { error } = await client.from('employees').upsert(payload, {
+    let { error } = await client.from('employees').upsert(payload, {
       onConflict: 'id',
     });
+
+    if (error) {
+      const retryByCode = await client.from('employees').upsert(payload, {
+        onConflict: 'code',
+      });
+      error = retryByCode.error;
+    }
 
     if (error) {
       console.error('Sync employees to Supabase failed:', error);
@@ -448,6 +607,54 @@ export const syncEmployeesToSupabase = async (
         error: error.message,
       };
     }
+
+    // Đồng bộ chi tiết ngày công nhân viên chính thức vào bảng attendance_records
+    try {
+      const existingAttMap = new Map<string, string>();
+      try {
+        const { data: exAtt } = await client
+          .from('attendance_records')
+          .select('id, worker_code, month, year')
+          .eq('worker_type', 'PERMANENT');
+        if (exAtt && Array.isArray(exAtt)) {
+          exAtt.forEach((r: any) => {
+            existingAttMap.set(`${r.worker_code}_${r.year}_${r.month}`, String(r.id));
+          });
+        }
+      } catch {}
+
+      const attPayloads: any[] = [];
+      payload.forEach((p) => {
+        const emp = p.employee_data;
+        if (emp?.monthlyAttendance) {
+          Object.entries(emp.monthlyAttendance).forEach(([, mRec]) => {
+            if (mRec && mRec.month && mRec.year && isValidDailyAttendanceMap(mRec.days)) {
+              const mStr = String(mRec.month).padStart(2, '0');
+              const mapKey = `${p.code}_${mRec.year}_${Number(mRec.month)}`;
+              const canonicalAttId = existingAttMap.get(mapKey) || `ATT-EMP-${mRec.year}-${mStr}-${p.code}`;
+              attPayloads.push({
+                id: canonicalAttId,
+                worker_type: 'PERMANENT',
+                worker_code: p.code,
+                worker_name: p.name,
+                project_code: p.department,
+                month: Number(mRec.month),
+                year: Number(mRec.year),
+                period_key: `${mStr}/${mRec.year}`,
+                total_work_days: Number(mRec.totalWorkDays || 0),
+                total_ot_hours: Number(mRec.totalOtHours || 0),
+                attendance_data: mRec.days || {},
+                updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
+              });
+            }
+          });
+        }
+      });
+      if (attPayloads.length > 0) {
+        await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
+      }
+    } catch {}
+
     return {
       success: true,
       count: payload.length,
@@ -515,21 +722,37 @@ export const loadEmployeesFromSupabase = async (
           const mStr = String(mNum).padStart(2, '0');
           const monthKey = `${yNum}-${mStr}`;
           if (!emp.monthlyAttendance) emp.monthlyAttendance = {};
-          if (
-            att.attendance_data &&
-            typeof att.attendance_data === 'object' &&
-            Object.keys(att.attendance_data).length > 0
-          ) {
-            emp.monthlyAttendance[monthKey] = {
-              monthKey,
-              month: mNum,
-              year: yNum,
-              totalWorkDays: Number(att.total_work_days || 0),
-              totalOtHours: Number(att.total_ot_hours || 0),
-              days: att.attendance_data,
-              lastSubmittedAt: att.updated_at,
-              submittedBy: 'WORKER',
-            };
+
+          // Chỉ ghi nhận nếu attendance_data thực sự là bản đồ ngày công (key 1..31)
+          if (isValidDailyAttendanceMap(att.attendance_data)) {
+            const existingRec = emp.monthlyAttendance[monthKey];
+            const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+            const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
+            if (!existingRec || !isValidDailyAttendanceMap(existingRec.days) || (attTs > 0 && attTs >= existingTs)) {
+              emp.monthlyAttendance[monthKey] = {
+                monthKey,
+                month: mNum,
+                year: yNum,
+                totalWorkDays: Number(att.total_work_days || 0),
+                totalOtHours: Number(att.total_ot_hours || 0),
+                days: att.attendance_data,
+                lastSubmittedAt: att.updated_at,
+                submittedBy: 'WORKER',
+              };
+            }
+          } else if (emp.monthlyAttendance[monthKey] && !isValidDailyAttendanceMap(emp.monthlyAttendance[monthKey].days)) {
+            // Phục hồi nếu trước đó bị lưu nhầm toàn bộ monthlyAttendance vào days
+            const rawDays = emp.monthlyAttendance[monthKey].days as any;
+            if (rawDays && rawDays[monthKey] && isValidDailyAttendanceMap(rawDays[monthKey].days)) {
+              emp.monthlyAttendance[monthKey] = rawDays[monthKey];
+            } else if (Number(emp.monthlyAttendance[monthKey].totalWorkDays || 0) > 0) {
+              emp.monthlyAttendance[monthKey] = buildMonthlyAttendanceRecord(
+                mNum,
+                yNum,
+                Number(emp.monthlyAttendance[monthKey].totalWorkDays || 26),
+                Number(emp.monthlyAttendance[monthKey].totalOtHours || 0)
+              );
+            }
           }
         });
       });
@@ -562,41 +785,115 @@ export const syncSeasonalWorkersToSupabase = async (
   }
 
   try {
+    // 1. Tra cứu các dòng hiện có trong seasonal_workers theo CODE & ID để đồng nhất ID
+    // Tránh tuyệt đối lỗi "duplicate key value violates unique constraint seasonal_workers_code_key" khi lưu hàng loạt!
+    const existingByCode = new Map<string, { id: string; code: string; worker_data?: SeasonalWorker }>();
+    const existingById = new Map<string, { id: string; code: string; worker_data?: SeasonalWorker }>();
+    try {
+      const { data: existingRows } = await client
+        .from('seasonal_workers')
+        .select('id, code, worker_data');
+      if (existingRows && Array.isArray(existingRows)) {
+        existingRows.forEach((row: any) => {
+          if (row.code) existingByCode.set(String(row.code).trim(), row);
+          if (row.id) existingById.set(String(row.id).trim(), row);
+        });
+      }
+    } catch (lookupErr) {
+      console.warn('[Supabase Sync] Lookup existing seasonal_workers warning:', lookupErr);
+    }
+
+    const materializedWorkers: SeasonalWorker[] = [];
+
     const payload = workers.map((w, idx) => {
       const sortOrder = typeof w.sortOrder === 'number' ? w.sortOrder : idx + 1;
-      return {
-        id: String(w.id || `SW_${idx + 1}`),
-        code: String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`),
-        name: String(w.fullName || 'Công nhân'),
-        trade: String(w.trade || ''),
-        skill_level: String(w.skillLevel || ''),
-        project: String(w.project || ''),
-        team: String(w.teamName || ''),
-        phone: String(w.phone || ''),
-        id_card: String(w.idCard || ''),
-        bank_account: String(w.bankAccount || ''),
-        bank_name: String(w.bankName || ''),
-        daily_rate: Number(w.dailyRate || 0),
-        actual_work_days: Number(w.actualWorkDays || 0),
-        overtime_hours: Number(w.overtimeHours || 0),
-        advance_payment: Number(w.advancePayment || 0),
-        has_tax_commitment: Boolean(w.hasTaxCommitment ?? true),
-        payment_method: String(w.paymentMethod || 'BANK'),
-        payroll_cycle_type: String(w.payrollCycleType || '1_WEEK'),
-        status: String(w.status || 'ACTIVE'),
-        net_salary: Number(w.netSalary || 0),
-        period_code: String(periodCode || '09/2026'),
-        worker_data: {
+      const workerCode = String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
+      const matched = existingByCode.get(workerCode) || existingById.get(String(w.id || '').trim());
+      const canonicalId = matched?.id ? String(matched.id) : String(w.id || `SW_${idx + 1}`);
+      const existingData = matched?.worker_data;
+
+      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại
+      const mergedMonthlyAttendance: Record<string, any> = {
+        ...(existingData?.monthlyAttendance || {}),
+      };
+      Object.entries(w.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
+        if (!newRec) return;
+        const oldRec = mergedMonthlyAttendance[mKey];
+        if (!oldRec) {
+          mergedMonthlyAttendance[mKey] = newRec;
+        } else {
+          const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
+          const newHasDays = isValidDailyAttendanceMap(newRec.days);
+          const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+          const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+
+          if (newIsDefault && !oldIsDefault && (oldHasDays || Number(oldRec.totalWorkDays || 0) > 0)) {
+            // Không để dữ liệu mẫu khởi tạo ghi đè lên dữ liệu chấm công thật đã có trên Cloud
+            mergedMonthlyAttendance[mKey] = oldRec;
+          } else {
+            mergedMonthlyAttendance[mKey] = newRec;
+          }
+        }
+      });
+
+      const mergedPeriodRecords = {
+        ...(existingData?.periodRecords || {}),
+        ...(w.periodRecords || {}),
+      };
+
+      const fullWorker = materializeSeasonalMonthlyAttendance(
+        {
+          ...(existingData || {}),
           ...w,
+          id: canonicalId,
+          code: workerCode,
           sortOrder,
+          monthlyAttendance: mergedMonthlyAttendance,
+          periodRecords: mergedPeriodRecords,
         },
+        periodCode
+      );
+
+      materializedWorkers.push(fullWorker);
+
+      return {
+        id: canonicalId,
+        code: workerCode,
+        name: String(fullWorker.fullName || 'Công nhân'),
+        trade: String(fullWorker.trade || ''),
+        skill_level: String(fullWorker.skillLevel || ''),
+        project: String(fullWorker.project || ''),
+        team: String(fullWorker.teamName || ''),
+        phone: String(fullWorker.phone || ''),
+        id_card: String(fullWorker.idCard || ''),
+        bank_account: String(fullWorker.bankAccount || ''),
+        bank_name: String(fullWorker.bankName || ''),
+        daily_rate: Number(fullWorker.dailyRate || 0),
+        actual_work_days: Number(fullWorker.actualWorkDays || 0),
+        overtime_hours: Number(fullWorker.overtimeHours || 0),
+        advance_payment: Number(fullWorker.advancePayment || 0),
+        has_tax_commitment: Boolean(fullWorker.hasTaxCommitment ?? true),
+        payment_method: String(fullWorker.paymentMethod || 'BANK'),
+        payroll_cycle_type: String(fullWorker.payrollCycleType || '1_WEEK'),
+        status: String(fullWorker.status || 'ACTIVE'),
+        net_salary: Number(fullWorker.netSalary || 0),
+        period_code: String(periodCode || '09/2026'),
+        worker_data: fullWorker,
         updated_at: new Date().toISOString(),
       };
     });
 
-    const { error } = await client.from('seasonal_workers').upsert(payload, {
+    let { error } = await client.from('seasonal_workers').upsert(payload, {
       onConflict: 'id',
     });
+
+    if (error) {
+      console.warn('Sync seasonal_workers by id failed, retrying onConflict code:', error.message);
+      const retryByCode = await client.from('seasonal_workers').upsert(payload, {
+        onConflict: 'code',
+      });
+      error = retryByCode.error;
+    }
 
     if (error) {
       console.warn('Sync seasonal_workers full payload failed, trying minimal core payload:', error.message);
@@ -612,9 +909,15 @@ export const syncSeasonalWorkersToSupabase = async (
         worker_data: p.worker_data,
         updated_at: p.updated_at,
       }));
-      const { error: retryErr } = await client.from('seasonal_workers').upsert(minimalPayload, {
+      let { error: retryErr } = await client.from('seasonal_workers').upsert(minimalPayload, {
         onConflict: 'id',
       });
+      if (retryErr) {
+        const retryCodeMin = await client.from('seasonal_workers').upsert(minimalPayload, {
+          onConflict: 'code',
+        });
+        retryErr = retryCodeMin.error;
+      }
       if (retryErr) {
         console.error('Sync seasonal_workers minimal fallback failed:', retryErr);
         return {
@@ -626,17 +929,33 @@ export const syncSeasonalWorkersToSupabase = async (
       }
     }
 
-    // Đồng bộ luôn bảng attendance_records cho các công nhân thời vụ để dữ liệu chấm công (kể cả khi xóa về 0 công) khớp 100%
+    // 2. Đồng bộ luôn bảng attendance_records cho các công nhân thời vụ để dữ liệu chấm công khớp 100%
     try {
+      const existingAttMap = new Map<string, string>();
+      try {
+        const { data: exAtt } = await client
+          .from('attendance_records')
+          .select('id, worker_code, month, year');
+        if (exAtt && Array.isArray(exAtt)) {
+          exAtt.forEach((r: any) => {
+            if (r.worker_code && r.year && r.month) {
+              existingAttMap.set(`${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`, String(r.id));
+            }
+          });
+        }
+      } catch {}
+
       const attPayloads: any[] = [];
-      workers.forEach((w, idx) => {
+      materializedWorkers.forEach((w, idx) => {
         const workerCode = String(w.code || w.id || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
         if (w.monthlyAttendance) {
-          Object.entries(w.monthlyAttendance).forEach(([mKey, mRec]) => {
+          Object.entries(w.monthlyAttendance).forEach(([, mRec]) => {
             if (mRec && mRec.month && mRec.year) {
               const mStr = String(mRec.month).padStart(2, '0');
+              const mapKey = `${workerCode}_${Number(mRec.year)}_${Number(mRec.month)}`;
+              const canonicalAttId = existingAttMap.get(mapKey) || `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
               attPayloads.push({
-                id: `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`,
+                id: canonicalAttId,
                 worker_type: 'SEASONAL',
                 worker_code: workerCode,
                 worker_name: String(w.fullName || 'Công nhân'),
@@ -654,7 +973,10 @@ export const syncSeasonalWorkersToSupabase = async (
         }
       });
       if (attPayloads.length > 0) {
-        await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
+        const { error: attErr } = await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
+        if (attErr) {
+          await client.from('attendance_records').upsert(attPayloads, { onConflict: 'worker_code,month,year' });
+        }
       }
     } catch (attErr) {
       console.warn('[Supabase Sync] Sync seasonal attendance_records warning:', attErr);
@@ -663,7 +985,7 @@ export const syncSeasonalWorkersToSupabase = async (
     return {
       success: true,
       count: payload.length,
-      message: `Đã đồng bộ ${payload.length} công nhân thời vụ lên Supabase.`,
+      message: `Đã đồng bộ ${payload.length} công nhân thời vụ và toàn bộ chấm công lên Supabase.`,
     };
   } catch (e: any) {
     console.error('Sync seasonal_workers exception:', e);
@@ -727,12 +1049,15 @@ export const loadSeasonalWorkersFromSupabase = async (
           paymentMethod: w.paymentMethod || item.payment_method || 'BANK',
           phone: w.phone || item.phone || '',
           idCard: w.idCard || item.id_card || '',
+          actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
+          overtimeHours: Number(w.overtimeHours ?? item.overtime_hours ?? 0),
+          dailyRate: Number(w.dailyRate ?? item.daily_rate ?? 0),
         };
       })
       .filter((w) => w && (w.fullName || w.code));
 
     // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records vào monthlyAttendance của từng thợ
-    // Chỉ áp dụng bản ghi từ attendance_records nếu chưa có hoặc có thời gian cập nhật mới hơn bản ghi trong worker_data
+    // Bảo vệ tuyệt đối: không bao giờ để bản ghi attendance_data rỗng {} ghi đè mất dữ liệu ngày công thực tế!
     if (attRecords.length > 0) {
       list.forEach((w) => {
         const workerCode = w.code || w.id;
@@ -749,29 +1074,46 @@ export const loadSeasonalWorkersFromSupabase = async (
           const existingRec = w.monthlyAttendance[monthKey];
           const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
           const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
+          const attHasValidDays = isValidDailyAttendanceMap(att.attendance_data);
+          const existingHasValidDays = isValidDailyAttendanceMap(existingRec?.days);
+          const attWorkDays = Number(att.total_work_days || 0);
+          const attOtHours = Number(att.total_ot_hours || 0);
 
-          if (!existingRec || (attTs > 0 && attTs > existingTs)) {
-            if (att.attendance_data && typeof att.attendance_data === 'object') {
+          if (attHasValidDays) {
+            if (!existingRec || !existingHasValidDays || (attTs > 0 && attTs >= existingTs)) {
               w.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
                 year: yNum,
-                totalWorkDays: Number(att.total_work_days || 0),
-                totalOtHours: Number(att.total_ot_hours || 0),
+                totalWorkDays: attWorkDays,
+                totalOtHours: attOtHours,
                 days: att.attendance_data,
                 lastSubmittedAt: att.updated_at,
                 submittedBy: 'WORKER',
               };
             }
+          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0)) {
+            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
+            w.monthlyAttendance[monthKey] = buildSeasonalMonthlyAttendanceRecord(
+              w,
+              mNum,
+              yNum,
+              attWorkDays,
+              attOtHours,
+              att.updated_at || '2026-10-01T00:00:00.000Z'
+            );
           }
         });
       });
     }
 
+    // Cụ thể hóa đầy đủ monthlyAttendance cho mọi công nhân (phục hồi các tháng có công trong periodRecords hoặc totalWorkDays > 0)
+    const healedList = list.map((w) => materializeSeasonalMonthlyAttendance(w, periodCode));
+
     // Sắp xếp nhất quán tuyệt đối giữa tất cả các máy tính:
     // 1. Ưu tiên sortOrder được lưu
     // 2. Sắp xếp tự nhiên theo Mã thợ: PNC-TV01 < PNC-TV02 < PNC-TV03 < ... < PNC-TV13
-    return list.sort((a, b) => {
+    return healedList.sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
         return a.sortOrder - b.sortOrder;
       }
@@ -1192,22 +1534,47 @@ export const syncAttendanceRecordsToSupabase = async (
   if (records.length === 0) return { success: true, count: 0, message: 'Danh sách chấm công rỗng.' };
 
   try {
-    const payload = records.map((r) => ({
-      id: String(r.id),
-      worker_type: String(r.workerType || 'PERMANENT'),
-      worker_code: String(r.workerCode),
-      worker_name: String(r.workerName),
-      project_code: String(r.projectCode || ''),
-      month: Number(r.month),
-      year: Number(r.year),
-      period_key: String(r.periodKey || `${r.month < 10 ? '0' + r.month : r.month}/${r.year}`),
-      total_work_days: Number(r.totalWorkDays || 0),
-      total_ot_hours: Number(r.totalOtHours || 0),
-      attendance_data: r.attendanceData || {},
-      updated_at: new Date().toISOString(),
-    }));
+    const existingAttMap = new Map<string, string>();
+    try {
+      const { data: exAtt } = await client
+        .from('attendance_records')
+        .select('id, worker_code, month, year');
+      if (exAtt && Array.isArray(exAtt)) {
+        exAtt.forEach((r: any) => {
+          if (r.worker_code && r.year && r.month) {
+            existingAttMap.set(`${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`, String(r.id));
+          }
+        });
+      }
+    } catch {}
 
-    const { error } = await client.from('attendance_records').upsert(payload, { onConflict: 'id' });
+    const payload = records.map((r) => {
+      const workerCode = String(r.workerCode || '').trim();
+      const mNum = Number(r.month);
+      const yNum = Number(r.year);
+      const mapKey = `${workerCode}_${yNum}_${mNum}`;
+      const canonicalId = existingAttMap.get(mapKey) || String(r.id);
+      return {
+        id: canonicalId,
+        worker_type: String(r.workerType || 'PERMANENT'),
+        worker_code: workerCode,
+        worker_name: String(r.workerName),
+        project_code: String(r.projectCode || ''),
+        month: mNum,
+        year: yNum,
+        period_key: String(r.periodKey || `${mNum < 10 ? '0' + mNum : mNum}/${yNum}`),
+        total_work_days: Number(r.totalWorkDays || 0),
+        total_ot_hours: Number(r.totalOtHours || 0),
+        attendance_data: r.attendanceData || {},
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    let { error } = await client.from('attendance_records').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      const retry = await client.from('attendance_records').upsert(payload, { onConflict: 'worker_code,month,year' });
+      error = retry.error;
+    }
     if (error) {
       console.error('Sync attendance_records failed:', error);
       return { success: false, count: 0, message: error.message, error: error.message };
@@ -1377,10 +1744,26 @@ export const syncSingleSeasonalWorkerToSupabase = async (
     const canonicalId = existingRowId || worker.id || workerCode;
 
     // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó
-    const mergedMonthlyAttendance = {
+    const mergedMonthlyAttendance: Record<string, any> = {
       ...(existingWorkerData?.monthlyAttendance || {}),
-      ...(worker.monthlyAttendance || {}),
     };
+    Object.entries(worker.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
+      if (!newRec) return;
+      const oldRec = mergedMonthlyAttendance[mKey];
+      if (!oldRec) {
+        mergedMonthlyAttendance[mKey] = newRec;
+      } else {
+        const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
+        const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+        const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+        if (newIsDefault && !oldIsDefault && (oldHasDays || Number(oldRec.totalWorkDays || 0) > 0)) {
+          mergedMonthlyAttendance[mKey] = oldRec;
+        } else {
+          mergedMonthlyAttendance[mKey] = newRec;
+        }
+      }
+    });
+
     const mergedPeriodRecords = {
       ...(existingWorkerData?.periodRecords || {}),
       ...(worker.periodRecords || {}),
@@ -1428,23 +1811,26 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       ? (worker.paymentMethod || 'BANK')
       : (worker.paymentMethod || existingWorkerData?.paymentMethod || 'BANK');
 
-    const mergedWorker: SeasonalWorker = {
-      ...(existingWorkerData || {}),
-      ...worker,
-      id: String(canonicalId),
-      code: workerCode,
-      fullName: worker.fullName || existingWorkerData?.fullName || 'Công nhân',
-      trade: worker.trade || existingWorkerData?.trade || '',
-      project: worker.project || existingWorkerData?.project || '',
-      teamName: worker.teamName || existingWorkerData?.teamName || '',
-      bankAccount: effectiveBankAccount,
-      bankName: effectiveBankName,
-      paymentMethod: effectivePaymentMethod,
-      dailyRate: effectiveDailyRate > 0 ? effectiveDailyRate : Number(worker.dailyRate || 0),
-      sortOrder,
-      monthlyAttendance: mergedMonthlyAttendance,
-      periodRecords: mergedPeriodRecords,
-    };
+    const mergedWorker = materializeSeasonalMonthlyAttendance(
+      {
+        ...(existingWorkerData || {}),
+        ...worker,
+        id: String(canonicalId),
+        code: workerCode,
+        fullName: worker.fullName || existingWorkerData?.fullName || 'Công nhân',
+        trade: worker.trade || existingWorkerData?.trade || '',
+        project: worker.project || existingWorkerData?.project || '',
+        teamName: worker.teamName || existingWorkerData?.teamName || '',
+        bankAccount: effectiveBankAccount,
+        bankName: effectiveBankName,
+        paymentMethod: effectivePaymentMethod,
+        dailyRate: effectiveDailyRate > 0 ? effectiveDailyRate : Number(worker.dailyRate || 0),
+        sortOrder,
+        monthlyAttendance: mergedMonthlyAttendance,
+        periodRecords: mergedPeriodRecords,
+      },
+      periodCode
+    );
 
     const payload = {
       id: String(canonicalId),
@@ -1511,7 +1897,7 @@ export const syncSingleSeasonalWorkerToSupabase = async (
     // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase
     // Đảm bảo dữ liệu chấm công từ điện thoại được lưu vào cả 2 bảng và xóa bỏ các bản ghi trùng lặp cũ
     if (mergedWorker.monthlyAttendance) {
-      for (const [mKey, mRec] of Object.entries(mergedWorker.monthlyAttendance)) {
+      for (const [, mRec] of Object.entries(mergedWorker.monthlyAttendance)) {
         if (mRec && mRec.month && mRec.year) {
           const mStr = String(mRec.month).padStart(2, '0');
           const attId = `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
@@ -1645,40 +2031,114 @@ export const syncSingleEmployeeToSupabase = async (
   if (!client) return { success: false, message: 'Chưa cấu hình Supabase Client.' };
 
   try {
+    const empCode = String(employee.code || employee.id).trim();
+    let existingRowId: string | null = null;
+    let existingEmpData: Employee | null = null;
+
+    try {
+      const { data: codeMatches } = await client
+        .from('employees')
+        .select('id, code, employee_data')
+        .eq('code', empCode)
+        .limit(1);
+      if (codeMatches && codeMatches.length > 0) {
+        existingRowId = codeMatches[0].id;
+        existingEmpData = codeMatches[0].employee_data as Employee;
+      }
+    } catch {}
+
+    const canonicalId = existingRowId || String(employee.id || empCode);
+    const mergedMonthly = {
+      ...(existingEmpData?.monthlyAttendance || {}),
+      ...(employee.monthlyAttendance || {}),
+    };
+    const mergedEmployee: Employee = {
+      ...(existingEmpData || {}),
+      ...employee,
+      id: String(canonicalId),
+      code: empCode,
+      monthlyAttendance: mergedMonthly,
+      periodRecords: {
+        ...(existingEmpData?.periodRecords || {}),
+        ...(employee.periodRecords || {}),
+      },
+    };
+
     const payload = {
-      id: String(employee.id || employee.code),
-      code: String(employee.code || ''),
-      name: String(employee.fullName || 'Nhân viên'),
-      department: String(employee.department || 'Phòng ban'),
-      position: String(employee.title || ''),
-      phone: String(employee.phone || ''),
-      email: String(employee.email || ''),
-      tax_code: String(employee.taxCode || ''),
-      id_card: String(employee.idCard || ''),
-      bank_account: String(employee.bankAccount || ''),
-      bank_name: String(employee.bankName || ''),
-      join_date: String(employee.joinDate || ''),
-      status: String(employee.status || 'ACTIVE'),
-      base_salary: Number(employee.baseSalary || 0),
-      insurance_salary: Number(employee.insuranceSalary || 0),
-      standard_work_days: Number(employee.standardWorkDays || 26),
-      actual_work_days: Number(employee.actualWorkDays || 0),
-      overtime_hours: Number(employee.overtimeHours || 0),
-      advance_payment: Number(employee.advancePayment || 0),
-      net_salary: Number(employee.netSalary || 0),
+      id: String(canonicalId),
+      code: empCode,
+      name: String(mergedEmployee.fullName || 'Nhân viên'),
+      department: String(mergedEmployee.department || 'Phòng ban'),
+      position: String(mergedEmployee.title || ''),
+      phone: String(mergedEmployee.phone || ''),
+      email: String(mergedEmployee.email || ''),
+      tax_code: String(mergedEmployee.taxCode || ''),
+      id_card: String(mergedEmployee.idCard || ''),
+      bank_account: String(mergedEmployee.bankAccount || ''),
+      bank_name: String(mergedEmployee.bankName || ''),
+      join_date: String(mergedEmployee.joinDate || ''),
+      status: String(mergedEmployee.status || 'ACTIVE'),
+      base_salary: Number(mergedEmployee.baseSalary || 0),
+      insurance_salary: Number(mergedEmployee.insuranceSalary || 0),
+      standard_work_days: Number(mergedEmployee.standardWorkDays || 26),
+      actual_work_days: Number(mergedEmployee.actualWorkDays || 0),
+      overtime_hours: Number(mergedEmployee.overtimeHours || 0),
+      advance_payment: Number(mergedEmployee.advancePayment || 0),
+      net_salary: Number(mergedEmployee.netSalary || 0),
       period_code: String(periodCode || '09/2026'),
-      employee_data: employee,
+      employee_data: mergedEmployee,
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await client.from('employees').upsert(payload, {
+    let { error } = await client.from('employees').upsert(payload, {
       onConflict: 'id',
     });
+
+    if (error) {
+      const retry = await client.from('employees').upsert(payload, {
+        onConflict: 'code',
+      });
+      error = retry.error;
+    }
 
     if (error) {
       console.error('syncSingleEmployee error:', error);
       return { success: false, message: error.message, error: error.message };
     }
+
+    if (mergedEmployee.monthlyAttendance) {
+      for (const [, mRec] of Object.entries(mergedEmployee.monthlyAttendance)) {
+        if (mRec && mRec.month && mRec.year && isValidDailyAttendanceMap(mRec.days)) {
+          const mStr = String(mRec.month).padStart(2, '0');
+          const attId = `ATT-EMP-${mRec.year}-${mStr}-${empCode}`;
+          const attPayload = {
+            id: attId,
+            worker_type: 'PERMANENT',
+            worker_code: empCode,
+            worker_name: String(mergedEmployee.fullName || 'Nhân viên'),
+            project_code: String(mergedEmployee.department || ''),
+            month: Number(mRec.month),
+            year: Number(mRec.year),
+            period_key: `${mStr}/${mRec.year}`,
+            total_work_days: Number(mRec.totalWorkDays || 0),
+            total_ot_hours: Number(mRec.totalOtHours || 0),
+            attendance_data: mRec.days || {},
+            updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
+          };
+          try {
+            await client
+              .from('attendance_records')
+              .delete()
+              .eq('worker_code', empCode)
+              .eq('month', Number(mRec.month))
+              .eq('year', Number(mRec.year))
+              .neq('id', attId);
+            await client.from('attendance_records').upsert(attPayload, { onConflict: 'id' });
+          } catch {}
+        }
+      }
+    }
+
     return { success: true, message: 'Đã lưu nhân viên lên Supabase.' };
   } catch (e: any) {
     return { success: false, message: e.message || String(e), error: e.message };

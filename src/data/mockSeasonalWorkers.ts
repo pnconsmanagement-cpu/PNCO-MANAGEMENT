@@ -417,7 +417,8 @@ export function buildSeasonalMonthlyAttendanceRecord(
   month: number,
   year: number,
   workDays: number,
-  otHours: number = 0
+  otHours: number = 0,
+  lastSubmittedAt: string = '2026-09-01T00:00:00.000Z'
 ) {
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
@@ -460,7 +461,7 @@ export function buildSeasonalMonthlyAttendanceRecord(
     totalWorkDays: workDays,
     totalOtHours: otHours,
     days,
-    lastSubmittedAt: new Date().toISOString(),
+    lastSubmittedAt,
     submittedBy: 'ADMIN',
   };
 }
@@ -538,9 +539,24 @@ export function syncSeasonalWorkerForMonth(
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
   const monthPeriodKey = `${monthKey}_MONTH`;
-  const monthRec = worker.monthlyAttendance?.[monthKey];
+  let monthRec = worker.monthlyAttendance?.[monthKey];
   const effectiveRate = getUnifiedWorkerDailyRate(worker);
   const syncedRecords = syncPeriodRecordsDailyRate(worker.periodRecords, effectiveRate);
+
+  if (
+    monthRec &&
+    (!monthRec.days || Object.keys(monthRec.days).length === 0) &&
+    (Number(monthRec.totalWorkDays || 0) > 0 || Number(monthRec.totalOtHours || 0) > 0)
+  ) {
+    monthRec = buildSeasonalMonthlyAttendanceRecord(
+      worker,
+      month,
+      year,
+      Number(monthRec.totalWorkDays || 0),
+      Number(monthRec.totalOtHours || 0),
+      monthRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
+    );
+  }
 
   // 1. Nếu đã có bản ghi tháng trong monthlyAttendance[monthKey] (kể cả khi đã xóa trắng về 0 ngày công / days rỗng)
   if (monthRec && monthRec.days) {

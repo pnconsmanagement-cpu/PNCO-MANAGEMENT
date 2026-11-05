@@ -33,8 +33,11 @@ import {
   Zap,
   Clock,
   Search,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
+import { isSupabaseConfigured } from '../services/supabaseService';
 
 interface AttendanceTabProps {
   employees: Employee[];
@@ -50,6 +53,9 @@ interface AttendanceTabProps {
   onOpenMobileView?: (workerCode?: string) => void;
   seasonalCount?: number;
   forcedGroup?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
+  onManualSync?: () => Promise<void> | void;
+  onOpenSupabaseModal?: () => void;
+  cloudSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error';
 }
 
 type DayStatusType = 'FULL' | 'HALF' | 'ABSENT' | 'LEAVE' | 'LATE' | 'NONE';
@@ -259,6 +265,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onBatchUpdateSeasonal,
   onOpenMobileView,
   forcedGroup,
+  onManualSync,
+  onOpenSupabaseModal,
+  cloudSyncStatus = 'idle',
 }) => {
   const realDateInfo = useMemo(() => getRealCurrentDateInfo(), []);
 
@@ -630,10 +639,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           };
 
           const mStr = String(currentMonth).padStart(2, '0');
-          const monthPeriodId = `${currentYear}-${mStr}_M1`;
+          const monthPeriodId = `${currentYear}-${mStr}_MONTH`;
           const nextPeriodRecords = { ...(syncedW.periodRecords || {}) };
           if (recalcTotals.totalCong === 0 && recalcTotals.totalOT === 0) {
-            ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1'].forEach((suffix) => {
+            ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1', 'MONTH'].forEach((suffix) => {
               const pid = `${currentYear}-${mStr}_${suffix}`;
               if (nextPeriodRecords[pid]) {
                 nextPeriodRecords[pid] = {
@@ -644,12 +653,40 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 };
               }
             });
-          } else if (nextPeriodRecords[monthPeriodId]) {
+          } else {
+            const existingMonthRec = nextPeriodRecords[monthPeriodId];
+            const rate = Number(syncedW.dailyRate || existingMonthRec?.dailyRate || 0);
+            const salaryByDays = Math.round(rate * recalcTotals.totalCong);
+            const overtimePay = Math.round((rate / 8) * recalcTotals.totalOT * 1.5);
+            const mealAllowance = Number(existingMonthRec?.mealAllowance ?? syncedW.mealAllowance ?? 0);
+            const travelSafetyAllowance = Number(existingMonthRec?.travelSafetyAllowance ?? syncedW.travelSafetyAllowance ?? 0);
+            const otherBonus = Number(existingMonthRec?.otherBonus ?? syncedW.otherBonus ?? 0);
+            const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+            const hasTaxCommitment = existingMonthRec?.hasTaxCommitment ?? syncedW.hasTaxCommitment ?? true;
+            const personalIncomeTax = !hasTaxCommitment && totalIncome >= 2000000 ? Math.round(totalIncome * 0.1) : 0;
+            const advancePayment = Number(existingMonthRec?.advancePayment ?? syncedW.advancePayment ?? 0);
+            const totalDeductions = personalIncomeTax + advancePayment;
+
             nextPeriodRecords[monthPeriodId] = {
-              ...nextPeriodRecords[monthPeriodId],
-              actualWorkDays: recalcTotals.totalCong,
-              overtimeHours: recalcTotals.totalOT,
+              ...(existingMonthRec || {}),
+              periodKey: monthPeriodId,
+              periodLabel: `Cả tháng ${mStr}/${currentYear}`,
+              cycleType: '1_MONTH',
               isRecorded: true,
+              dailyRate: rate,
+              actualWorkDays: recalcTotals.totalCong,
+              salaryByDays,
+              overtimeHours: recalcTotals.totalOT,
+              overtimePay,
+              mealAllowance,
+              travelSafetyAllowance,
+              otherBonus,
+              totalIncome,
+              hasTaxCommitment,
+              personalIncomeTax,
+              advancePayment,
+              totalDeductions,
+              netSalary: totalIncome - totalDeductions,
             };
           }
 
@@ -1070,6 +1107,44 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           >
             <ChevronRight className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Nút Lưu & Đồng bộ Supabase nhanh cho Bản Chấm Công */}
+        <div className="flex items-center gap-2">
+          {isSupabaseConfigured() ? (
+            <button
+              type="button"
+              onClick={async () => {
+                if (attendanceGroup === 'SEASONAL') {
+                  onBatchUpdateSeasonal?.(modifiedSeasonal);
+                } else {
+                  onBatchUpdate(modifiedEmployees);
+                }
+                if (onManualSync) {
+                  await onManualSync();
+                }
+                setToastMessage(
+                  `Đã lưu & đồng bộ toàn bộ dữ liệu chấm công Tháng ${currentMonth}/${currentYear} lên Supabase Cloud!`
+                );
+              }}
+              disabled={cloudSyncStatus === 'syncing'}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition cursor-pointer disabled:opacity-60"
+              title="Đẩy toàn bộ dữ liệu chấm công hiện tại lên Supabase Cloud để đồng bộ sang các máy tính khác"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+              <span>{cloudSyncStatus === 'syncing' ? 'Đang lưu Supabase...' : 'Lưu & Đồng bộ Supabase'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onOpenSupabaseModal?.()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition cursor-pointer"
+              title="Kết nối Supabase để đồng bộ dữ liệu chấm công giữa nhiều máy tính"
+            >
+              <Cloud className="w-3.5 h-3.5 text-amber-600" />
+              <span>Chưa nối Supabase (Bấm để kết nối)</span>
+            </button>
+          )}
         </div>
       </div>
 
