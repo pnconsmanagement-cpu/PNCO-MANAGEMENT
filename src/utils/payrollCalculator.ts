@@ -274,24 +274,9 @@ export function normalizeEmpName(name?: string): string {
     .trim();
 }
 
-// Dữ liệu lịch sử chuẩn Tháng 09/2026 và Tháng 10/2026 đối chiếu theo Họ Tên nhân sự
+// Dữ liệu lịch sử chuẩn Tháng 10/2026 đối chiếu theo Họ Tên nhân sự
 // Chỉ những nhân viên thực sự có chấm công mới có số công > 0; nhân viên không chấm công giữ nguyên 0 công.
-const HISTORICAL_MONTH_09_BY_NAME: Record<string, { work: number; ot: number; np: number; vm: number }> = {
-  'HAN VAN QUANG': { work: 25, ot: 18, np: 0, vm: 1 },
-  'TRAN TAN DAT': { work: 26, ot: 8, np: 0, vm: 0 },
-  'HAN KIEU DUY PHON': { work: 26, ot: 0, np: 0, vm: 0 },
-  'LE DINH NGOC': { work: 25, ot: 19, np: 0, vm: 1 },
-  'DANG TAN PHIEU': { work: 27, ot: 38, np: 0, vm: 0 },
-  'TRAN NGOC HOANG HUY': { work: 25, ot: 17, np: 0, vm: 1 },
-  'PHAM TUAN CUONG': { work: 25, ot: 22, np: 0, vm: 1 },
-  'DAO VAN BINH': { work: 24, ot: 10, np: 0, vm: 2 },
-  'BUI THANH LICH': { work: 26, ot: 0, np: 0, vm: 0 },
-  'NGUYEN TOAN PHUC': { work: 25, ot: 21, np: 0, vm: 1 },
-  'HUYNH VAN BUA': { work: 26, ot: 0, np: 0, vm: 0 },
-  'NGUYEN TUAN NHAT': { work: 25, ot: 12, np: 0, vm: 0 },
-  'NGUYEN VAN NGUYEN': { work: 26, ot: 0, np: 0, vm: 0 },
-};
-
+// Lưu ý: Tháng 09/2026 nhóm Nhân Viên Chính Thức KHÔNG chấm công nên mặc định toàn bộ 0 công.
 const HISTORICAL_MONTH_10_BY_NAME: Record<string, { work: number; ot: number; np: number; vm: number }> = {
   'HAN VAN QUANG': { work: 27, ot: 90, np: 0, vm: 3 },
   'HAN KIEU DUY PHON': { work: 26, ot: 38, np: 0, vm: 3 },
@@ -320,9 +305,9 @@ const UNCLOCKED_OCT_2026_NAMES = new Set([
 
 /**
  * Làm sạch dữ liệu chấm công tự nhảy của nhân viên chính thức:
- * 1. Xóa bỏ công Tháng 11/2026 bị tự sao chép từ Tháng 10 hoặc tự điền 24-27 công khi chưa chấm.
- * 2. Xóa bỏ công Tháng 10/2026 bị tự nhảy 26-27 công (0 OT) của các nhân viên chưa tham gia chấm công.
- * 3. Khôi phục chuẩn ngày nghỉ phép (NP) của Lê Đình Ngọc & Trần Ngọc Hoàng Huy nếu bị ghi đè bởi phép gộp map cũ.
+ * 1. Xóa bỏ công Tháng 09/2026 tự nhảy từ dữ liệu mẫu cũ (nhóm Nhân Viên Chính Thức không chấm công Tháng 9).
+ * 2. Xóa bỏ công Tháng 11/2026 bị tự sao chép từ Tháng 10 hoặc tự điền 24-27 công khi chưa chấm.
+ * 3. Xóa bỏ công Tháng 10/2026 bị tự nhảy 26-27 công (0 OT) của các nhân viên chưa tham gia chấm công.
  */
 export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
   const normName = normalizeEmpName(emp.fullName);
@@ -330,7 +315,28 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
     ...(emp.monthlyAttendance || {}),
   };
 
-  // 1. Làm sạch Tháng 11/2026 nếu bị tự sao chép từ Tháng 10 hoặc tự sinh đủ tháng
+  // 1. Làm sạch Tháng 09/2026: Nhóm Nhân Viên Chính Thức không chấm công Tháng 9
+  const rec09 = existingMonthly['2026-09'];
+  if (rec09) {
+    const w09 = Number(rec09.totalWorkDays || 0);
+    const ot09 = Number(rec09.totalOtHours || 0);
+    const hasDays09 = rec09.days && Object.keys(rec09.days).length > 0;
+    const isManual09 = rec09.submittedBy === 'MANUAL_USER';
+    if (!isManual09 && (w09 > 0 || ot09 > 0 || hasDays09)) {
+      existingMonthly['2026-09'] = {
+        monthKey: '2026-09',
+        month: 9,
+        year: 2026,
+        totalWorkDays: 0,
+        totalOtHours: 0,
+        days: {},
+        lastSubmittedAt: new Date().toISOString(),
+        submittedBy: 'ADMIN',
+      };
+    }
+  }
+
+  // 2. Làm sạch Tháng 11/2026 nếu bị tự sao chép từ Tháng 10 hoặc tự sinh đủ tháng
   const rec11 = existingMonthly['2026-11'];
   if (rec11) {
     const rec10 = existingMonthly['2026-10'];
@@ -338,16 +344,26 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
     const w11 = Number(rec11.totalWorkDays || 0);
     const ot11 = Number(rec11.totalOtHours || 0);
     const isDefault11 = rec11.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+    const isManual11 = rec11.submittedBy === 'MANUAL_USER';
     const matchesOct =
       (rec10 && w11 > 0 && w11 === Number(rec10.totalWorkDays || 0) && ot11 === Number(rec10.totalOtHours || 0)) ||
       (h10 && w11 > 0 && w11 === h10.work && ot11 === h10.ot);
     // Hôm nay mới đầu tháng 11/2026 nên bất kỳ bản ghi nào tự có >= 20 công đều là dữ liệu tự nhảy
-    if (isDefault11 || matchesOct || w11 >= 20) {
-      delete existingMonthly['2026-11'];
+    if (!isManual11 && (isDefault11 || matchesOct || w11 >= 20)) {
+      existingMonthly['2026-11'] = {
+        monthKey: '2026-11',
+        month: 11,
+        year: 2026,
+        totalWorkDays: 0,
+        totalOtHours: 0,
+        days: {},
+        lastSubmittedAt: new Date().toISOString(),
+        submittedBy: 'ADMIN',
+      };
     }
   }
 
-  // 2. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy công do lỗi đồng bộ mã cũ
+  // 3. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy công do lỗi đồng bộ mã cũ
   const rec10 = existingMonthly['2026-10'];
   if (rec10) {
     const w10 = Number(rec10.totalWorkDays || 0);
@@ -387,30 +403,15 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
 }
 
 /**
- * Đảm bảo nhân sự luôn có lịch sử chấm công Tháng 09/2026 và Tháng 10/2026 (theo đúng tên nhân sự),
- * tuyệt đối không tự nhảy công cho nhân viên chưa chấm công.
+ * Đảm bảo nhân sự luôn có lịch sử chấm công Tháng 10/2026 (theo đúng tên nhân sự),
+ * tuyệt đối không tự nhảy công cho Tháng 09/2026 hoặc nhân viên chưa chấm công.
  */
 export function ensureEmployeeHistoricalMonths(emp: Employee): Employee {
   const sanitized = sanitizeEmployeeMonthlyAttendance(emp);
   const existingMonthly = { ...(sanitized.monthlyAttendance || {}) };
   const normName = normalizeEmpName(sanitized.fullName);
 
-  // 1. Khởi tạo Tháng 09/2026 nếu chưa có
-  if (!existingMonthly['2026-09']) {
-    const h09 = HISTORICAL_MONTH_09_BY_NAME[normName];
-    if (h09 && (h09.work > 0 || h09.ot > 0)) {
-      existingMonthly['2026-09'] = buildMonthlyAttendanceRecord(
-        9,
-        2026,
-        h09.work,
-        h09.ot,
-        h09.np,
-        h09.vm
-      );
-    }
-  }
-
-  // 2. Khởi tạo Tháng 10/2026 nếu chưa có
+  // Khởi tạo Tháng 10/2026 nếu chưa có (chỉ với nhân sự thực sự có chấm công Tháng 10)
   if (!existingMonthly['2026-10']) {
     const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
     if (h10 && (h10.work > 0 || h10.ot > 0)) {
