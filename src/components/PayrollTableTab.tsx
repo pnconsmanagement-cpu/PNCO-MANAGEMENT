@@ -96,6 +96,40 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [printingSeasonalWorker, setPrintingSeasonalWorker] = useState<SeasonalWorker | null>(null);
   const [printingPermanentEmployee, setPrintingPermanentEmployee] = useState<Employee | null>(null);
 
+  // Modal chỉnh sửa nhanh STK & Ngân hàng khi bấm vào tên nhân viên thời vụ tại Bản Lương
+  const [editingSeasonalBankWorker, setEditingSeasonalBankWorker] = useState<SeasonalWorker | null>(null);
+  const [bankFormAccount, setBankFormAccount] = useState('');
+  const [bankFormName, setBankFormName] = useState('');
+  const [bankFormMethod, setBankFormMethod] = useState<'BANK' | 'CASH'>('BANK');
+
+  const handleOpenSeasonalBankModal = (w: SeasonalWorker) => {
+    const baseWorker = seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+    setEditingSeasonalBankWorker(baseWorker);
+    setBankFormAccount(baseWorker.bankAccount || '');
+    setBankFormName(baseWorker.bankName || 'Vietcombank');
+    setBankFormMethod(baseWorker.paymentMethod || 'BANK');
+  };
+
+  const handleSaveSeasonalBankModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSeasonalBankWorker || !onUpdateSeasonalWorker) return;
+    const baseWorker =
+      seasonalWorkers.find(
+        (sw) => sw.id === editingSeasonalBankWorker.id || sw.code === editingSeasonalBankWorker.code
+      ) || editingSeasonalBankWorker;
+    const cleanedAccount = bankFormAccount.trim();
+    const cleanedBankName =
+      bankFormName.trim() || (bankFormMethod === 'CASH' ? 'Tiền mặt' : 'Vietcombank');
+    onUpdateSeasonalWorker({
+      ...baseWorker,
+      paymentMethod: bankFormMethod,
+      bankAccount: cleanedAccount,
+      bankName: cleanedBankName,
+      bankUpdatedAt: Date.now(),
+    } as SeasonalWorker);
+    setEditingSeasonalBankWorker(null);
+  };
+
   // 3 Tab Bản Lương Thời Vụ riêng biệt: Bản Lương 1 Tuần ('1_WEEK'), Bản Lương 2 Tuần ('2_WEEKS'), Bản Lương Tháng ('1_MONTH')
   const [seasonalCycleTab, setSeasonalCycleTab] = useState<SeasonalCycleType>(() => {
     try {
@@ -1527,11 +1561,24 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     <td className="p-1.5 border-r border-slate-200 text-center text-slate-500 font-mono">
                       {idx + 1}
                     </td>
-                    <td className="p-1.5 border-r border-slate-200 font-bold text-amber-900 font-mono">
+                    <td
+                      onClick={() => handleOpenSeasonalBankModal(w)}
+                      className="p-1.5 border-r border-slate-200 font-bold text-amber-900 font-mono cursor-pointer hover:underline"
+                      title="Bấm để cập nhật Số tài khoản (STK) & Ngân hàng"
+                    >
                       {w.code}
                     </td>
-                    <td className="p-1.5 border-r border-slate-200 sticky left-0 bg-white hover:bg-amber-50 font-bold text-slate-900 z-10">
-                      {w.fullName}
+                    <td
+                      onClick={() => handleOpenSeasonalBankModal(w)}
+                      className="p-1.5 border-r border-slate-200 sticky left-0 bg-white hover:bg-amber-50 font-bold text-slate-900 z-10 cursor-pointer group"
+                      title="Bấm vào tên để chỉnh sửa Số tài khoản (STK) & Ngân hàng"
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="group-hover:text-amber-700 group-hover:underline">
+                          {w.fullName}
+                        </span>
+                        <Edit3 className="w-3 h-3 text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      </div>
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-center">
                       {onUpdateSeasonalWorker ? (
@@ -2304,6 +2351,155 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 }}
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Chỉnh Sửa Nhanh STK & Ngân Hàng Nhân Viên Thời Vụ */}
+      {editingSeasonalBankWorker && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEditingSeasonalBankWorker(null);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3"
+        >
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
+            <div className="bg-[#0f3d64] text-white px-4 py-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm uppercase tracking-wide">
+                  Cập nhật STK & Ngân Hàng
+                </h3>
+                <p className="text-[11px] text-sky-200 mt-0.5">
+                  {editingSeasonalBankWorker.fullName} ({editingSeasonalBankWorker.code})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSeasonalBankWorker(null)}
+                className="p-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSeasonalBankModal} className="p-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Hình thức nhận lương
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBankFormMethod('BANK')}
+                    className={`py-2 px-3 rounded-lg font-bold border text-center transition cursor-pointer ${
+                      bankFormMethod === 'BANK'
+                        ? 'bg-sky-50 border-sky-500 text-[#0f3d64]'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Chuyển khoản Ngân hàng
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBankFormMethod('CASH');
+                      if (!bankFormAccount.trim()) {
+                        setBankFormName('Tiền mặt');
+                      }
+                    }}
+                    className={`py-2 px-3 rounded-lg font-bold border text-center transition cursor-pointer ${
+                      bankFormMethod === 'CASH'
+                        ? 'bg-amber-50 border-amber-500 text-amber-900'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Nhận Tiền mặt
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Số tài khoản ngân hàng (STK)
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={bankFormAccount}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBankFormAccount(val);
+                    if (val.trim()) {
+                      setBankFormMethod('BANK');
+                      if (bankFormName === 'Tiền mặt') {
+                        setBankFormName('Vietcombank');
+                      }
+                    }
+                  }}
+                  placeholder="Nhập số tài khoản..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-sky-600 font-mono font-bold text-sm text-blue-900"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Tên Ngân hàng thụ hưởng
+                </label>
+                <input
+                  type="text"
+                  value={bankFormName}
+                  onChange={(e) => setBankFormName(e.target.value)}
+                  placeholder="VD: Vietcombank, Techcombank, MBBank..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-sky-600 font-semibold text-slate-800"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[
+                    'Vietcombank',
+                    'Techcombank',
+                    'MBBank',
+                    'BIDV',
+                    'VietinBank',
+                    'Agribank',
+                    'ACB',
+                    'Sacombank',
+                    'VPBank',
+                    'TPBank',
+                  ].map((bank) => (
+                    <button
+                      key={bank}
+                      type="button"
+                      onClick={() => {
+                        setBankFormName(bank);
+                        setBankFormMethod('BANK');
+                      }}
+                      className={`px-2 py-1 rounded text-[11px] font-semibold border transition cursor-pointer ${
+                        bankFormName.toLowerCase() === bank.toLowerCase()
+                          ? 'bg-[#0f3d64] text-white border-[#0f3d64]'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-sky-50 hover:border-sky-300'
+                      }`}
+                    >
+                      {bank}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingSeasonalBankWorker(null)}
+                  className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition cursor-pointer shadow-xs"
+                >
+                  Lưu thông tin
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
