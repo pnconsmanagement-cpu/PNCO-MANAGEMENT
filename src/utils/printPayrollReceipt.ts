@@ -350,17 +350,8 @@ export function generateSeasonalWorkerReceiptHTML(
             <div class="company-sub">Địa chỉ: <strong>${config.address}</strong></div>
             <div class="company-sub">Mã số thuế: <strong>${config.taxCode}</strong> — Điện thoại: <strong>${config.phone}</strong></div>
           </td>
-          <td style="text-align: right;">
-            <div style="margin-bottom: 4px;">
-              <img src="${logoUrl}" alt="PNCO Construction Logo" style="height: 38px; width: auto; object-fit: contain; display: inline-block;" />
-            </div>
-            <div style="display: inline-block; padding: 2px 8px; background-color: #ffffff; border: 1.5px solid #0f3d64; border-radius: 4px; font-weight: 800; font-size: 8.5pt; color: #0f3d64;">
-              Mẫu: 03-LĐTL
-            </div>
-            <div style="font-size: 7.5pt; color: #334155; margin-top: 2px; font-weight: 600;">(Ban hành theo TT 200 & TT 133/BTC)</div>
-            <div style="font-size: 8.5pt; font-family: monospace; font-weight: 800; color: #000000; margin-top: 2px;">
-              Số phiếu: PLTV-${config.periodCode?.replace('/', '') || `${config.month}${config.year}`}-${worker.code}
-            </div>
+          <td style="text-align: right; vertical-align: middle;">
+            <img src="${logoUrl}" alt="PNCO Construction Logo" style="height: 42px; width: auto; object-fit: contain; display: inline-block;" />
           </td>
         </tr>
       </table>
@@ -374,14 +365,14 @@ export function generateSeasonalWorkerReceiptHTML(
         </p>
       </div>
 
-      <!-- Khung thông tin nhân sự -->
-      <div class="info-box">
-        <table class="info-table">
+      <!-- Khung thông tin nhân sự & Số phiếu bên phải -->
+      <div class="info-box" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+        <table class="info-table" style="flex: 1;">
           <tr>
-            <td style="width: 50%;">
+            <td style="width: 52%;">
               Họ và tên: <strong style="text-transform: uppercase; font-size: 9.5pt; color: #0f172a;">${worker.fullName}</strong>
             </td>
-            <td style="width: 50%;">
+            <td style="width: 48%;">
               Mã nhân công: <strong style="font-family: monospace; font-size: 9pt; color: #0f3d64;">${worker.code}</strong>
             </td>
           </tr>
@@ -420,6 +411,15 @@ export function generateSeasonalWorkerReceiptHTML(
             </td>
           </tr>
         </table>
+        <div style="text-align: right; flex-shrink: 0; border-left: 1px dashed #cbd5e1; padding-left: 10px; min-width: 170px;">
+          <div style="display: inline-block; padding: 2px 8px; background-color: #ffffff; border: 1.5px solid #0f3d64; border-radius: 4px; font-weight: 800; font-size: 8.5pt; color: #0f3d64;">
+            Mẫu: 03-LĐTL
+          </div>
+          <div style="font-size: 7.5pt; color: #334155; margin-top: 3px; font-weight: 600;">(Ban hành theo TT 200 & TT 133/BTC)</div>
+          <div style="font-size: 8.5pt; font-family: monospace; font-weight: 800; color: #000000; margin-top: 3px;">
+            Số phiếu: PLTV-${config.periodCode?.replace('/', '') || `${config.month}${config.year}`}-${worker.code}
+          </div>
+        </div>
       </div>
 
       <!-- Bảng chấm công tuần chi tiết (nếu có) -->

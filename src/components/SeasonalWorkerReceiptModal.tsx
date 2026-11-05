@@ -224,16 +224,12 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                 MST: {config.taxCode} | ĐT: {config.phone}
               </div>
             </div>
-            <div className="flex flex-col items-end text-right text-[11px] text-slate-600">
+            <div className="flex flex-col items-end justify-center text-right">
               <img
                 src="/assets/aistudio/image_1ca8dbc7.png"
                 alt="PNCO Construction Logo"
-                className="h-11 w-auto object-contain mb-1"
+                className="h-11 w-auto object-contain"
               />
-              <div className="font-semibold">{config.formNumber || 'Mẫu: 03-LĐTL'}</div>
-              <div className="mt-0.5">
-                Số phiếu: <span className="font-bold text-slate-800">PLTV{config.periodCode?.replace('/', '') || `${config.month}${config.year}`}-{worker.code}</span>
-              </div>
             </div>
           </div>
 
@@ -252,53 +248,66 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
             </p>
           </div>
 
-          {/* Worker Info Card */}
-          <div className="bg-slate-50 border border-slate-200 rounded p-3 sm:p-3.5 mb-3.5 text-[12px] grid grid-cols-2 gap-x-6 gap-y-1.5">
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Họ và tên:</span>
-              <span className="font-bold text-slate-900">{worker.fullName}</span>
+          {/* Worker Info Card + Mẫu biểu & Số phiếu bên phải */}
+          <div className="bg-slate-50 border border-slate-200 rounded p-3 sm:p-3.5 mb-3.5 text-[12px] flex flex-col sm:flex-row justify-between items-start gap-3">
+            <div className="flex-1 grid grid-cols-2 gap-x-5 gap-y-1.5 w-full">
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Họ và tên:</span>
+                <span className="font-bold text-slate-900">{worker.fullName}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Mã nhân công:</span>
+                <span className="font-bold text-[#0f3d64]">{worker.code}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Nghề nghiệp:</span>
+                <span className="font-medium text-slate-800">{worker.trade} {worker.skillLevel ? `(${worker.skillLevel})` : ''}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Tổ / Đội:</span>
+                <span className="font-medium text-slate-800">{worker.teamName || 'Đội thi công công trình'}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Số CCCD / CMND:</span>
+                <span className="font-mono text-slate-800">{worker.idCard || 'Đang cập nhật'}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Điện thoại:</span>
+                <span className="text-slate-800">{worker.phone || '—'}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Hình thức lương:</span>
+                <span className="font-semibold text-slate-800">Theo ngày công ({formatNumberOnly(worker.dailyRate)} đ/ngày)</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Ngày công:</span>
+                <span className="font-bold text-slate-800">
+                  {worker.actualWorkDays} ngày {worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h tăng ca)` : ''}
+                </span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Phụ trách:</span>
+                <span className="text-slate-800">{worker.teamLeader || 'Ban Chỉ huy công trường'}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Chi trả qua:</span>
+                <span className="font-semibold text-slate-800">
+                  {worker.paymentMethod === 'BANK'
+                    ? `${worker.bankName} - ${worker.bankAccount}`
+                    : 'Tiền mặt tại công trường'}
+                </span>
+              </div>
             </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Mã nhân công:</span>
-              <span className="font-bold text-[#0f3d64]">{worker.code}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Nghề nghiệp:</span>
-              <span className="font-medium text-slate-800">{worker.trade} {worker.skillLevel ? `(${worker.skillLevel})` : ''}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Tổ / Đội:</span>
-              <span className="font-medium text-slate-800">{worker.teamName || 'Đội thi công công trình'}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Số CCCD / CMND:</span>
-              <span className="font-mono text-slate-800">{worker.idCard || 'Đang cập nhật'}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Điện thoại:</span>
-              <span className="text-slate-800">{worker.phone || '—'}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Hình thức lương:</span>
-              <span className="font-semibold text-slate-800">Theo ngày công ({formatNumberOnly(worker.dailyRate)} đ/ngày)</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Ngày công:</span>
-              <span className="font-bold text-slate-800">
-                {worker.actualWorkDays} ngày {worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h tăng ca)` : ''}
-              </span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Phụ trách:</span>
-              <span className="text-slate-800">{worker.teamLeader || 'Ban Chỉ huy công trường'}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Chi trả qua:</span>
-              <span className="font-semibold text-slate-800">
-                {worker.paymentMethod === 'BANK'
-                  ? `${worker.bankName} - ${worker.bankAccount}`
-                  : 'Tiền mặt tại công trường'}
-              </span>
+            <div className="text-right text-[11px] text-slate-600 shrink-0 sm:border-l sm:border-dashed sm:border-slate-300 sm:pl-3.5 min-w-[175px]">
+              <div className="inline-block px-2 py-0.5 bg-white border border-[#0f3d64] rounded font-bold text-[#0f3d64]">
+                Mẫu: 03-LĐTL
+              </div>
+              <div className="text-[10px] text-slate-600 mt-1 font-medium">
+                (Ban hành theo TT 200 & TT 133/BTC)
+              </div>
+              <div className="mt-1 font-mono font-bold text-slate-900">
+                Số phiếu: PLTV-{config.periodCode?.replace('/', '') || `${config.month}${config.year}`}-{worker.code}
+              </div>
             </div>
           </div>
 

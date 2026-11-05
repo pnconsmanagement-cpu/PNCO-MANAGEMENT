@@ -36,16 +36,12 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-col items-end text-right text-[11px] text-slate-600">
+        <div className="flex flex-col items-end justify-center text-right">
           <img
             src="/assets/aistudio/image_1ca8dbc7.png"
             alt="PNCO Construction Logo"
-            className="h-11 w-auto object-contain mb-1"
+            className="h-11 w-auto object-contain"
           />
-          <div className="font-semibold">{config.formNumber}</div>
-          <div className="mt-0.5">
-            Số phiếu: <span className="font-bold text-slate-800">PL{config.periodCode.replace('/', '')}-{employee.code}</span>
-          </div>
         </div>
       </div>
 
@@ -59,82 +55,95 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
         </p>
       </div>
 
-      {/* Employee Info Grid */}
-      <div className="bg-slate-50 border border-slate-200 rounded p-3 sm:p-3.5 mb-3.5 text-[12px] grid grid-cols-2 gap-x-6 gap-y-1.5">
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Họ và tên:</span>
-          <span className="font-bold text-slate-900">{employee.fullName}</span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Mã nhân viên:</span>
-          <span className="font-bold text-[#0f3d64]">{employee.code}</span>
-        </div>
+      {/* Employee Info Grid + Mẫu biểu & Số phiếu bên phải */}
+      <div className="bg-slate-50 border border-slate-200 rounded p-3 sm:p-3.5 mb-3.5 text-[12px] flex flex-col sm:flex-row justify-between items-start gap-3">
+        <div className="flex-1 grid grid-cols-2 gap-x-5 gap-y-1.5 w-full">
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Họ và tên:</span>
+            <span className="font-bold text-slate-900">{employee.fullName}</span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Mã nhân viên:</span>
+            <span className="font-bold text-[#0f3d64]">{employee.code}</span>
+          </div>
 
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Chức danh:</span>
-          <span className="font-medium text-slate-800">{employee.title}</span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Bộ phận:</span>
-          <span className="font-medium text-slate-800">{employee.department}</span>
-        </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Chức danh:</span>
+            <span className="font-medium text-slate-800">{employee.title}</span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Bộ phận:</span>
+            <span className="font-medium text-slate-800">{employee.department}</span>
+          </div>
 
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Hình thức lương:</span>
-          <span className="font-semibold text-slate-800">
-            {employee.salaryType === 'DAILY'
-              ? `Theo ngày công (${formatNumberOnly(employee.baseSalary)} đ/ngày)`
-              : `Lương tháng (${formatNumberOnly(employee.baseSalary)} đ/tháng)`}
-          </span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Ngày vào làm:</span>
-          <span className="text-slate-800">{employee.joinDate}</span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Ngày công (thực/chuẩn):</span>
-          <span className="font-bold text-slate-800">
-            {employee.actualWorkDays} / {employee.standardWorkDays} ngày
-          </span>
-        </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Hình thức lương:</span>
+            <span className="font-semibold text-slate-800">
+              {employee.salaryType === 'DAILY'
+                ? `Theo ngày công (${formatNumberOnly(employee.baseSalary)} đ/ngày)`
+                : `Lương tháng (${formatNumberOnly(employee.baseSalary)} đ/tháng)`}
+            </span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Ngày vào làm:</span>
+            <span className="text-slate-800">{employee.joinDate}</span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Ngày công (thực/chuẩn):</span>
+            <span className="font-bold text-slate-800">
+              {employee.actualWorkDays} / {employee.standardWorkDays} ngày
+            </span>
+          </div>
 
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">HĐ Lao động:</span>
-          <span className="font-medium text-slate-800 truncate">
-            {employee.contractType || 'HĐLĐ Không xác định thời hạn'}
-          </span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Thời hạn HĐ:</span>
-          <span className="font-medium text-slate-800 truncate">
-            {employee.contractDuration || 'Vô thời hạn'}
-            {employee.contractEndDate && ` (hết ${employee.contractEndDate})`}
-          </span>
-        </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">HĐ Lao động:</span>
+            <span className="font-medium text-slate-800 truncate">
+              {employee.contractType || 'HĐLĐ Không xác định thời hạn'}
+            </span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Thời hạn HĐ:</span>
+            <span className="font-medium text-slate-800 truncate">
+              {employee.contractDuration || 'Vô thời hạn'}
+              {employee.contractEndDate && ` (hết ${employee.contractEndDate})`}
+            </span>
+          </div>
 
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Số tài khoản:</span>
-          <span className="font-semibold text-slate-800">
-            {employee.bankAccount} — {employee.bankName}
-          </span>
-        </div>
-        <div className="flex">
-          <span className="w-28 text-slate-600 shrink-0">Số người phụ thuộc:</span>
-          <span className="font-medium text-slate-800">{employee.dependents} người</span>
-        </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Số tài khoản:</span>
+            <span className="font-semibold text-slate-800">
+              {employee.bankAccount} — {employee.bankName}
+            </span>
+          </div>
+          <div className="flex">
+            <span className="w-28 text-slate-600 shrink-0">Số người phụ thuộc:</span>
+            <span className="font-medium text-slate-800">{employee.dependents} người</span>
+          </div>
 
-        {(employee.email || employee.phone) && (
-          <>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Email:</span>
-              <span className="text-slate-800 truncate">{employee.email || '—'}</span>
-            </div>
-            <div className="flex">
-              <span className="w-28 text-slate-600 shrink-0">Điện thoại:</span>
-              <span className="text-slate-800">{employee.phone || '—'}</span>
-            </div>
-          </>
-        )}
+          {(employee.email || employee.phone) && (
+            <>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Email:</span>
+                <span className="text-slate-800 truncate">{employee.email || '—'}</span>
+              </div>
+              <div className="flex">
+                <span className="w-28 text-slate-600 shrink-0">Điện thoại:</span>
+                <span className="text-slate-800">{employee.phone || '—'}</span>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="text-right text-[11px] text-slate-600 shrink-0 sm:border-l sm:border-dashed sm:border-slate-300 sm:pl-3.5 min-w-[165px]">
+          <div className="inline-block px-2 py-0.5 bg-white border border-[#0f3d64] rounded font-bold text-[#0f3d64]">
+            {config.formNumber || 'Mẫu số: 02-LĐTL'}
+          </div>
+          <div className="text-[10px] text-slate-600 mt-1 font-medium">
+            (Ban hành theo TT 200 & TT 133/BTC)
+          </div>
+          <div className="mt-1 font-mono font-bold text-slate-900">
+            Số phiếu: PL{config.periodCode.replace('/', '')}-{employee.code}
+          </div>
+        </div>
       </div>
 
       {/* Details Table */}
