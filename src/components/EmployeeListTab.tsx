@@ -1238,7 +1238,9 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                   </>
                 )}
 
-                <th className="p-2.5 text-center min-w-[120px] font-bold">Thao tác</th>
+                <th className="p-2.5 text-center min-w-[130px] font-bold sticky right-0 bg-[#0f3d64] z-30">
+                  Thao tác
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -1352,7 +1354,37 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-500 italic">Vào làm: {emp.joinDate}</div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <span className="text-[10px] text-slate-500 italic">Vào làm: {emp.joinDate}</span>
+                          <div className="flex items-center gap-1.5 no-print">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingEmployee(emp);
+                                setIsModalOpen(true);
+                              }}
+                              className="text-[10px] text-sky-700 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+                              title="Chỉnh sửa hồ sơ nhân viên"
+                            >
+                              <Edit2 className="w-2.5 h-2.5" />
+                              <span>Sửa</span>
+                            </button>
+                            <span className="text-slate-300">|</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEmployeeToDelete(emp);
+                              }}
+                              className="text-[10px] text-rose-600 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+                              title="Xóa nhân viên này khỏi danh sách"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                              <span>Xóa</span>
+                            </button>
+                          </div>
+                        </div>
                       </td>
 
                       {/* Bộ phận & Chức danh */}
@@ -1742,7 +1774,7 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                       )}
 
                       {/* Thao tác */}
-                      <td className="p-2 text-center">
+                      <td className="p-2 text-center sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-300 shadow-[-2px_0_4px_rgba(0,0,0,0.06)]">
                         <div className="flex items-center justify-center gap-1">
                           {/* Sửa chi tiết */}
                           <button
@@ -1751,10 +1783,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                               setEditingEmployee(emp);
                               setIsModalOpen(true);
                             }}
-                            className="p-1.5 text-sky-700 hover:bg-sky-100 rounded-lg transition cursor-pointer"
+                            className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                             title="Chỉnh sửa chi tiết hồ sơ & hợp đồng"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Edit2 className="w-3 h-3 text-sky-700" />
+                            <span>Sửa</span>
                           </button>
 
                           {/* Đánh giá tăng lương */}
@@ -1774,10 +1807,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                           <button
                             type="button"
                             onClick={() => setEmployeeToDelete(emp)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg transition cursor-pointer"
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 border border-rose-300 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                             title="Xóa nhân viên này"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-3 h-3" />
+                            <span>Xóa</span>
                           </button>
                         </div>
                       </td>
@@ -1810,6 +1844,10 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
             }
             setIsModalOpen(false);
             setEditingEmployee(null);
+          }}
+          onDelete={(id) => {
+            onDeleteEmployee(id);
+            showToast('Đã xóa nhân viên thành công!');
           }}
           initialData={editingEmployee}
           employee={editingEmployee}

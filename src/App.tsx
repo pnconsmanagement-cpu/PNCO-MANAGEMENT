@@ -117,6 +117,45 @@ function mergeRemoteConfigPreservingPeriod(
   } as CompanyConfig;
 }
 
+const DELETED_EMP_STORAGE_KEY = 'pncons_deleted_emp_keys';
+const DELETED_SEA_STORAGE_KEY = 'pncons_deleted_sea_keys';
+
+function getDeletedKeys(storageKey: string): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? new Set(parsed.map((x) => String(x).trim()).filter(Boolean))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function addDeletedKeys(storageKey: string, keys: (string | undefined | null)[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    const set = getDeletedKeys(storageKey);
+    keys.forEach((k) => {
+      if (k && String(k).trim()) set.add(String(k).trim());
+    });
+    localStorage.setItem(storageKey, JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function removeDeletedKeys(storageKey: string, keys: (string | undefined | null)[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    const set = getDeletedKeys(storageKey);
+    keys.forEach((k) => {
+      if (k && String(k).trim()) set.delete(String(k).trim());
+    });
+    localStorage.setItem(storageKey, JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
 // Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng)
 function mergeEmployeeListsPreservingAttendance(
   localList: Employee[],
@@ -125,10 +164,17 @@ function mergeEmployeeListsPreservingAttendance(
   activeYear: number,
   stdDays: number = 26
 ): Employee[] {
+  const deletedSet = getDeletedKeys(DELETED_EMP_STORAGE_KEY);
   const map = new Map<string, Employee>();
-  localList.forEach((emp) => map.set(emp.code || emp.id, emp));
+  localList.forEach((emp) => {
+    if (!emp) return;
+    if (deletedSet.has(String(emp.id)) || (emp.code && deletedSet.has(String(emp.code)))) return;
+    map.set(emp.code || emp.id, emp);
+  });
 
   remoteList.forEach((rEmp) => {
+    if (!rEmp) return;
+    if (deletedSet.has(String(rEmp.id)) || (rEmp.code && deletedSet.has(String(rEmp.code)))) return;
     const key = rEmp.code || rEmp.id;
     const existing = map.get(key);
     if (existing) {
@@ -178,9 +224,15 @@ function mergeEmployeeListsPreservingAttendance(
     }
   });
 
+  const seenIds = new Set<string>();
   return Array.from(map.values())
-    .map((emp) => {
-      const withContract = ensureEmployeeContract(emp);
+    .map((emp, idx) => {
+      let uniqueId = String(emp.id || emp.code || `EMP_${idx + 1}`);
+      if (seenIds.has(uniqueId)) {
+        uniqueId = `${uniqueId}_${idx + 1}`;
+      }
+      seenIds.add(uniqueId);
+      const withContract = ensureEmployeeContract({ ...emp, id: uniqueId });
       const withHistory = ensureEmployeeHistoricalMonths(withContract);
       return syncEmployeeForMonth(withHistory, activeMonth, activeYear, stdDays);
     })
@@ -304,35 +356,49 @@ export default function App() {
             } catch {}
           });
 
-          const list = parsed.map((emp) => {
-            const withContract = ensureEmployeeContract(emp);
-            if (withContract.projectAllowance === undefined) {
-              const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
-              withContract.projectAllowance = defaultEmp ? defaultEmp.projectAllowance || 0 : 0;
-            }
-            if (!withContract.insuranceSalary) {
-              const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
-              withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 7000000;
-            }
-
-            const mergedMonthly = { ...(withContract.monthlyAttendance || {}) };
-            legacyMonthSlots.forEach((slot) => {
-              const slotList = legacyByMonth[slot.monthKey];
-              if (!slotList) return;
-              const foundInSlot = slotList.find((x) => x.code === withContract.code || x.id === withContract.id);
-              if (!foundInSlot) return;
-              const slotRec = foundInSlot.monthlyAttendance?.[slot.monthKey];
-              if (slotRec && Object.keys(slotRec.days || {}).length > 0 && !mergedMonthly[slot.monthKey]) {
-                mergedMonthly[slot.monthKey] = slotRec;
+          const deletedEmpSet = getDeletedKeys(DELETED_EMP_STORAGE_KEY);
+          const seenEmpIds = new Set<string>();
+          const list = parsed
+            .filter(
+              (emp) =>
+                emp &&
+                !deletedEmpSet.has(String(emp.id)) &&
+                !(emp.code && deletedEmpSet.has(String(emp.code)))
+            )
+            .map((emp, idx) => {
+              let uniqueEmpId = String(emp.id || emp.code || `EMP_${idx + 1}`);
+              if (seenEmpIds.has(uniqueEmpId)) {
+                uniqueEmpId = `${uniqueEmpId}_${idx + 1}`;
               }
-            });
+              seenEmpIds.add(uniqueEmpId);
+              const withContract = ensureEmployeeContract({ ...emp, id: uniqueEmpId });
+              if (withContract.projectAllowance === undefined) {
+                const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
+                withContract.projectAllowance = defaultEmp ? defaultEmp.projectAllowance || 0 : 0;
+              }
+              if (!withContract.insuranceSalary) {
+                const defaultEmp = initialEmployees.find((e) => e.code === withContract.code);
+                withContract.insuranceSalary = defaultEmp ? defaultEmp.insuranceSalary : 7000000;
+              }
 
-            const withHistory = ensureEmployeeHistoricalMonths({
-              ...withContract,
-              monthlyAttendance: mergedMonthly,
+              const mergedMonthly = { ...(withContract.monthlyAttendance || {}) };
+              legacyMonthSlots.forEach((slot) => {
+                const slotList = legacyByMonth[slot.monthKey];
+                if (!slotList) return;
+                const foundInSlot = slotList.find((x) => x.code === withContract.code || x.id === withContract.id);
+                if (!foundInSlot) return;
+                const slotRec = foundInSlot.monthlyAttendance?.[slot.monthKey];
+                if (slotRec && Object.keys(slotRec.days || {}).length > 0 && !mergedMonthly[slot.monthKey]) {
+                  mergedMonthly[slot.monthKey] = slotRec;
+                }
+              });
+
+              const withHistory = ensureEmployeeHistoricalMonths({
+                ...withContract,
+                monthlyAttendance: mergedMonthly,
+              });
+              return syncEmployeeForMonth(withHistory, realInfo.realMonth, realInfo.realYear, 26);
             });
-            return syncEmployeeForMonth(withHistory, realInfo.realMonth, realInfo.realYear, 26);
-          });
           return list.sort((a, b) => {
             if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
               return a.sortOrder - b.sortOrder;
@@ -356,6 +422,7 @@ export default function App() {
     targetMonth: number = config.month || realDateInfo.realMonth,
     targetYear: number = config.year || realDateInfo.realYear
   ): SeasonalWorker[] => {
+    const deletedSeaSet = getDeletedKeys(DELETED_SEA_STORAGE_KEY);
     const seenCodes = new Set<string>();
     const seenIds = new Set<string>();
     const result: SeasonalWorker[] = [];
@@ -363,6 +430,7 @@ export default function App() {
       if (!w) return;
       const codeStr = String(w.code || '');
       if (codeStr.startsWith('PNC00') || w.trade === 'Nhân viên chính thức') return;
+      if (deletedSeaSet.has(String(w.id)) || (codeStr && deletedSeaSet.has(codeStr))) return;
       const uniqueCode = codeStr || `SEAS_${w.id || idx + 1}`;
       if (seenCodes.has(uniqueCode)) return;
       seenCodes.add(uniqueCode);
@@ -639,7 +707,10 @@ export default function App() {
     const resultMap = new Map<string, SeasonalWorker>();
     let needsPushToCloud = false;
 
+    const deletedSeaSet = getDeletedKeys(DELETED_SEA_STORAGE_KEY);
     localList.forEach((rawW) => {
+      if (!rawW) return;
+      if (deletedSeaSet.has(String(rawW.id)) || (rawW.code && deletedSeaSet.has(String(rawW.code)))) return;
       const w = materializeSeasonalMonthlyAttendance(rawW, periodCodeStr);
       const key = w.code || w.id;
       localMap.set(key, w);
@@ -651,6 +722,8 @@ export default function App() {
 
     const cloudKeys = new Set<string>();
     cloudList.forEach((rawCw) => {
+      if (!rawCw) return;
+      if (deletedSeaSet.has(String(rawCw.id)) || (rawCw.code && deletedSeaSet.has(String(rawCw.code)))) return;
       const cw = materializeSeasonalMonthlyAttendance(rawCw, periodCodeStr);
       const key = cw.code || cw.id;
       cloudKeys.add(key);
@@ -1395,6 +1468,7 @@ export default function App() {
   // Thêm mới công nhân thời vụ - đồng bộ ngay lập tức lên Supabase Cloud (không cần F5)
   const handleAddSeasonalWorker = (newWorker: SeasonalWorker) => {
     lastLocalEditAtRef.current = Date.now();
+    removeDeletedKeys(DELETED_SEA_STORAGE_KEY, [newWorker.id, newWorker.code]);
     const recalculated = recomputeSeasonal(newWorker);
     setSeasonalWorkers((prev) => {
       const maxOrder = prev.reduce((max, w) => Math.max(max, w.sortOrder || 0), 0);
@@ -1407,6 +1481,7 @@ export default function App() {
       const snap = serializeDataSnapshot(configRef.current, employeesRef.current, next);
       lastSavedSnapshotRef.current = snap;
       lastServerSnapshotRef.current = snap;
+      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(next));
       saveSingleWorkerToServer(workerWithOrder);
       if (isSupabaseConfigured()) {
         syncSingleSeasonalWorkerToSupabase(workerWithOrder, periodCodeRef.current).then(() => notifyCrossTab());
@@ -1432,37 +1507,96 @@ export default function App() {
   // Xóa triệt để công nhân thời vụ - xóa ngay trên Supabase Cloud
   const handleDeleteSeasonalWorker = (id: string) => {
     lastLocalEditAtRef.current = Date.now();
-    const filtered = seasonalWorkers.filter((w) => String(w.id) !== String(id));
+    const strId = String(id).trim();
+    const currentList = seasonalWorkersRef.current;
+    const target = currentList.find((w) => String(w.id) === strId || String(w.code) === strId);
+    const targetId = target ? String(target.id) : strId;
+    const targetCode = target?.code ? String(target.code).trim() : '';
+
+    // Hủy mọi bộ đếm lưu tự động đang chờ của thợ này để không ghi đè ngược lại sau khi xóa
+    [`sea_${targetId}`, `sea_${targetCode}`, `sea_${strId}`].forEach((tk) => {
+      if (singleWorkerSyncTimersRef.current[tk]) {
+        clearTimeout(singleWorkerSyncTimersRef.current[tk]);
+        delete singleWorkerSyncTimersRef.current[tk];
+      }
+    });
+
+    const filtered = currentList.filter((w) => {
+      if (target) {
+        return String(w.id) !== targetId;
+      }
+      return String(w.id) !== strId && String(w.code) !== strId;
+    });
+
+    const hasRemainingSameCode = targetCode
+      ? filtered.some((w) => String(w.code).trim() === targetCode)
+      : false;
+
+    addDeletedKeys(
+      DELETED_SEA_STORAGE_KEY,
+      hasRemainingSameCode ? [targetId, strId] : [targetId, targetCode, strId]
+    );
+
     seasonalWorkersRef.current = filtered;
     const snap = serializeDataSnapshot(configRef.current, employeesRef.current, filtered);
     lastSavedSnapshotRef.current = snap;
     lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(filtered);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(filtered));
     saveAllToServer(configRef.current, employeesRef.current, filtered);
     if (isSupabaseConfigured()) {
-      deleteSeasonalWorkerFromSupabase(id).then(() => notifyCrossTab());
+      deleteSeasonalWorkerFromSupabase(
+        targetId,
+        hasRemainingSameCode ? undefined : targetCode || undefined
+      ).then(() => notifyCrossTab());
     }
   };
 
   // Xóa hàng loạt công nhân thời vụ - xóa ngay trên Supabase Cloud
   const handleDeleteBatchSeasonalWorkers = (ids: string[]) => {
     lastLocalEditAtRef.current = Date.now();
-    const idSet = new Set(ids.map((item) => String(item)));
-    const filtered = seasonalWorkers.filter((w) => !idSet.has(String(w.id)));
+    const idSet = new Set(ids.map((item) => String(item).trim()));
+    const currentList = seasonalWorkersRef.current;
+    const targets = currentList.filter(
+      (w) => idSet.has(String(w.id).trim()) || (w.code && idSet.has(String(w.code).trim()))
+    );
+    const filtered = currentList.filter(
+      (w) => !idSet.has(String(w.id).trim()) && !(w.code && idSet.has(String(w.code).trim()))
+    );
+
+    const remainingCodes = new Set(filtered.map((w) => String(w.code || '').trim()).filter(Boolean));
+    const codesToDelete = targets
+      .map((w) => String(w.code || '').trim())
+      .filter((c) => c && !remainingCodes.has(c));
+
+    targets.forEach((t) => {
+      [`sea_${t.id}`, `sea_${t.code}`].forEach((tk) => {
+        if (singleWorkerSyncTimersRef.current[tk]) {
+          clearTimeout(singleWorkerSyncTimersRef.current[tk]);
+          delete singleWorkerSyncTimersRef.current[tk];
+        }
+      });
+    });
+
+    addDeletedKeys(DELETED_SEA_STORAGE_KEY, [...ids, ...codesToDelete]);
+
     seasonalWorkersRef.current = filtered;
     const snap = serializeDataSnapshot(configRef.current, employeesRef.current, filtered);
     lastSavedSnapshotRef.current = snap;
     lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(filtered);
+    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(filtered));
     saveAllToServer(configRef.current, employeesRef.current, filtered);
     if (isSupabaseConfigured()) {
-      deleteBatchSeasonalWorkersFromSupabase(ids).then(() => notifyCrossTab());
+      deleteBatchSeasonalWorkersFromSupabase(ids, codesToDelete).then(() => notifyCrossTab());
     }
   };
 
   // Xóa toàn bộ công nhân thời vụ trên Supabase Cloud
   const handleClearAllSeasonalWorkers = () => {
     lastLocalEditAtRef.current = Date.now();
+    const allKeys = seasonalWorkersRef.current.flatMap((w) => [w.id, w.code]);
+    addDeletedKeys(DELETED_SEA_STORAGE_KEY, allKeys);
     seasonalWorkersRef.current = [];
     const snap = serializeDataSnapshot(configRef.current, employeesRef.current, []);
     lastSavedSnapshotRef.current = snap;
@@ -1477,6 +1611,7 @@ export default function App() {
 
   const handleResetSeasonalWorkers = () => {
     lastLocalEditAtRef.current = Date.now();
+    localStorage.removeItem(DELETED_SEA_STORAGE_KEY);
     seasonalWorkersRef.current = initialSeasonalWorkers;
     const snap = serializeDataSnapshot(configRef.current, employeesRef.current, initialSeasonalWorkers);
     lastSavedSnapshotRef.current = snap;
@@ -1492,6 +1627,7 @@ export default function App() {
   // Cập nhật nhân viên chính thức - phản hồi tức thì trên UI và debounce lưu Cloud 800ms
   const handleUpdateEmployee = (updated: Employee) => {
     lastLocalEditAtRef.current = Date.now();
+    removeDeletedKeys(DELETED_EMP_STORAGE_KEY, [updated.id, updated.code]);
     const recalculated = recomputeEmployeePayroll(updated);
     setEmployees((prev) => {
       const next = prev.map((emp) =>
@@ -1538,18 +1674,89 @@ export default function App() {
 
   // Thêm nhân viên chính thức
   const handleAddEmployee = (newEmp: Employee) => {
+    lastLocalEditAtRef.current = Date.now();
+    removeDeletedKeys(DELETED_EMP_STORAGE_KEY, [newEmp.id, newEmp.code]);
     const recalculated = recomputeEmployeePayroll(newEmp);
-    setEmployees((prev) => [...prev, recalculated]);
-    if (isSupabaseConfigured()) {
-      syncSingleEmployeeToSupabase(recalculated, config.periodCode).then(() => notifyCrossTab());
-    }
+    setEmployees((prev) => {
+      const next = [...prev, recalculated];
+      employeesRef.current = next;
+      const snap = serializeDataSnapshot(configRef.current, next, seasonalWorkersRef.current);
+      lastSavedSnapshotRef.current = snap;
+      lastServerSnapshotRef.current = snap;
+      localStorage.setItem('payroll_employees', JSON.stringify(next));
+      saveAllToServer(configRef.current, next, seasonalWorkersRef.current);
+      if (isSupabaseConfigured()) {
+        syncSingleEmployeeToSupabase(recalculated, periodCodeRef.current).then(() => notifyCrossTab());
+      }
+      return next;
+    });
   };
 
-  // Xóa nhân viên chính thức - xóa ngay trên Supabase Cloud
+  // Xóa nhân viên chính thức - xóa ngay trên Supabase Cloud, Server và LocalStorage
   const handleDeleteEmployee = (id: string) => {
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
+    lastLocalEditAtRef.current = Date.now();
+    const strId = String(id).trim();
+    const currentList = employeesRef.current;
+    const target = currentList.find((e) => String(e.id) === strId || String(e.code) === strId);
+    const targetId = target ? String(target.id) : strId;
+    const targetCode = target?.code ? String(target.code).trim() : '';
+
+    [`emp_${targetId}`, `emp_${targetCode}`, `emp_${strId}`].forEach((tk) => {
+      if (singleWorkerSyncTimersRef.current[tk]) {
+        clearTimeout(singleWorkerSyncTimersRef.current[tk]);
+        delete singleWorkerSyncTimersRef.current[tk];
+      }
+    });
+
+    const filtered = currentList.filter((e) => {
+      if (target) {
+        return String(e.id) !== targetId;
+      }
+      return String(e.id) !== strId && String(e.code) !== strId;
+    });
+
+    const hasRemainingSameCode = targetCode
+      ? filtered.some((e) => String(e.code).trim() === targetCode)
+      : false;
+
+    addDeletedKeys(
+      DELETED_EMP_STORAGE_KEY,
+      hasRemainingSameCode ? [targetId, strId] : [targetId, targetCode, strId]
+    );
+
+    employeesRef.current = filtered;
+    const snap = serializeDataSnapshot(configRef.current, filtered, seasonalWorkersRef.current);
+    lastSavedSnapshotRef.current = snap;
+    lastServerSnapshotRef.current = snap;
+    setEmployees(filtered);
+    localStorage.setItem('payroll_employees', JSON.stringify(filtered));
+
+    // Xóa luôn trong các slot tháng cũ nếu có để khi đổi tháng / F5 không bị phục hồi ngược lại
+    ['payroll_month_2026_09', 'payroll_month_2026_10', 'payroll_month_2026_11', 'payroll_month_2026_12'].forEach(
+      (slotKey) => {
+        try {
+          const raw = localStorage.getItem(slotKey);
+          if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+              const nextArr = arr.filter(
+                (x: any) =>
+                  String(x?.id) !== targetId &&
+                  (hasRemainingSameCode || !targetCode || String(x?.code) !== targetCode)
+              );
+              localStorage.setItem(slotKey, JSON.stringify(nextArr));
+            }
+          }
+        } catch {}
+      }
+    );
+
+    saveAllToServer(configRef.current, filtered, seasonalWorkersRef.current);
     if (isSupabaseConfigured()) {
-      deleteEmployeeFromSupabase(id).then(() => notifyCrossTab());
+      deleteEmployeeFromSupabase(
+        targetId,
+        hasRemainingSameCode ? undefined : targetCode || undefined
+      ).then(() => notifyCrossTab());
     }
   };
 
@@ -1704,6 +1911,7 @@ export default function App() {
   };
 
   const handleResetDefault = () => {
+    localStorage.removeItem(DELETED_EMP_STORAGE_KEY);
     localStorage.removeItem('payroll_employees');
     localStorage.removeItem('payroll_company_config');
     const clean = initialEmployees.map((emp) =>

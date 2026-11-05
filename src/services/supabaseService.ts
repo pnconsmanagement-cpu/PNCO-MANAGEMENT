@@ -2045,16 +2045,35 @@ export const syncSingleSeasonalWorkerToSupabase = async (
  * Khắc phục hoàn toàn lỗi xóa nhưng F5 lại hiện lại!
  */
 export const deleteSeasonalWorkerFromSupabase = async (
-  id: string
+  id: string,
+  code?: string
 ): Promise<{ success: boolean; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, message: 'Chưa cấu hình Supabase Client.' };
 
   try {
+    const strId = String(id).trim();
+    const strCode = code ? String(code).trim() : '';
+
     const { error } = await client
       .from('seasonal_workers')
       .delete()
-      .eq('id', String(id));
+      .eq('id', strId);
+
+    if (strCode) {
+      await client
+        .from('seasonal_workers')
+        .delete()
+        .eq('code', strCode);
+    }
+
+    const attCodes = Array.from(new Set([strId, strCode].filter(Boolean)));
+    if (attCodes.length > 0) {
+      await client
+        .from('attendance_records')
+        .delete()
+        .in('worker_code', attCodes);
+    }
 
     if (error) {
       console.error('deleteSeasonalWorker error:', error);
@@ -2070,18 +2089,42 @@ export const deleteSeasonalWorkerFromSupabase = async (
  * XÓA TRIỆT ĐỂ nhiều công nhân thời vụ (hàng loạt) trên Supabase Database
  */
 export const deleteBatchSeasonalWorkersFromSupabase = async (
-  ids: string[]
+  ids: string[],
+  codes?: string[]
 ): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
-  if (ids.length === 0) return { success: true, count: 0, message: 'Danh sách rỗng.' };
+  if (ids.length === 0 && (!codes || codes.length === 0)) {
+    return { success: true, count: 0, message: 'Danh sách rỗng.' };
+  }
 
   try {
-    const stringIds = ids.map((id) => String(id));
-    const { error } = await client
-      .from('seasonal_workers')
-      .delete()
-      .in('id', stringIds);
+    const stringIds = ids.map((id) => String(id).trim()).filter(Boolean);
+    const stringCodes = (codes || []).map((c) => String(c).trim()).filter(Boolean);
+
+    let error: any = null;
+    if (stringIds.length > 0) {
+      const res = await client
+        .from('seasonal_workers')
+        .delete()
+        .in('id', stringIds);
+      error = res.error;
+    }
+
+    if (stringCodes.length > 0) {
+      await client
+        .from('seasonal_workers')
+        .delete()
+        .in('code', stringCodes);
+    }
+
+    const attCodes = Array.from(new Set([...stringIds, ...stringCodes]));
+    if (attCodes.length > 0) {
+      await client
+        .from('attendance_records')
+        .delete()
+        .in('worker_code', attCodes);
+    }
 
     if (error) {
       console.error('deleteBatchSeasonalWorkers error:', error);
@@ -2249,16 +2292,35 @@ export const syncSingleEmployeeToSupabase = async (
  * XÓA TRIỆT ĐỂ 1 nhân viên chính thức trên Supabase Database
  */
 export const deleteEmployeeFromSupabase = async (
-  id: string
+  id: string,
+  code?: string
 ): Promise<{ success: boolean; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, message: 'Chưa cấu hình Supabase Client.' };
 
   try {
+    const strId = String(id).trim();
+    const strCode = code ? String(code).trim() : '';
+
     const { error } = await client
       .from('employees')
       .delete()
-      .eq('id', String(id));
+      .eq('id', strId);
+
+    if (strCode) {
+      await client
+        .from('employees')
+        .delete()
+        .eq('code', strCode);
+    }
+
+    const attCodes = Array.from(new Set([strId, strCode].filter(Boolean)));
+    if (attCodes.length > 0) {
+      await client
+        .from('attendance_records')
+        .delete()
+        .in('worker_code', attCodes);
+    }
 
     if (error) {
       console.error('deleteEmployee error:', error);

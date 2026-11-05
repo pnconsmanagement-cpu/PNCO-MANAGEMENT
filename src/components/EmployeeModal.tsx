@@ -12,6 +12,7 @@ import {
   Upload,
   ExternalLink,
   FileCheck,
+  Trash2,
 } from 'lucide-react';
 import { Employee } from '../types';
 import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
@@ -26,6 +27,7 @@ interface EmployeeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (employee: Employee) => void;
+  onDelete?: (id: string) => void;
   initialData?: Employee | null;
   employee?: Employee | null;
   existingCodes?: string[];
@@ -37,6 +39,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
   isOpen,
   onClose,
   onSave,
+  onDelete,
   initialData,
   employee,
   existingCodes = [],
@@ -45,6 +48,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
 }) => {
   const currentEmp = initialData || employee;
   const isEditing = !!currentEmp;
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   const defaultNextCode = () => {
     let nextNum = 1;
@@ -793,21 +797,59 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3.5 py-1.5 border border-slate-300 rounded text-slate-700 hover:bg-slate-50 cursor-pointer"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-[#0f3d64] hover:bg-sky-800 text-white rounded font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{isEditing ? 'Lưu cập nhật' : 'Tạo nhân viên mới'}</span>
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
+            <div>
+              {isEditing && onDelete && currentEmp && (
+                !isConfirmingDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsConfirmingDelete(true)}
+                    className="px-3 py-1.5 text-xs font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 border border-rose-300 rounded flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Xóa nhân viên này</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2 bg-rose-50 border border-rose-300 px-3 py-1 rounded">
+                    <span className="text-xs font-bold text-rose-800">Xác nhận xóa?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDelete(currentEmp.id);
+                        setIsConfirmingDelete(false);
+                        onClose();
+                      }}
+                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded text-xs transition cursor-pointer"
+                    >
+                      Đồng ý xóa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsConfirmingDelete(false)}
+                      className="px-2 py-1 text-slate-600 hover:bg-slate-200 rounded text-xs transition cursor-pointer"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-1.5 border border-slate-300 rounded text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 bg-[#0f3d64] hover:bg-sky-800 text-white rounded font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isEditing ? 'Lưu cập nhật' : 'Tạo nhân viên mới'}</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>
