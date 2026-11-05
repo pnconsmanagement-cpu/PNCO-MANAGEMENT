@@ -10,7 +10,11 @@ import {
   AttendanceRecord,
 } from '../types';
 import { buildSeasonalMonthlyAttendanceRecord } from '../data/mockSeasonalWorkers';
-import { buildMonthlyAttendanceRecord } from '../utils/payrollCalculator';
+import {
+  buildMonthlyAttendanceRecord,
+  sanitizeEmployeeMonthlyAttendance,
+  normalizeEmpName,
+} from '../utils/payrollCalculator';
 
 const env = (import.meta as any).env || {};
 
@@ -582,41 +586,58 @@ export const syncEmployeesToSupabase = async (
       }
     } catch {}
 
-    const payload = employees.map((emp, idx) => {
+    const payload = employees.map((rawEmp, idx) => {
+      const emp = sanitizeEmployeeMonthlyAttendance(rawEmp);
       const sortOrder = typeof emp.sortOrder === 'number' ? emp.sortOrder : idx + 1;
       const empCode = String(emp.code || `PNC${String(idx + 1).padStart(4, '0')}`).trim();
       const matched = existingByCode.get(empCode) || existingById.get(String(emp.id || '').trim());
       const canonicalId = matched?.id ? String(matched.id) : String(emp.id || empCode || `EMP_${idx + 1}`);
-      const existingData = matched?.employee_data;
+      const existingData = matched?.employee_data
+        ? sanitizeEmployeeMonthlyAttendance(matched.employee_data)
+        : undefined;
+      const samePerson =
+        existingData &&
+        normalizeEmpName(existingData.fullName) === normalizeEmpName(emp.fullName);
 
-      // Hợp nhất lịch sử chấm công các tháng
-      const mergedMonthly = { ...(existingData?.monthlyAttendance || {}) };
+      // Hợp nhất lịch sử chấm công các tháng (chỉ gộp nếu cùng 1 nhân sự, ưu tiên bản ghi mới hơn)
+      const mergedMonthly = samePerson ? { ...(existingData?.monthlyAttendance || {}) } : {};
+      if (!emp.monthlyAttendance?.['2026-11']) {
+        delete mergedMonthly['2026-11'];
+      }
       Object.entries(emp.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
         if (!mRec) return;
         const oldRec = mergedMonthly[mKey];
         if (!oldRec) {
           mergedMonthly[mKey] = mRec;
         } else {
+          const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+          const newIsDefault = mRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
           const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
           const newTs = mRec.lastSubmittedAt ? new Date(mRec.lastSubmittedAt).getTime() : 0;
-          if (newTs >= oldTs || isValidDailyAttendanceMap(mRec.days)) {
+          if (!newIsDefault && oldIsDefault) {
+            mergedMonthly[mKey] = mRec;
+          } else if (newIsDefault && !oldIsDefault) {
+            mergedMonthly[mKey] = oldRec;
+          } else if (newTs >= oldTs) {
             mergedMonthly[mKey] = mRec;
           }
         }
       });
 
-      const mergedEmp: Employee = {
-        ...(existingData || {}),
+      const mergedEmp: Employee = sanitizeEmployeeMonthlyAttendance({
+        ...(samePerson ? existingData || {} : {}),
         ...emp,
         id: canonicalId,
         code: empCode,
         sortOrder,
         monthlyAttendance: mergedMonthly,
-        periodRecords: {
-          ...(existingData?.periodRecords || {}),
-          ...(emp.periodRecords || {}),
-        },
-      };
+        periodRecords: samePerson
+          ? {
+              ...(existingData?.periodRecords || {}),
+              ...(emp.periodRecords || {}),
+            }
+          : emp.periodRecords || {},
+      });
 
       return {
         id: canonicalId,
@@ -686,7 +707,7 @@ export const syncEmployeesToSupabase = async (
         const emp = p.employee_data;
         if (emp?.monthlyAttendance) {
           Object.entries(emp.monthlyAttendance).forEach(([, mRec]) => {
-            if (mRec && mRec.month && mRec.year && isValidDailyAttendanceMap(mRec.days)) {
+            if (mRec && mRec.month && mRec.year) {
               const mStr = String(mRec.month).padStart(2, '0');
               const mapKey = `${p.code}_${mRec.year}_${Number(mRec.month)}`;
               const canonicalAttId = existingAttMap.get(mapKey) || `ATT-EMP-${mRec.year}-${mStr}-${p.code}`;
@@ -701,7 +722,7 @@ export const syncEmployeesToSupabase = async (
                 period_key: `${mStr}/${mRec.year}`,
                 total_work_days: Number(mRec.totalWorkDays || 0),
                 total_ot_hours: Number(mRec.totalOtHours || 0),
-                attendance_data: mRec.days || {},
+                attendance_data: isValidDailyAttendanceMap(mRec.days) ? mRec.days : {},
                 updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
               });
             }
@@ -771,9 +792,15 @@ export const loadEmployeesFromSupabase = async (
 
     if (attRecords.length > 0) {
       list.forEach((emp) => {
-        const matchingAtts = attRecords.filter(
-          (a) => a.worker_code === emp.code || a.worker_code === emp.id
-        );
+        const empNormName = normalizeEmpName(emp.fullName);
+        const matchingAtts = attRecords.filter((a) => {
+          const codeMatch = a.worker_code === emp.code || a.worker_code === emp.id;
+          if (!codeMatch) return false;
+          if (a.worker_name && normalizeEmpName(a.worker_name) !== empNormName) {
+            return false;
+          }
+          return true;
+        });
         matchingAtts.forEach((att) => {
           const mNum = Number(att.month);
           const yNum = Number(att.year);
@@ -781,12 +808,12 @@ export const loadEmployeesFromSupabase = async (
           const monthKey = `${yNum}-${mStr}`;
           if (!emp.monthlyAttendance) emp.monthlyAttendance = {};
 
-          // Chỉ ghi nhận nếu attendance_data thực sự là bản đồ ngày công (key 1..31)
+          const existingRec = emp.monthlyAttendance[monthKey];
+          const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+          const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
+
           if (isValidDailyAttendanceMap(att.attendance_data)) {
-            const existingRec = emp.monthlyAttendance[monthKey];
-            const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
-            const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
-            if (!existingRec || !isValidDailyAttendanceMap(existingRec.days) || (attTs > 0 && attTs >= existingTs)) {
+            if (!existingRec || (attTs > 0 && attTs > existingTs)) {
               emp.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
@@ -798,25 +825,14 @@ export const loadEmployeesFromSupabase = async (
                 submittedBy: 'WORKER',
               };
             }
-          } else if (emp.monthlyAttendance[monthKey] && !isValidDailyAttendanceMap(emp.monthlyAttendance[monthKey].days)) {
-            // Phục hồi nếu trước đó bị lưu nhầm toàn bộ monthlyAttendance vào days
-            const rawDays = emp.monthlyAttendance[monthKey].days as any;
-            if (rawDays && rawDays[monthKey] && isValidDailyAttendanceMap(rawDays[monthKey].days)) {
-              emp.monthlyAttendance[monthKey] = rawDays[monthKey];
-            } else if (Number(emp.monthlyAttendance[monthKey].totalWorkDays || 0) > 0) {
-              emp.monthlyAttendance[monthKey] = buildMonthlyAttendanceRecord(
-                mNum,
-                yNum,
-                Number(emp.monthlyAttendance[monthKey].totalWorkDays || 26),
-                Number(emp.monthlyAttendance[monthKey].totalOtHours || 0)
-              );
-            }
           }
         });
       });
     }
 
-    return list.sort((a, b) => {
+    return list
+      .map((emp) => sanitizeEmployeeMonthlyAttendance(emp))
+      .sort((a, b) => {
       if (typeof a.sortOrder === 'number' && typeof b.sortOrder === 'number' && a.sortOrder !== b.sortOrder) {
         return a.sortOrder - b.sortOrder;
       }
@@ -2191,21 +2207,37 @@ export const syncSingleEmployeeToSupabase = async (
     } catch {}
 
     const canonicalId = existingRowId || String(employee.id || empCode);
-    const mergedMonthly = {
-      ...(existingEmpData?.monthlyAttendance || {}),
-      ...(employee.monthlyAttendance || {}),
-    };
-    const mergedEmployee: Employee = {
-      ...(existingEmpData || {}),
-      ...employee,
+    const cleanedExisting = existingEmpData
+      ? sanitizeEmployeeMonthlyAttendance(existingEmpData)
+      : undefined;
+    const cleanedLocal = sanitizeEmployeeMonthlyAttendance(employee);
+    const samePerson =
+      cleanedExisting &&
+      normalizeEmpName(cleanedExisting.fullName) === normalizeEmpName(cleanedLocal.fullName);
+
+    const mergedMonthly = samePerson
+      ? {
+          ...(cleanedExisting?.monthlyAttendance || {}),
+          ...(cleanedLocal.monthlyAttendance || {}),
+        }
+      : { ...(cleanedLocal.monthlyAttendance || {}) };
+    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+      delete mergedMonthly['2026-11'];
+    }
+
+    const mergedEmployee: Employee = sanitizeEmployeeMonthlyAttendance({
+      ...(samePerson ? cleanedExisting || {} : {}),
+      ...cleanedLocal,
       id: String(canonicalId),
       code: empCode,
       monthlyAttendance: mergedMonthly,
-      periodRecords: {
-        ...(existingEmpData?.periodRecords || {}),
-        ...(employee.periodRecords || {}),
-      },
-    };
+      periodRecords: samePerson
+        ? {
+            ...(cleanedExisting?.periodRecords || {}),
+            ...(cleanedLocal.periodRecords || {}),
+          }
+        : cleanedLocal.periodRecords || {},
+    });
 
     const payload = {
       id: String(canonicalId),
@@ -2251,7 +2283,7 @@ export const syncSingleEmployeeToSupabase = async (
 
     if (mergedEmployee.monthlyAttendance) {
       for (const [, mRec] of Object.entries(mergedEmployee.monthlyAttendance)) {
-        if (mRec && mRec.month && mRec.year && isValidDailyAttendanceMap(mRec.days)) {
+        if (mRec && mRec.month && mRec.year) {
           const mStr = String(mRec.month).padStart(2, '0');
           const attId = `ATT-EMP-${mRec.year}-${mStr}-${empCode}`;
           const attPayload = {
@@ -2265,7 +2297,7 @@ export const syncSingleEmployeeToSupabase = async (
             period_key: `${mStr}/${mRec.year}`,
             total_work_days: Number(mRec.totalWorkDays || 0),
             total_ot_hours: Number(mRec.totalOtHours || 0),
-            attendance_data: mRec.days || {},
+            attendance_data: isValidDailyAttendanceMap(mRec.days) ? mRec.days : {},
             updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
           };
           try {

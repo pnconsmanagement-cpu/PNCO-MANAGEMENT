@@ -59,6 +59,8 @@ import {
   recomputeEmployeePayroll,
   getRealCurrentDateInfo,
   ensureEmployeeHistoricalMonths,
+  sanitizeEmployeeMonthlyAttendance,
+  normalizeEmpName,
   syncEmployeeForMonth,
   buildMonthlyAttendanceRecord,
 } from './utils/payrollCalculator';
@@ -156,7 +158,7 @@ function removeDeletedKeys(storageKey: string, keys: (string | undefined | null)
   } catch {}
 }
 
-// Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng)
+// Hàm gộp danh sách nhân viên chính thức từ Cloud/Server với dữ liệu hiện tại (bảo toàn 100% monthlyAttendance các tháng mà không tự nhảy công)
 function mergeEmployeeListsPreservingAttendance(
   localList: Employee[],
   remoteList: Employee[],
@@ -166,58 +168,59 @@ function mergeEmployeeListsPreservingAttendance(
 ): Employee[] {
   const deletedSet = getDeletedKeys(DELETED_EMP_STORAGE_KEY);
   const map = new Map<string, Employee>();
-  localList.forEach((emp) => {
-    if (!emp) return;
-    if (deletedSet.has(String(emp.id)) || (emp.code && deletedSet.has(String(emp.code)))) return;
+  localList.forEach((rawEmp) => {
+    if (!rawEmp) return;
+    if (deletedSet.has(String(rawEmp.id)) || (rawEmp.code && deletedSet.has(String(rawEmp.code)))) return;
+    const emp = sanitizeEmployeeMonthlyAttendance(rawEmp);
     map.set(emp.code || emp.id, emp);
   });
 
-  remoteList.forEach((rEmp) => {
-    if (!rEmp) return;
-    if (deletedSet.has(String(rEmp.id)) || (rEmp.code && deletedSet.has(String(rEmp.code)))) return;
+  remoteList.forEach((rawRem) => {
+    if (!rawRem) return;
+    if (deletedSet.has(String(rawRem.id)) || (rawRem.code && deletedSet.has(String(rawRem.code)))) return;
+    const rEmp = sanitizeEmployeeMonthlyAttendance(rawRem);
     const key = rEmp.code || rEmp.id;
     const existing = map.get(key);
     if (existing) {
+      const samePerson =
+        normalizeEmpName(existing.fullName) === normalizeEmpName(rEmp.fullName);
       const mergedMonthly = { ...(existing.monthlyAttendance || {}) };
-      Object.entries(rEmp.monthlyAttendance || {}).forEach(([mKey, rRec]) => {
-        const exRec = mergedMonthly[mKey];
-        if (!exRec) {
-          mergedMonthly[mKey] = rRec;
-        } else {
-          const mergedDays = {
-            ...(exRec.days || {}),
-            ...(rRec.days || {}),
-          };
-          let totDays = 0;
-          let totOt = 0;
-          Object.values(mergedDays).forEach((d: any) => {
-            if (!d) return;
-            totDays += Number(d.workUnits || 0);
-            totOt += Number(d.otHours || 0);
-          });
-          const hasDaysObj = Object.keys(mergedDays).length > 0;
-          mergedMonthly[mKey] = {
-            ...exRec,
-            ...rRec,
-            days: mergedDays,
-            totalWorkDays: hasDaysObj
-              ? Math.round(totDays * 10) / 10
-              : Math.max(exRec.totalWorkDays || 0, rRec.totalWorkDays || 0),
-            totalOtHours: hasDaysObj
-              ? Math.round(totOt * 10) / 10
-              : Math.max(exRec.totalOtHours || 0, rRec.totalOtHours || 0),
-          };
-        }
-      });
+
+      if (samePerson) {
+        Object.entries(rEmp.monthlyAttendance || {}).forEach(([mKey, rRec]) => {
+          if (!rRec) return;
+          const exRec = mergedMonthly[mKey];
+          if (!exRec) {
+            mergedMonthly[mKey] = rRec;
+          } else {
+            const exIsDefault = exRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
+            const rIsDefault = rRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
+            const exTime = exRec.lastSubmittedAt ? new Date(exRec.lastSubmittedAt).getTime() : 0;
+            const rTime = rRec.lastSubmittedAt ? new Date(rRec.lastSubmittedAt).getTime() : 0;
+
+            if (exIsDefault && !rIsDefault) {
+              mergedMonthly[mKey] = rRec;
+            } else if (!exIsDefault && rIsDefault) {
+              mergedMonthly[mKey] = exRec;
+            } else if (rTime > exTime) {
+              mergedMonthly[mKey] = rRec;
+            } else {
+              mergedMonthly[mKey] = exRec;
+            }
+          }
+        });
+      }
 
       map.set(key, {
         ...existing,
-        ...rEmp,
+        ...(samePerson ? rEmp : {}),
         monthlyAttendance: mergedMonthly,
-        periodRecords: {
-          ...(existing.periodRecords || {}),
-          ...(rEmp.periodRecords || {}),
-        },
+        periodRecords: samePerson
+          ? {
+              ...(existing.periodRecords || {}),
+              ...(rEmp.periodRecords || {}),
+            }
+          : existing.periodRecords,
       });
     } else {
       map.set(key, rEmp);
@@ -385,7 +388,11 @@ export default function App() {
               legacyMonthSlots.forEach((slot) => {
                 const slotList = legacyByMonth[slot.monthKey];
                 if (!slotList) return;
-                const foundInSlot = slotList.find((x) => x.code === withContract.code || x.id === withContract.id);
+                const foundInSlot = slotList.find(
+                  (x) =>
+                    normalizeEmpName(x?.fullName) === normalizeEmpName(withContract.fullName) &&
+                    (x.code === withContract.code || x.id === withContract.id)
+                );
                 if (!foundInSlot) return;
                 const slotRec = foundInSlot.monthlyAttendance?.[slot.monthKey];
                 if (slotRec && Object.keys(slotRec.days || {}).length > 0 && !mergedMonthly[slot.monthKey]) {
@@ -1869,7 +1876,11 @@ export default function App() {
       prev.map((emp) => {
         const mergedMonthly = { ...(emp.monthlyAttendance || {}) };
         if (legacySlotEmployees && !mergedMonthly[targetMonthKey]) {
-          const matchedOld = legacySlotEmployees.find((x) => x.code === emp.code || x.id === emp.id);
+          const matchedOld = legacySlotEmployees.find(
+            (x) =>
+              normalizeEmpName(x?.fullName) === normalizeEmpName(emp.fullName) &&
+              (x.code === emp.code || x.id === emp.id)
+          );
           if (matchedOld) {
             const oldRec = matchedOld.monthlyAttendance?.[targetMonthKey];
             if (oldRec && Object.keys(oldRec.days || {}).length > 0) {

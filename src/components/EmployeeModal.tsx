@@ -94,7 +94,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     unpaidLeaveDays: 0,
     overtimeHours: 0,
     status: 'ACTIVE',
-    selectedForAttendance: true,
+    selectedForAttendance: false,
   });
 
   useEffect(() => {
@@ -135,7 +135,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         unpaidLeaveDays: 0,
         overtimeHours: 0,
         status: 'ACTIVE',
-        selectedForAttendance: true,
+        selectedForAttendance: false,
       });
     }
   }, [initialData, isOpen]);
@@ -159,8 +159,13 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       return;
     }
 
+    const actDays = Math.max(0, Number(formData.actualWorkDays) || 0);
+    const otHours = Math.max(0, Number(formData.overtimeHours) || 0);
+    const pLeave = Math.max(0, Number(formData.paidLeaveDays) || 0);
+
     const employeeToSave: Employee = {
-      id: initialData?.id || String(Date.now()),
+      ...(currentEmp || {}),
+      id: currentEmp?.id || String(Date.now()),
       code: formData.code.trim().toUpperCase(),
       fullName: formData.fullName.trim(),
       title: formData.title || 'Nhân viên',
@@ -182,10 +187,10 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       contractAddendums: formData.contractAddendums || [],
       dependents: Number(formData.dependents) || 0,
       standardWorkDays: Number(formData.standardWorkDays) || 26,
-      actualWorkDays: Number(formData.actualWorkDays) || 26,
-      paidLeaveDays: Number(formData.paidLeaveDays) || 0,
-      unpaidLeaveDays: Number(formData.unpaidLeaveDays) || 0,
-      overtimeHours: Number(formData.overtimeHours) || 0,
+      actualWorkDays: actDays,
+      paidLeaveDays: pLeave,
+      unpaidLeaveDays: Math.max(0, Number(formData.unpaidLeaveDays) || 0),
+      overtimeHours: otHours,
       salaryType: formData.salaryType || 'MONTHLY',
       dailyRate: formData.salaryType === 'DAILY' ? Number(formData.baseSalary) : (Number(formData.dailyRate) || 0),
       baseSalary: Number(formData.baseSalary) || 0,
@@ -211,7 +216,9 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       totalDeductions: 0,
       netSalary: 0,
       status: formData.status || 'ACTIVE',
-      selectedForAttendance: formData.selectedForAttendance !== false,
+      selectedForAttendance: actDays > 0 || otHours > 0 || pLeave > 0,
+      monthlyAttendance: currentEmp?.monthlyAttendance || {},
+      periodRecords: currentEmp?.periodRecords || {},
     };
 
     const recomputed = recomputeEmployeePayroll(employeeToSave);

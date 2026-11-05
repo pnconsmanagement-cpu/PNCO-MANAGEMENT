@@ -262,62 +262,143 @@ export function buildMonthlyAttendanceRecord(
   };
 }
 
-// Dữ liệu lịch sử chuẩn Tháng 09/2026 và Tháng 10/2026 để khi người dùng chọn xem lại Tháng 9 hoặc Tháng 10 luôn có đầy đủ Bản Công & Bản Lương
-const HISTORICAL_MONTH_09_2026: Record<string, { work: number; ot: number; np: number; vm: number }> = {
-  PNC0001: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0002: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0003: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0004: { work: 25, ot: 18, np: 0, vm: 1 },
-  PNC0005: { work: 26, ot: 8, np: 0, vm: 0 },
-  PNC0006: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0007: { work: 25, ot: 19, np: 0, vm: 1 },
-  PNC0008: { work: 27, ot: 38, np: 0, vm: 0 },
-  PNC0009: { work: 25, ot: 17, np: 0, vm: 1 },
-  PNC0010: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0011: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0012: { work: 25, ot: 22, np: 0, vm: 1 },
-  PNC0013: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0014: { work: 24, ot: 10, np: 0, vm: 2 },
-  PNC0015: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0016: { work: 25, ot: 21, np: 0, vm: 1 },
-  PNC0017: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0018: { work: 25, ot: 12, np: 0, vm: 0 },
-  PNC0019: { work: 26, ot: 0, np: 0, vm: 0 },
+// Chuẩn hóa họ tên để đối chiếu chính xác nhân sự ngay cả khi Mã NV (PNC0001...) bị đánh lại số thứ tự
+export function normalizeEmpName(name?: string): string {
+  if (!name) return '';
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Dữ liệu lịch sử chuẩn Tháng 09/2026 và Tháng 10/2026 đối chiếu theo Họ Tên nhân sự
+// Chỉ những nhân viên thực sự có chấm công mới có số công > 0; nhân viên không chấm công giữ nguyên 0 công.
+const HISTORICAL_MONTH_09_BY_NAME: Record<string, { work: number; ot: number; np: number; vm: number }> = {
+  'HAN VAN QUANG': { work: 25, ot: 18, np: 0, vm: 1 },
+  'TRAN TAN DAT': { work: 26, ot: 8, np: 0, vm: 0 },
+  'HAN KIEU DUY PHON': { work: 26, ot: 0, np: 0, vm: 0 },
+  'LE DINH NGOC': { work: 25, ot: 19, np: 0, vm: 1 },
+  'DANG TAN PHIEU': { work: 27, ot: 38, np: 0, vm: 0 },
+  'TRAN NGOC HOANG HUY': { work: 25, ot: 17, np: 0, vm: 1 },
+  'PHAM TUAN CUONG': { work: 25, ot: 22, np: 0, vm: 1 },
+  'DAO VAN BINH': { work: 24, ot: 10, np: 0, vm: 2 },
+  'BUI THANH LICH': { work: 26, ot: 0, np: 0, vm: 0 },
+  'NGUYEN TOAN PHUC': { work: 25, ot: 21, np: 0, vm: 1 },
+  'HUYNH VAN BUA': { work: 26, ot: 0, np: 0, vm: 0 },
+  'NGUYEN TUAN NHAT': { work: 25, ot: 12, np: 0, vm: 0 },
+  'NGUYEN VAN NGUYEN': { work: 26, ot: 0, np: 0, vm: 0 },
 };
 
-const HISTORICAL_MONTH_10_2026: Record<string, { work: number; ot: number; np: number; vm: number }> = {
-  PNC0001: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0002: { work: 26, ot: 0, np: 0, vm: 0 },
-  PNC0003: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0004: { work: 27, ot: 90, np: 0, vm: 3 },
-  PNC0005: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0006: { work: 26, ot: 38, np: 0, vm: 3 },
-  PNC0007: { work: 26, ot: 100, np: 1, vm: 3 },
-  PNC0008: { work: 24, ot: 73, np: 2, vm: 4 },
-  PNC0009: { work: 24.5, ot: 71, np: 2, vm: 3 },
-  PNC0010: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0011: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0012: { work: 21.5, ot: 77, np: 0, vm: 3 },
-  PNC0013: { work: 0, ot: 0, np: 0, vm: 0 },
-  PNC0014: { work: 25, ot: 42, np: 0, vm: 1 },
-  PNC0015: { work: 26, ot: 24, np: 0, vm: 0 },
-  PNC0016: { work: 25.5, ot: 61, np: 1, vm: 0 },
-  PNC0017: { work: 26, ot: 20, np: 0, vm: 0 },
-  PNC0018: { work: 25, ot: 36, np: 0, vm: 1 },
-  PNC0019: { work: 26, ot: 28, np: 0, vm: 0 },
+const HISTORICAL_MONTH_10_BY_NAME: Record<string, { work: number; ot: number; np: number; vm: number }> = {
+  'HAN VAN QUANG': { work: 27, ot: 90, np: 0, vm: 3 },
+  'HAN KIEU DUY PHON': { work: 26, ot: 38, np: 0, vm: 3 },
+  'LE DINH NGOC': { work: 26, ot: 100, np: 1, vm: 3 },
+  'TRAN NGOC HOANG HUY': { work: 24.5, ot: 71, np: 2, vm: 3 },
+  'DAO VAN BINH': { work: 25, ot: 42, np: 0, vm: 1 },
+  'BUI THANH LICH': { work: 26, ot: 24, np: 0, vm: 0 },
+  'NGUYEN TOAN PHUC': { work: 25.5, ot: 61, np: 1, vm: 0 },
+  'HUYNH VAN BUA': { work: 26, ot: 20, np: 0, vm: 0 },
+  'NGUYEN TUAN NHAT': { work: 25, ot: 36, np: 0, vm: 1 },
+  'NGUYEN VAN NGUYEN': { work: 26, ot: 28, np: 0, vm: 0 },
 };
+
+// Danh sách nhân sự văn phòng / quản lý chưa chấm công Tháng 10/2026 (bị tự nhảy 26-27 công 0 OT do lỗi đồng bộ mã cũ)
+const UNCLOCKED_OCT_2026_NAMES = new Set([
+  'ADMIN',
+  'NGUYEN THANH THUY',
+  'TRAN ANH MINH',
+  'TRAN TAN DAT',
+  'HO PHAN THANH LONG',
+  'NGUYEN TAN VIET',
+  'DANG TAN PHIEU',
+  'PHAM TUAN CUONG',
+  'PHAN VAN TUAN',
+]);
 
 /**
- * Đảm bảo nhân sự luôn có lịch sử chấm công Tháng 09/2026 và Tháng 10/2026 để tra cứu lại bất kỳ lúc nào,
- * đồng thời bảo toàn 100% dữ liệu đã chấm của tháng hiện tại.
+ * Làm sạch dữ liệu chấm công tự nhảy của nhân viên chính thức:
+ * 1. Xóa bỏ công Tháng 11/2026 bị tự sao chép từ Tháng 10 hoặc tự điền 24-27 công khi chưa chấm.
+ * 2. Xóa bỏ công Tháng 10/2026 bị tự nhảy 26-27 công (0 OT) của các nhân viên chưa tham gia chấm công.
+ * 3. Khôi phục chuẩn ngày nghỉ phép (NP) của Lê Đình Ngọc & Trần Ngọc Hoàng Huy nếu bị ghi đè bởi phép gộp map cũ.
+ */
+export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
+  const normName = normalizeEmpName(emp.fullName);
+  const existingMonthly: Record<string, MonthlyAttendanceRecord> = {
+    ...(emp.monthlyAttendance || {}),
+  };
+
+  // 1. Làm sạch Tháng 11/2026 nếu bị tự sao chép từ Tháng 10 hoặc tự sinh đủ tháng
+  const rec11 = existingMonthly['2026-11'];
+  if (rec11) {
+    const rec10 = existingMonthly['2026-10'];
+    const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
+    const w11 = Number(rec11.totalWorkDays || 0);
+    const ot11 = Number(rec11.totalOtHours || 0);
+    const isDefault11 = rec11.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+    const matchesOct =
+      (rec10 && w11 > 0 && w11 === Number(rec10.totalWorkDays || 0) && ot11 === Number(rec10.totalOtHours || 0)) ||
+      (h10 && w11 > 0 && w11 === h10.work && ot11 === h10.ot);
+    // Hôm nay mới đầu tháng 11/2026 nên bất kỳ bản ghi nào tự có >= 20 công đều là dữ liệu tự nhảy
+    if (isDefault11 || matchesOct || w11 >= 20) {
+      delete existingMonthly['2026-11'];
+    }
+  }
+
+  // 2. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy 26-27 công (0h OT)
+  const rec10 = existingMonthly['2026-10'];
+  if (rec10) {
+    const w10 = Number(rec10.totalWorkDays || 0);
+    const ot10 = Number(rec10.totalOtHours || 0);
+    const isManualUser = rec10.submittedBy === 'MANUAL_USER' || rec10.submittedBy === 'WORKER';
+    if (UNCLOCKED_OCT_2026_NAMES.has(normName) && !isManualUser && ot10 === 0 && w10 >= 24) {
+      existingMonthly['2026-10'] = {
+        monthKey: '2026-10',
+        month: 10,
+        year: 2026,
+        totalWorkDays: 0,
+        totalOtHours: 0,
+        days: {},
+        lastSubmittedAt: '2026-09-01T00:00:00.000Z',
+        submittedBy: 'ADMIN',
+      };
+    } else if (HISTORICAL_MONTH_10_BY_NAME[normName] && !isManualUser) {
+      // Nếu bản ghi lịch sử Tháng 10 bị phép gộp cũ làm sai lệch số công (VD: Lê Đình Ngọc 26->27, Hoàng Huy 24.5->26.5)
+      const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
+      if (w10 !== h10.work || ot10 !== h10.ot) {
+        existingMonthly['2026-10'] = buildMonthlyAttendanceRecord(
+          10,
+          2026,
+          h10.work,
+          h10.ot,
+          h10.np,
+          h10.vm
+        );
+      }
+    }
+  }
+
+  return {
+    ...emp,
+    monthlyAttendance: existingMonthly,
+  };
+}
+
+/**
+ * Đảm bảo nhân sự luôn có lịch sử chấm công Tháng 09/2026 và Tháng 10/2026 (theo đúng tên nhân sự),
+ * tuyệt đối không tự nhảy công cho nhân viên chưa chấm công.
  */
 export function ensureEmployeeHistoricalMonths(emp: Employee): Employee {
-  const existingMonthly = { ...(emp.monthlyAttendance || {}) };
+  const sanitized = sanitizeEmployeeMonthlyAttendance(emp);
+  const existingMonthly = { ...(sanitized.monthlyAttendance || {}) };
+  const normName = normalizeEmpName(sanitized.fullName);
 
   // 1. Khởi tạo Tháng 09/2026 nếu chưa có
   if (!existingMonthly['2026-09']) {
-    const h09 = HISTORICAL_MONTH_09_2026[emp.code];
-    if (h09) {
+    const h09 = HISTORICAL_MONTH_09_BY_NAME[normName];
+    if (h09 && (h09.work > 0 || h09.ot > 0)) {
       existingMonthly['2026-09'] = buildMonthlyAttendanceRecord(
         9,
         2026,
@@ -331,8 +412,8 @@ export function ensureEmployeeHistoricalMonths(emp: Employee): Employee {
 
   // 2. Khởi tạo Tháng 10/2026 nếu chưa có
   if (!existingMonthly['2026-10']) {
-    const h10 = HISTORICAL_MONTH_10_2026[emp.code];
-    if (h10) {
+    const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
+    if (h10 && (h10.work > 0 || h10.ot > 0)) {
       existingMonthly['2026-10'] = buildMonthlyAttendanceRecord(
         10,
         2026,
@@ -345,7 +426,7 @@ export function ensureEmployeeHistoricalMonths(emp: Employee): Employee {
   }
 
   return {
-    ...emp,
+    ...sanitized,
     monthlyAttendance: existingMonthly,
   };
 }
@@ -464,6 +545,7 @@ export function recomputeEmployeePayroll(emp: Employee): Employee {
 
 /**
  * Đồng bộ 100% dữ liệu nhân viên từ Bản Chấm Công (monthlyAttendance[monthKey]) sang Bản Lương cho bất kỳ Tháng/Năm nào.
+ * Tuyệt đối KHÔNG tự sinh ngày công từ actualWorkDays của tháng khác khi tháng đang xem chưa chấm công.
  */
 export function syncEmployeeForMonth(
   emp: Employee,
@@ -499,6 +581,7 @@ export function syncEmployeeForMonth(
       overtimeHours: summary.totalOT,
       paidLeaveDays: summary.totalNP,
       unpaidLeaveDays: summary.totalVM,
+      selectedForAttendance: summary.totalCong > 0 || summary.totalOT > 0 || summary.totalNP > 0,
       monthlyAttendance: {
         ...(withHistory.monthlyAttendance || {}),
         [monthKey]: {
@@ -511,40 +594,14 @@ export function syncEmployeeForMonth(
     });
   }
 
-  // Nếu tháng đang xem chưa có bản ghi trong monthlyAttendance:
-  // Nếu nhân viên đang ở trạng thái chưa chọn chấm công (selectedForAttendance === false) hoặc đã có các tháng khác trong monthlyAttendance -> khởi tạo 0 công cho tháng mới
-  const hasOtherMonths =
-    withHistory.monthlyAttendance && Object.keys(withHistory.monthlyAttendance).length > 0;
-
-  if (hasOtherMonths || withHistory.selectedForAttendance === false) {
-    return recomputeEmployeePayroll({
-      ...withHistory,
-      standardWorkDays: withHistory.standardWorkDays || standardWorkDays,
-      actualWorkDays: 0,
-      overtimeHours: 0,
-      paidLeaveDays: 0,
-      unpaidLeaveDays: 0,
-    });
-  }
-
-  // Fallback nếu hồ sơ cũ có sẵn actualWorkDays > 0 cho kỳ hiện tại
-  const builtRecord = buildMonthlyAttendanceRecord(
-    month,
-    year,
-    withHistory.actualWorkDays || 0,
-    withHistory.overtimeHours || 0,
-    withHistory.paidLeaveDays || 0,
-    withHistory.unpaidLeaveDays || 0
-  );
-
+  // Nếu tháng đang xem chưa có bản ghi chấm công trong monthlyAttendance -> mặc định 0 công, Chưa chấm công!
   return recomputeEmployeePayroll({
     ...withHistory,
     standardWorkDays: withHistory.standardWorkDays || standardWorkDays,
-    actualWorkDays: builtRecord.totalWorkDays,
-    overtimeHours: builtRecord.totalOtHours,
-    monthlyAttendance: {
-      ...(withHistory.monthlyAttendance || {}),
-      [monthKey]: builtRecord,
-    },
+    actualWorkDays: 0,
+    overtimeHours: 0,
+    paidLeaveDays: 0,
+    unpaidLeaveDays: 0,
+    selectedForAttendance: false,
   });
 }

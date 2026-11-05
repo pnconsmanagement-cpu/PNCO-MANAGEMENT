@@ -95,8 +95,8 @@ function ensureMonthlyDaysForWorker(
   month: number,
   year: number,
   daysMeta: DayMeta[],
-  actualWorkDays: number,
-  overtimeHours: number,
+  _actualWorkDays: number,
+  _overtimeHours: number,
   paidLeaveDays: number = 0,
   unpaidLeaveDays: number = 0
 ): { [dayNumber: number]: DailyAttendanceDetail } {
@@ -112,21 +112,19 @@ function ensureMonthlyDaysForWorker(
     return {};
   }
 
-  // Nếu nhân sự chưa có công và chưa có OT -> để trống toàn bộ (-)
-  if (
-    (actualWorkDays || 0) <= 0 &&
-    (overtimeHours || 0) <= 0 &&
-    (paidLeaveDays || 0) <= 0 &&
-    (unpaidLeaveDays || 0) <= 0
-  ) {
+  const recWork = Number(existingRecord.totalWorkDays || 0);
+  const recOt = Number(existingRecord.totalOtHours || 0);
+
+  // Nếu bản ghi tháng có 0 công và 0 OT -> để trống toàn bộ (-)
+  if (recWork <= 0 && recOt <= 0) {
     return {};
   }
 
   const generated: { [dayNumber: number]: DailyAttendanceDetail } = {};
-  let remWork = Math.max(0, Number(actualWorkDays) || 0);
+  let remWork = Math.max(0, recWork);
   let remLeave = Math.max(0, Math.round(Number(paidLeaveDays) || 0));
   let remAbsent = Math.max(0, Math.round(Number(unpaidLeaveDays) || 0));
-  let remOt = Math.max(0, Math.round(Number(overtimeHours) || 0));
+  let remOt = Math.max(0, Math.round(recOt));
 
   for (const dm of daysMeta) {
     if (dm.isSunday) {
@@ -430,8 +428,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           const isParticipating =
             totals.totalCong > 0 ||
             totals.totalOT > 0 ||
-            totals.totalNP > 0 ||
-            syncedEmp.selectedForAttendance === true;
+            totals.totalNP > 0;
           const livePayrollEmp = recomputeEmployeePayroll({
             ...syncedEmp,
             actualWorkDays: totals.totalCong,
@@ -579,7 +576,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             totalOtHours: recalcTotals.totalOT,
             days: finalMap,
             lastSubmittedAt: new Date().toISOString(),
-            submittedBy: 'ADMIN',
+            submittedBy: 'MANUAL_USER' as any,
           };
 
           const nextEmp: Employee = {
@@ -823,6 +820,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 totalWorkDays: 0,
                 totalOtHours: 0,
                 days: {},
+                lastSubmittedAt: new Date().toISOString(),
+                submittedBy: 'MANUAL_USER' as any,
               },
             },
           });
