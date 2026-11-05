@@ -362,20 +362,6 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
                 </td>
               </tr>
             )}
-            {(employee.unionFee || 0) > 0 && (
-              <tr>
-                <td className="py-1 px-2 border border-slate-200 text-center font-bold">
-                  {rowStt++}
-                </td>
-                <td className="py-1 px-2.5 pl-4 border border-slate-200 text-slate-900">
-                  Đoàn phí công đoàn
-                </td>
-                <td className="py-1 px-2 border border-slate-200 text-center text-slate-500">—</td>
-                <td className="py-1 px-2.5 border border-slate-200 text-right font-mono font-bold text-[#991b1b]">
-                  {formatNumberOnly(employee.unionFee)}
-                </td>
-              </tr>
-            )}
             {(employee.personalIncomeTax || 0) > 0 && (
               <tr>
                 <td className="py-1 px-2 border border-slate-200 text-center font-bold">

@@ -1080,17 +1080,6 @@ export function generatePermanentEmployeeReceiptHTML(
           </tr>`
       : '';
 
-  const unionHtml =
-    (employee.unionFee || 0) > 0
-      ? `
-          <tr>
-            <td style="text-align: center; font-weight: bold;">${++cStt}</td>
-            <td style="padding-left: 14px;">Đoàn phí công đoàn</td>
-            <td style="text-align: center; color: #475569;">—</td>
-            <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.unionFee)}</td>
-          </tr>`
-      : '';
-
   const taxHtml =
     (employee.personalIncomeTax || 0) > 0
       ? `
@@ -1463,7 +1452,6 @@ export function generatePermanentEmployeeReceiptHTML(
             <td style="text-align: right; font-family: monospace; font-weight: bold; color: #991b1b;">${formatNumberOnly(employee.totalDeductions)}</td>
           </tr>
           ${insHtml}
-          ${unionHtml}
           ${taxHtml}
           <tr>
             <td style="text-align: center; font-weight: bold;">${++cStt}</td>

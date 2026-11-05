@@ -142,9 +142,10 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return employees.map((emp) => {
       const synced = syncEmployeeForMonth(emp, currentMonth, currentYear, config.standardWorkDays || 26);
       const adv = emp.advancePayment || synced.advancePayment || 0;
-      const totalDeductions = (synced.totalInsurance || 0) + (synced.personalIncomeTax || 0) + (synced.unionFee || 0) + adv;
+      const totalDeductions = (synced.totalInsurance || 0) + (synced.personalIncomeTax || 0) + adv;
       return {
         ...synced,
+        unionFee: 0,
         advancePayment: adv,
         totalDeductions,
         netSalary: Math.max(0, (synced.totalIncome || 0) - totalDeductions),
@@ -448,12 +449,12 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         const scaledInsurance = Math.round((emp.totalInsurance || 0) * mult);
         const scaledTax = Math.round((emp.personalIncomeTax || 0) * mult);
         const scaledAdvance = Math.round((emp.advancePayment || 0) * mult);
-        const scaledDeductions =
-          scaledInsurance + scaledTax + scaledAdvance + Math.round((emp.unionFee || 0) * mult);
+        const scaledDeductions = scaledInsurance + scaledTax + scaledAdvance;
         const scaledNet = Math.max(0, scaledTotalIncome - scaledDeductions);
 
         return {
           ...emp,
+          unionFee: 0,
           actualWorkDays: scaledActualDays,
           standardWorkDays: scaledStdDays,
           baseSalary: scaledBase,
@@ -1225,7 +1226,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <div className="text-[9px] text-amber-200 font-normal">(=Lương BH × 10.5%)</div>
               </th>
               <th className="p-2 border-r border-sky-800 text-right">Tạm ứng</th>
-              <th className="p-2 border-r border-sky-800 text-right">Đoàn phí</th>
               <th className="p-2 border-r border-sky-800 text-right bg-amber-900 font-bold">TỔNG KHẤU TRỪ</th>
               <th className="p-2 border-r border-sky-800 text-right bg-emerald-900 font-bold">THỰC LĨNH</th>
               <th className="p-2 border-r border-sky-800">Số tài khoản</th>
@@ -1236,7 +1236,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
           <tbody className="divide-y divide-slate-200">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={22} className="p-8 text-center text-slate-400">
+                <td colSpan={21} className="p-8 text-center text-slate-400">
                   {showResignedHistory
                     ? 'Chưa có nhân sự nào trong danh mục đã nghỉ việc'
                     : 'Không tìm thấy nhân viên đang làm việc phù hợp với bộ lọc'}
@@ -1362,7 +1362,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <td className="p-1.5 border-r border-slate-200 text-right font-mono">
                   {emp.advancePayment > 0 ? formatNumberOnly(emp.advancePayment) : '-'}
                 </td>
-                <td className="p-1.5 border-r border-slate-200 text-right font-mono">{formatNumberOnly(emp.unionFee)}</td>
                 <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-amber-950 bg-amber-50/70">
                   {formatNumberOnly(emp.totalDeductions)}
                 </td>
@@ -1461,9 +1460,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               </td>
               <td className="p-2 text-right border-r border-slate-300 font-mono">
                 {formatNumberOnly(filtered.reduce((s, e) => s + e.advancePayment, 0))}
-              </td>
-              <td className="p-2 text-right border-r border-slate-300 font-mono">
-                {formatNumberOnly(filtered.reduce((s, e) => s + e.unionFee, 0))}
               </td>
               <td className="p-2 text-right border-r border-slate-300 font-mono text-amber-900 bg-amber-100 font-black">
                 {formatNumberOnly(filtered.reduce((s, e) => s + e.totalDeductions, 0))}
@@ -2170,7 +2166,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <td className="p-2.5 text-right font-mono text-rose-300">
                   {formatNumberOnly(
                     filtered.reduce(
-                      (s, e) => s + (e.totalInsurance || 0) + (e.personalIncomeTax || 0) + (e.unionFee || 0),
+                      (s, e) => s + (e.totalInsurance || 0) + (e.personalIncomeTax || 0),
                       0
                     ) + scaledSeasonal.reduce((s, w) => s + (w.personalIncomeTax || 0), 0)
                   )}

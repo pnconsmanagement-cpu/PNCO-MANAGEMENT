@@ -510,15 +510,13 @@ export function recomputeEmployeePayroll(emp: Employee): Employee {
   const unemploymentInsurance = Math.round(insBase * 0.01);
   const totalInsurance = socialInsurance + healthInsurance + unemploymentInsurance;
 
-  const unionFee = emp.unionFee !== undefined && emp.unionFee > 0
-    ? emp.unionFee
-    : Math.min(234000, Math.round(insBase * 0.01));
+  const unionFee = 0;
 
   const personalIncomeTax = 0;
   const calculatedTaxableIncome = 0;
   const taxExempt = 0;
 
-  const totalDeductions = totalInsurance + unionFee + (emp.advancePayment || 0);
+  const totalDeductions = totalInsurance + (emp.advancePayment || 0);
   const netSalary = Math.max(0, totalIncome - totalDeductions);
 
   return {
