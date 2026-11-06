@@ -80,13 +80,17 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     };
   }, [employees]);
 
-  // Tính toán nhân công thời vụ
+  // Tính toán nhân công thời vụ (1 tuần, 2 tuần, tháng)
   const seasonalStats = useMemo(() => {
-    const active = seasonalWorkers.filter((w) => w.status !== 'PAUSED');
+    const active = seasonalWorkers.filter(
+      (w) => w.status !== 'PAUSED' && w.payrollCycleType !== 'TEAM'
+    );
     const filtered =
       selectedProjectFilter === 'ALL'
         ? active
-        : active.filter((w) => w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase()));
+        : active.filter(
+            (w) => w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase())
+          );
 
     const count = filtered.length;
     const baseTotal = filtered.reduce((s, w) => s + (w.salaryByDays || 0), 0);
@@ -110,22 +114,53 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     };
   }, [seasonalWorkers, selectedProjectFilter]);
 
-  // Tính toán nhân công tổ đội
+  // Tính toán nhân công tổ đội (bao gồm cả nhân viên thuộc nhóm Tổ Đội được chọn trả lương trong tháng)
   const teamStats = useMemo(() => {
     const active = teamWorkers.filter((t) => t.status !== 'PAUSED');
     const filtered =
       selectedProjectFilter === 'ALL'
         ? active
-        : active.filter((t) => t.project && t.project.toLowerCase().includes(selectedProjectFilter.toLowerCase()));
+        : active.filter(
+            (t) => t.project && t.project.toLowerCase().includes(selectedProjectFilter.toLowerCase())
+          );
 
-    const count = filtered.length;
-    const totalWorkers = filtered.reduce((s, t) => s + (t.workerCount || 1), 0);
-    const baseTotal = filtered.reduce((s, t) => s + (t.salaryByDays || 0), 0);
-    const otTotal = filtered.reduce((s, t) => s + (t.overtimePay || 0), 0);
-    const allowanceTotal = filtered.reduce((s, t) => s + (t.mealAllowance || 0) + (t.otherBonus || 0), 0);
-    const totalIncome = filtered.reduce((s, t) => s + (t.totalIncome || 0), 0);
-    const advanceTotal = filtered.reduce((s, t) => s + (t.advancePayment || 0), 0);
-    const netTotal = filtered.reduce((s, t) => s + (t.netSalary || 0), 0);
+    const seasonalTeamActive = seasonalWorkers.filter(
+      (w) =>
+        w.status !== 'PAUSED' &&
+        w.payrollCycleType === 'TEAM' &&
+        (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
+    );
+    const filteredSeasonalTeam =
+      selectedProjectFilter === 'ALL'
+        ? seasonalTeamActive
+        : seasonalTeamActive.filter(
+            (w) => w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase())
+          );
+
+    const count = filtered.length + filteredSeasonalTeam.length;
+    const totalWorkers =
+      filtered.reduce((s, t) => s + (t.workerCount || 1), 0) + filteredSeasonalTeam.length;
+    const baseTotal =
+      filtered.reduce((s, t) => s + (t.salaryByDays || 0), 0) +
+      filteredSeasonalTeam.reduce((s, w) => s + (w.salaryByDays || 0), 0);
+    const otTotal =
+      filtered.reduce((s, t) => s + (t.overtimePay || 0), 0) +
+      filteredSeasonalTeam.reduce((s, w) => s + (w.overtimePay || 0), 0);
+    const allowanceTotal =
+      filtered.reduce((s, t) => s + (t.mealAllowance || 0) + (t.otherBonus || 0), 0) +
+      filteredSeasonalTeam.reduce(
+        (s, w) => s + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0),
+        0
+      );
+    const totalIncome =
+      filtered.reduce((s, t) => s + (t.totalIncome || 0), 0) +
+      filteredSeasonalTeam.reduce((s, w) => s + (w.totalIncome || 0), 0);
+    const advanceTotal =
+      filtered.reduce((s, t) => s + (t.advancePayment || 0), 0) +
+      filteredSeasonalTeam.reduce((s, w) => s + (w.advancePayment || 0), 0);
+    const netTotal =
+      filtered.reduce((s, t) => s + (t.netSalary || 0), 0) +
+      filteredSeasonalTeam.reduce((s, w) => s + (w.netSalary || 0), 0);
 
     return {
       count,
@@ -137,7 +172,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       advanceTotal,
       netTotal,
     };
-  }, [teamWorkers, selectedProjectFilter]);
+  }, [teamWorkers, seasonalWorkers, selectedProjectFilter]);
 
   // Hệ số nhân theo chu kỳ thời gian (Tháng: 1x, Quý: 3x, Năm: 12x)
   const multiplier = useMemo(() => {
@@ -166,18 +201,39 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
   // Phân tích chi phí theo từng dự án
   const projectExpenses = useMemo(() => {
     return projects.map((p) => {
+      const matchProj = (projStr?: string) => {
+        if (!projStr) return false;
+        const wp = projStr.trim().toLowerCase();
+        const pn = p.name.trim().toLowerCase();
+        const pc = (p.code || '').trim().toLowerCase();
+        return (
+          wp === pn ||
+          wp.includes(pn.substring(0, Math.min(15, pn.length))) ||
+          pn.includes(wp.substring(0, Math.min(15, wp.length))) ||
+          (pc.length > 0 && wp.includes(pc))
+        );
+      };
       const pSeasonal = seasonalWorkers.filter(
-        (w) => w.project && w.project.toLowerCase().includes(p.name.toLowerCase().substring(0, 15))
+        (w) => w.payrollCycleType !== 'TEAM' && matchProj(w.project)
       );
-      const pTeams = teamWorkers.filter(
-        (t) => t.project && t.project.toLowerCase().includes(p.name.toLowerCase().substring(0, 15))
+      const pSeasonalTeams = seasonalWorkers.filter(
+        (w) =>
+          w.payrollCycleType === 'TEAM' &&
+          matchProj(w.project) &&
+          (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
       );
+      const pTeams = teamWorkers.filter((t) => matchProj(t.project));
 
       const seasonalMonthly = pSeasonal.reduce((s, w) => s + (w.totalIncome || 0), 0);
-      const teamMonthly = pTeams.reduce((s, t) => s + (t.totalIncome || 0), 0);
+      const teamMonthly =
+        pTeams.reduce((s, t) => s + (t.totalIncome || 0), 0) +
+        pSeasonalTeams.reduce((s, w) => s + (w.totalIncome || 0), 0);
       const engineersMonthly = 35000000; // Chi phí kỹ sư giám sát tại dự án ước tính
       const monthlyTotal = seasonalMonthly + teamMonthly + engineersMonthly;
-      const actualCost = p.actualLaborCost || monthlyTotal * multiplier;
+      const actualCost =
+        seasonalMonthly + teamMonthly > 0
+          ? monthlyTotal * multiplier
+          : p.actualLaborCost || monthlyTotal * multiplier;
       const budgetPercent = p.laborBudget > 0 ? Math.min(Math.round((actualCost / p.laborBudget) * 100), 100) : 0;
 
       return {

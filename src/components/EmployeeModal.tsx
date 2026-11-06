@@ -219,10 +219,11 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       selectedForAttendance: actDays > 0 || otHours > 0 || pLeave > 0,
       monthlyAttendance: currentEmp?.monthlyAttendance || {},
       periodRecords: currentEmp?.periodRecords || {},
+      updatedAt: Date.now(),
     };
 
     const recomputed = recomputeEmployeePayroll(employeeToSave);
-    onSave(recomputed);
+    onSave({ ...recomputed, updatedAt: Date.now() });
     onClose();
   };
 

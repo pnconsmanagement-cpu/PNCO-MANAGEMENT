@@ -1064,7 +1064,11 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                   const isResigned = emp.status === 'RESIGNED';
                   const contractInfo = getContractStatusInfo(emp);
                   const isRecentlySaved = lastSavedCode === emp.code;
-                  const totalFixedAllowance = (emp.responsibilityAllowance || 0) + (emp.projectAllowance || 0);
+                  const totalFixedAllowance =
+                    (emp.responsibilityAllowance || 0) +
+                    (emp.projectAllowance || 0) +
+                    (emp.mealAllowance || 0) +
+                    (emp.phoneTravelAllowance || 0);
 
                   return (
                     <tr
@@ -1159,12 +1163,26 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                       </td>
 
                       {/* Mức lương cơ bản */}
-                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
+                      <td
+                        onClick={() => {
+                          setEditingEmployee(emp);
+                          setIsModalOpen(true);
+                        }}
+                        title="Bấm để chỉnh sửa mức lương cơ bản"
+                        className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900 hover:bg-sky-50 cursor-pointer"
+                      >
                         {new Intl.NumberFormat('vi-VN').format(emp.baseSalary || 0)} đ
                       </td>
 
                       {/* Lương đóng BH */}
-                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-semibold text-sky-900">
+                      <td
+                        onClick={() => {
+                          setEditingEmployee(emp);
+                          setIsModalOpen(true);
+                        }}
+                        title="Bấm để chỉnh sửa mức lương đóng bảo hiểm"
+                        className="p-2.5 border-r border-slate-200 text-right font-mono font-semibold text-sky-900 hover:bg-sky-50 cursor-pointer"
+                      >
                         {(emp.insuranceSalary || 0) > 0 ? (
                           `${new Intl.NumberFormat('vi-VN').format(emp.insuranceSalary || 0)} đ`
                         ) : (
@@ -1172,12 +1190,21 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
                         )}
                       </td>
 
-                      {/* Phụ cấp cố định (Trách nhiệm + Dự án) */}
-                      <td className="p-2.5 border-r border-slate-200 text-right font-mono text-slate-700">
+                      {/* Phụ cấp cố định (Trách nhiệm + Dự án + Khác) */}
+                      <td
+                        onClick={() => {
+                          setEditingEmployee(emp);
+                          setIsModalOpen(true);
+                        }}
+                        title="Bấm để điều chỉnh phụ cấp cho nhân viên"
+                        className="p-2.5 border-r border-slate-200 text-right font-mono text-slate-700 hover:bg-sky-50 cursor-pointer"
+                      >
                         {totalFixedAllowance > 0 ? (
-                          `${new Intl.NumberFormat('vi-VN').format(totalFixedAllowance)} đ`
+                          <span className="font-bold text-emerald-700">
+                            {new Intl.NumberFormat('vi-VN').format(totalFixedAllowance)} đ
+                          </span>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-400 hover:text-sky-600">+ Nhập PC</span>
                         )}
                       </td>
 

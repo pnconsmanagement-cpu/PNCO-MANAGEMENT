@@ -65,7 +65,8 @@ export interface Employee {
   contractFileName?: string; // Tên file tài liệu đính kèm (vd: HDLD_PNC0001.pdf)
   contractAddendums?: ContractAddendum[]; // Phụ lục hợp đồng & Lịch sử nâng lương hàng năm
   sortOrder?: number; // Thứ tự sắp xếp STT hiển thị cố định giữa các máy tính
-  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH';
+  updatedAt?: number; // Thời điểm cập nhật hồ sơ/phụ cấp/lương gần nhất (ms) để đồng bộ chuẩn giữa các máy tính
+  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM';
   currentPeriodKey?: string;
   periodRecords?: { [periodKey: string]: SeasonalPeriodRecord };
   monthlyAttendance?: { [monthKey: string]: MonthlyAttendanceRecord }; // Bản ghi chấm công từng ngày (đồng bộ từ link chấm công & bảng chấm công)
@@ -75,6 +76,7 @@ export interface SeasonalWorker {
   id: string; // STT / ID
   code: string; // PNC-TV01, PNC-TV02...
   sortOrder?: number; // Thứ tự sắp xếp STT hiển thị cố định giữa các máy tính
+  updatedAt?: number;
   fullName: string; // Họ tên công nhân kỹ thuật
   trade: string; // Nghề / Chuyên môn: Thợ hàn kết cấu, Thợ điện M&E, Thợ lắp ống PCCC, Thợ HVAC, Thợ cơ khí, Thợ phụ công trình...
   skillLevel: string; // Bậc thợ / Tay nghề: Thợ bậc 4/7, Thợ chính, Thợ 6G, Thợ phụ, Thợ lành nghề...
@@ -109,7 +111,7 @@ export interface SeasonalWorker {
   status: 'ACTIVE' | 'COMPLETED' | 'PAUSED'; // 'ACTIVE' = Đang thi công, 'COMPLETED' = Đã thanh lý đợt khoán, 'PAUSED' = Tạm ngưng
   selectedForAttendance?: boolean; // Trạng thái tham gia chấm công kỳ hiện tại (đồng bộ sang Bản Chấm Công & Bản Lương)
   notes?: string; // Ghi chú hợp đồng hoặc công việc
-  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH'; // Option chu kỳ lương: 1 tuần, 2 tuần hoặc cả tháng
+  payrollCycleType?: '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM'; // Option chu kỳ lương: 1 tuần, 2 tuần, cả tháng hoặc tổ đội
   currentPeriodKey?: string; // Khóa chu kỳ (vd: "2026-09_W1", "2026-09_BI1", "2026-09_MONTH")
   currentWeekLabel?: string; // Nhãn chu kỳ (vd: "Tuần 2 (08/09 - 14/09)", "Đợt 1 (01/09 - 15/09)")
   currentWeekId?: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'BI1' | 'BI2'
@@ -146,7 +148,7 @@ export interface MonthlyAttendanceRecord {
   submittedBy?: string; // 'WORKER' | 'FOREMAN' | 'ADMIN'
 }
 
-export type SeasonalCycleType = '1_WEEK' | '2_WEEKS' | '1_MONTH';
+export type SeasonalCycleType = '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM';
 
 export interface PayrollPeriodOption {
   id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'W6' | 'BI1' | 'BI2' | 'M1'
@@ -168,8 +170,9 @@ export interface SeasonalPeriodRecord {
   periodKey: string; // vd: "2026-09_W1", "2026-09_BI1"
   periodLabel: string; // vd: "Tuần 1 (01/09 - 07/09)"
   cycleType: SeasonalCycleType;
-  isRecorded: boolean; // true nếu đã được chấm và lưu số công
-  dailyRate?: number; // Đơn giá ngày công độc lập của chu kỳ / tuần này (giữ nguyên giá trị riêng từng tuần)
+  isRecorded: boolean; // true nếu đã được chấm và lưu số công / chọn trả lương
+  dailyRate?: number; // Đơn giá ngày công / Số tiền thanh toán độc lập của chu kỳ này
+  project?: string; // Công trình / Dự án thanh toán trong kỳ này
   actualWorkDays: number;
   salaryByDays: number;
   overtimeHours: number;

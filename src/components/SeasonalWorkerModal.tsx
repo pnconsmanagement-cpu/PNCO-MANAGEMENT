@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Calendar,
   Check,
+  CheckCircle2,
   CreditCard,
   Trash2,
   AlertTriangle,
@@ -373,9 +374,12 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     });
   };
 
-  // Đổi Chu kỳ: 1 tuần vs 2 tuần vs Lương Tháng
+  // Đổi Chu kỳ: 1 tuần vs 2 tuần vs Lương Tháng vs Tổ Đội
   const handleCycleChange = (newCycle: SeasonalCycleType) => {
     setCycleType(newCycle);
+    if (newCycle === 'TEAM') {
+      setAttendanceMode('MANUAL');
+    }
     const newPeriods = getPayrollPeriods(attendanceYear, attendanceMonth, newCycle);
     const firstPeriod = newPeriods[0];
     setSelectedPeriodId(firstPeriod.id);
@@ -386,6 +390,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       activePeriod,
       {
         payrollCycleType: newCycle,
+        project: form.project,
         dailyRate: form.dailyRate,
         actualWorkDays: form.actualWorkDays,
         overtimeHours: form.overtimeHours,
@@ -394,6 +399,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         travelSafetyAllowance: form.travelSafetyAllowance,
         otherBonus: form.otherBonus,
         advancePayment: form.advancePayment,
+        selectedForAttendance: form.selectedForAttendance,
       }
     );
 
@@ -401,7 +407,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setForm(
       recomputeSeasonalWorkerPayroll({
         ...newPeriodState,
-        dailyRate: form.dailyRate,
+        dailyRate: newPeriodState.dailyRate || form.dailyRate,
         payrollCycleType: newCycle,
       })
     );
@@ -663,6 +669,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       activePeriod,
       {
         payrollCycleType: cycleType,
+        project: form.project,
         dailyRate: form.dailyRate,
         actualWorkDays: targetDays,
         overtimeHours: targetOT,
@@ -676,6 +683,8 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
         bankName: cleanedBankName,
         paymentMethod: cleanedPaymentMethod,
         notes: form.notes,
+        selectedForAttendance:
+          cycleType === 'TEAM' ? Boolean(form.selectedForAttendance || targetDays > 0) : undefined,
       }
     );
 
@@ -708,7 +717,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   {isEditing ? `Hồ sơ công nhân: ${worker?.fullName}` : 'Thêm mới Công nhân kỹ thuật / Lao động thời vụ'}
                 </h3>
                 <span className="px-2 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[10px] uppercase tracking-wider">
-                  {cycleType === '1_WEEK' ? 'Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Lương 2 Tuần' : 'Lương Tháng'}
+                  {cycleType === '1_WEEK'
+                    ? 'Lương 1 Tuần'
+                    : cycleType === '2_WEEKS'
+                    ? 'Lương 2 Tuần'
+                    : cycleType === 'TEAM'
+                    ? 'Tổ Đội'
+                    : 'Lương Tháng'}
                 </span>
               </div>
               <p className="text-xs text-sky-200 mt-0.5">
@@ -716,6 +731,8 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   ? 'Nhân sự thuộc Tab Bản Lương 1 Tuần — Chấm công 7 ngày/tuần, đơn giá ngày, OT và thuế TNCN 10%'
                   : cycleType === '2_WEEKS'
                   ? 'Nhân sự thuộc Tab Bản Lương 2 Tuần — Chấm công 15 ngày/đợt, đơn giá ngày, OT và thuế TNCN 10%'
+                  : cycleType === 'TEAM'
+                  ? 'Nhân sự thuộc Nhóm Tổ Đội — Không cần chấm công, chọn trả lương trực tiếp tại Bản Lương để thống kê chi phí dự án & tháng'
                   : 'Nhân sự thuộc Tab Bản Lương Tháng — Chấm công cả tháng, đơn giá ngày, OT và thuế TNCN 10%'}
               </p>
             </div>
@@ -870,13 +887,20 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <label className="font-bold text-slate-800 flex items-center gap-1.5">
                     <Layers className="w-4 h-4 text-sky-700" />
-                    <span>Khai báo Chu kỳ nhận lương * (Phân loại sang Bản Lương 1 Tuần / 2 Tuần / Lương Tháng)</span>
+                    <span>Khai báo Chu kỳ nhận lương * (Phân loại sang Bản Lương 1 Tuần / 2 Tuần / Lương Tháng / Tổ Đội)</span>
                   </label>
                   <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                    Hiển thị bên Bản Lương: {cycleType === '1_WEEK' ? 'Tab Bản Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Tab Bản Lương 2 Tuần' : 'Tab Bản Lương Tháng'}
+                    Hiển thị bên Bản Lương:{' '}
+                    {cycleType === '1_WEEK'
+                      ? 'Tab Bản Lương 1 Tuần'
+                      : cycleType === '2_WEEKS'
+                      ? 'Tab Bản Lương 2 Tuần'
+                      : cycleType === 'TEAM'
+                      ? 'Tab Bản Lương Tổ Đội (Không qua Chấm Công)'
+                      : 'Tab Bản Lương Tháng'}
                   </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                   <button
                     type="button"
                     onClick={() => handleCycleChange('1_WEEK')}
@@ -933,6 +957,28 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                       </div>
                     </div>
                     {cycleType === '1_MONTH' && (
+                      <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[9px]">ĐANG CHỌN</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCycleChange('TEAM')}
+                    className={`px-3 py-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
+                      cycleType === 'TEAM'
+                        ? 'bg-purple-900 text-white border-purple-900 shadow-sm ring-2 ring-purple-700/30'
+                        : 'bg-white text-slate-700 border-purple-300 hover:bg-purple-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs flex items-center gap-1">
+                        <span>Tổ Đội</span>
+                      </div>
+                      <div className={`text-[10px] ${cycleType === 'TEAM' ? 'text-purple-200' : 'text-slate-500'}`}>
+                        Không chấm công • Chọn trả ở Bản Lương
+                      </div>
+                    </div>
+                    {cycleType === 'TEAM' && (
                       <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[9px]">ĐANG CHỌN</span>
                     )}
                   </button>
@@ -1062,49 +1108,146 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900">
-                      3. BẢNG CHẤM CÔNG & ĐƠN GIÁ LƯƠNG THEO CHU KỲ
+                      {cycleType === 'TEAM'
+                        ? '3. KÊ KHAI CHI PHÍ LƯƠNG / THANH TOÁN TỔ ĐỘI THEO THÁNG'
+                        : '3. BẢNG CHẤM CÔNG & ĐƠN GIÁ LƯƠNG THEO CHU KỲ'}
                     </h4>
                     <span className="px-2 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[10px] uppercase">
-                      {cycleType === '1_WEEK' ? 'Lương 1 Tuần' : cycleType === '2_WEEKS' ? 'Lương 2 Tuần' : 'Lương Cả Tháng'}
+                      {cycleType === '1_WEEK'
+                        ? 'Lương 1 Tuần'
+                        : cycleType === '2_WEEKS'
+                        ? 'Lương 2 Tuần'
+                        : cycleType === 'TEAM'
+                        ? 'Tổ Đội (Không chấm công)'
+                        : 'Lương Cả Tháng'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Hỗ trợ chuyển đổi giữa chu kỳ 1 tuần, 2 tuần và cả tháng. Tự động đồng bộ với link chấm công di động.
+                    {cycleType === 'TEAM'
+                      ? 'Nhân viên Tổ Đội không xuất hiện trong Bản Chấm Công. Khi chọn trả lương tại Bản Lương sẽ lưu chi phí theo tháng và dự án.'
+                      : 'Hỗ trợ chuyển đổi giữa chu kỳ 1 tuần, 2 tuần và cả tháng. Tự động đồng bộ với link chấm công di động.'}
                   </p>
                 </div>
               </div>
 
               {/* Tùy chọn chuyển đổi chế độ */}
-              <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300 text-xs shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setAttendanceMode('WEEKLY_SHEET')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    attendanceMode === 'WEEKLY_SHEET'
-                      ? 'bg-[#0f3d64] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  <CalendarCheck className="w-3.5 h-3.5" />
-                  <span>Bảng chấm công chi tiết</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAttendanceMode('MANUAL')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    attendanceMode === 'MANUAL'
-                      ? 'bg-[#0f3d64] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  <DollarSign className="w-3.5 h-3.5" />
-                  <span>Nhập số công trực tiếp</span>
-                </button>
-              </div>
+              {cycleType !== 'TEAM' && (
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300 text-xs shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceMode('WEEKLY_SHEET')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      attendanceMode === 'WEEKLY_SHEET'
+                        ? 'bg-[#0f3d64] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CalendarCheck className="w-3.5 h-3.5" />
+                    <span>Bảng chấm công chi tiết</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceMode('MANUAL')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      attendanceMode === 'MANUAL'
+                        ? 'bg-[#0f3d64] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>Nhập số công trực tiếp</span>
+                  </button>
+                </div>
+              )}
             </div>
 
+            {/* BANNER CHẾ ĐỘ TỔ ĐỘI (KHÔNG CẦN CHẤM CÔNG) */}
+            {cycleType === 'TEAM' && (
+              <div className="bg-purple-50/90 border border-purple-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="font-black text-purple-950 flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-purple-700 text-white rounded text-[10px] uppercase">Tổ Đội</span>
+                    <span>Nhân sự Tổ Đội — Quản lý chi phí trả lương theo Tháng & Dự án</span>
+                  </div>
+                  <p className="text-[11px] text-purple-800">
+                    • Không hiển thị trong <strong>2.2 Bản Chấm Công</strong>. Bạn có thể chọn nhân viên này trả lương trực tiếp tại <strong>2.3 Bản Lương → Tab Bản Lương Tổ Đội</strong> hoặc bật chọn trả lương cho tháng bên dưới.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Bộ chọn Tháng / Năm thanh toán cho Tổ Đội */}
+                  <div className="flex items-center gap-1 bg-white border border-purple-300 rounded-lg p-1 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => handleStepMonth('PREV')}
+                      className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <select
+                      value={attendanceMonth}
+                      onChange={(e) => handleMonthChange(parseInt(e.target.value, 10))}
+                      className="bg-transparent font-black text-purple-950 text-xs py-0.5 pr-1 border-none focus:ring-0 cursor-pointer"
+                    >
+                      {MONTHS_LIST.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-slate-300">/</span>
+                    <select
+                      value={attendanceYear}
+                      onChange={(e) => handleYearChange(parseInt(e.target.value, 10))}
+                      className="bg-transparent font-black text-purple-950 text-xs py-0.5 pl-1 pr-1 border-none focus:ring-0 cursor-pointer font-mono"
+                    >
+                      {YEARS_LIST.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleStepMonth('NEXT')}
+                      className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextSelected = !(form.selectedForAttendance || form.actualWorkDays > 0);
+                      const nextDays = nextSelected ? (form.actualWorkDays > 0 ? form.actualWorkDays : 1) : 0;
+                      setForm((prev) =>
+                        recomputeSeasonalWorkerPayroll({
+                          ...prev,
+                          actualWorkDays: nextDays,
+                          selectedForAttendance: nextSelected,
+                        })
+                      );
+                    }}
+                    className={`px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs border ${
+                      form.selectedForAttendance || form.actualWorkDays > 0
+                        ? 'bg-emerald-600 text-white border-emerald-700'
+                        : 'bg-white text-purple-900 border-purple-300 hover:bg-purple-100'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {form.selectedForAttendance || form.actualWorkDays > 0
+                        ? `✓ Đã chọn trả lương Tháng ${attendanceMonth}/${attendanceYear}`
+                        : `+ Chọn trả lương trong Tháng ${attendanceMonth}/${attendanceYear}`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* BẢNG CHẤM CÔNG CHI TIẾT THEO CHU KỲ */}
-            {attendanceMode === 'WEEKLY_SHEET' && (
+            {cycleType !== 'TEAM' && attendanceMode === 'WEEKLY_SHEET' && (
               <div className="bg-white border border-sky-300 rounded-xl p-4 shadow-sm space-y-4">
                 {/* THANH ĐIỀU HÀNH THÁNG & NĂM & CHU KỲ */}
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-slate-50 via-sky-50/50 to-slate-50 p-3 rounded-xl border border-slate-200">

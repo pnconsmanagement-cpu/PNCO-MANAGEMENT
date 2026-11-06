@@ -210,8 +210,11 @@ export function getPayrollPeriods(
   const mStr = String(month).padStart(2, '0');
   const yStr = String(year);
 
-  if (cycleType === '1_MONTH') {
-    return getMonthlyPeriodForMonth(year, month);
+  if (cycleType === '1_MONTH' || cycleType === 'TEAM') {
+    return getMonthlyPeriodForMonth(year, month).map((p) => ({
+      ...p,
+      cycleType,
+    }));
   }
 
   if (cycleType === '2_WEEKS') {
@@ -537,6 +540,61 @@ export function syncSeasonalWorkerForMonth(
   const monthPeriodKey = `${monthKey}_MONTH`;
   let monthRec = worker.monthlyAttendance?.[monthKey];
   const effectiveRate = getUnifiedWorkerDailyRate(worker);
+
+  // Xử lý riêng cho nhân sự thuộc nhóm Tổ Đội (TEAM): Không lấy từ bảng chấm công 31 ngày mà lấy trực tiếp từ bản ghi lương tháng (periodRecords[monthPeriodKey])
+  if (worker.payrollCycleType === 'TEAM') {
+    const teamRec = worker.periodRecords?.[monthPeriodKey];
+    const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
+    const emptySheet = createEmptyTimesheetForPeriod(mPeriodOption);
+    if (teamRec && (teamRec.isRecorded || Number(teamRec.actualWorkDays || 0) > 0)) {
+      const teamRate =
+        teamRec.dailyRate !== undefined && teamRec.dailyRate >= 0
+          ? teamRec.dailyRate
+          : effectiveRate;
+      const teamWorkDays =
+        Number(teamRec.actualWorkDays || 0) > 0 ? Number(teamRec.actualWorkDays) : 1;
+      return recomputeSeasonalWorkerPayroll({
+        ...worker,
+        project: teamRec.project || worker.project,
+        dailyRate: teamRate,
+        attendanceMonth: month,
+        attendanceYear: year,
+        currentPeriodKey: monthPeriodKey,
+        currentWeekId: mPeriodOption.id,
+        currentWeekLabel: mPeriodOption.label,
+        weeklyTimesheet: teamRec.weeklyTimesheet || emptySheet,
+        actualWorkDays: teamWorkDays,
+        overtimeHours: Number(teamRec.overtimeHours || 0),
+        mealAllowance: Number(teamRec.mealAllowance || 0),
+        travelSafetyAllowance: Number(teamRec.travelSafetyAllowance || 0),
+        otherBonus: Number(teamRec.otherBonus || 0),
+        advancePayment: Number(teamRec.advancePayment || 0),
+        hasTaxCommitment: teamRec.hasTaxCommitment ?? worker.hasTaxCommitment,
+        notes: teamRec.notes ?? worker.notes,
+        selectedForAttendance: true,
+        periodRecords: worker.periodRecords,
+      });
+    }
+    return recomputeSeasonalWorkerPayroll({
+      ...worker,
+      dailyRate: effectiveRate,
+      attendanceMonth: month,
+      attendanceYear: year,
+      currentPeriodKey: monthPeriodKey,
+      currentWeekId: mPeriodOption.id,
+      currentWeekLabel: mPeriodOption.label,
+      weeklyTimesheet: emptySheet,
+      actualWorkDays: 0,
+      overtimeHours: 0,
+      mealAllowance: 0,
+      travelSafetyAllowance: 0,
+      otherBonus: 0,
+      advancePayment: 0,
+      selectedForAttendance: false,
+      periodRecords: worker.periodRecords,
+    });
+  }
+
   const syncedRecords = syncPeriodRecordsDailyRate(worker.periodRecords, effectiveRate);
 
   if (
@@ -949,6 +1007,60 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   // Đồng bộ đơn giá ngày công thống nhất giữa Hồ sơ công nhân, Danh sách nhân viên và Bản lương
   const periodDailyRate = getUnifiedWorkerDailyRate(worker);
 
+  // Nếu là nhân sự Tổ Đội (TEAM): Lấy trực tiếp từ bản ghi kỳ thanh toán (không phụ thuộc lịch chấm công 31 ngày)
+  if (worker.payrollCycleType === 'TEAM') {
+    const emptySheet = createEmptyTimesheetForPeriod(period);
+    if (existingRecord && (existingRecord.isRecorded || Number(existingRecord.actualWorkDays || 0) > 0)) {
+      const teamRate =
+        existingRecord.dailyRate !== undefined && existingRecord.dailyRate >= 0
+          ? existingRecord.dailyRate
+          : periodDailyRate;
+      const teamDays =
+        Number(existingRecord.actualWorkDays || 0) > 0
+          ? Number(existingRecord.actualWorkDays)
+          : 1;
+      return {
+        ...recomputeSeasonalWorkerPayroll({
+          ...worker,
+          project: existingRecord.project || worker.project,
+          dailyRate: teamRate,
+          currentPeriodKey: pKey,
+          currentWeekId: period.id,
+          currentWeekLabel: period.label,
+          payrollCycleType: 'TEAM',
+          actualWorkDays: teamDays,
+          overtimeHours: Number(existingRecord.overtimeHours || 0),
+          mealAllowance: Number(existingRecord.mealAllowance || 0),
+          travelSafetyAllowance: Number(existingRecord.travelSafetyAllowance || 0),
+          otherBonus: Number(existingRecord.otherBonus || 0),
+          hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
+          advancePayment: Number(existingRecord.advancePayment || 0),
+          weeklyTimesheet: existingRecord.weeklyTimesheet || emptySheet,
+          notes: existingRecord.notes ?? worker.notes,
+        }),
+        selectedForAttendance: true,
+      };
+    }
+    return {
+      ...recomputeSeasonalWorkerPayroll({
+        ...worker,
+        dailyRate: periodDailyRate,
+        currentPeriodKey: pKey,
+        currentWeekId: period.id,
+        currentWeekLabel: period.label,
+        payrollCycleType: 'TEAM',
+        actualWorkDays: 0,
+        overtimeHours: 0,
+        mealAllowance: 0,
+        travelSafetyAllowance: 0,
+        otherBonus: 0,
+        advancePayment: 0,
+        weeklyTimesheet: emptySheet,
+      }),
+      selectedForAttendance: false,
+    };
+  }
+
   // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
   const monthlyDays = worker.monthlyAttendance?.[monthKey]?.days;
   let hasMonthlyDataForPeriod = false;
@@ -1154,10 +1266,17 @@ export function recordWorkerPeriod(
   const declaredCycle: SeasonalCycleType =
     patch.payrollCycleType || worker.payrollCycleType || period.cycleType || '1_MONTH';
 
+  const effectivePeriodDailyRate =
+    patch.dailyRate !== undefined && patch.dailyRate >= 0
+      ? patch.dailyRate
+      : declaredCycle === 'TEAM' && existingPeriodRec?.dailyRate !== undefined
+      ? existingPeriodRec.dailyRate
+      : periodDailyRate;
+
   const updated = recomputeSeasonalWorkerPayroll({
     ...worker,
     ...patch,
-    dailyRate: periodDailyRate,
+    dailyRate: effectivePeriodDailyRate,
     actualWorkDays: targetDays,
     overtimeHours: targetOT,
     weeklyTimesheet: effectiveTimesheet,
@@ -1167,14 +1286,20 @@ export function recordWorkerPeriod(
     payrollCycleType: declaredCycle,
   });
 
-  const isPeriodParticipating = updated.actualWorkDays > 0 || updated.overtimeHours > 0;
+  const isPeriodParticipating =
+    declaredCycle === 'TEAM' && patch.selectedForAttendance !== undefined
+      ? Boolean(patch.selectedForAttendance)
+      : updated.actualWorkDays > 0 ||
+        updated.overtimeHours > 0 ||
+        (declaredCycle === 'TEAM' && Boolean(existingPeriodRec?.isRecorded) && patch.actualWorkDays === undefined);
 
   const periodRecord: SeasonalPeriodRecord = {
     periodKey: pKey,
     periodLabel: period.label,
-    cycleType: period.cycleType,
+    cycleType: declaredCycle === 'TEAM' ? 'TEAM' : period.cycleType,
     isRecorded: isPeriodParticipating,
-    dailyRate: periodDailyRate,
+    dailyRate: effectivePeriodDailyRate,
+    project: patch.project || existingPeriodRec?.project || worker.project,
     actualWorkDays: updated.actualWorkDays,
     salaryByDays: updated.salaryByDays,
     overtimeHours: updated.overtimeHours,
@@ -1192,13 +1317,19 @@ export function recordWorkerPeriod(
     notes: updated.notes,
   };
 
-  const periodRecords = syncPeriodRecordsDailyRate(
-    {
-      ...(worker.periodRecords || {}),
-      [pKey]: periodRecord,
-    },
-    periodDailyRate
-  );
+  const periodRecords =
+    declaredCycle === 'TEAM'
+      ? {
+          ...(worker.periodRecords || {}),
+          [pKey]: periodRecord,
+        }
+      : syncPeriodRecordsDailyRate(
+          {
+            ...(worker.periodRecords || {}),
+            [pKey]: periodRecord,
+          },
+          effectivePeriodDailyRate
+        );
 
   // Nếu người dùng xóa trắng kỳ Cả Tháng về 0 công, đồng bộ xóa luôn các kỳ tuần/đợt của tháng đó để không bị phục hồi lại công cũ
   if (!isPeriodParticipating && period.cycleType === '1_MONTH') {

@@ -109,7 +109,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   const [selectedTaxFilter, setSelectedTaxFilter] = useState<'ALL' | 'HAS_COMMITMENT' | 'NO_COMMITMENT'>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PAUSED'>('ALL');
   const [attendanceFilter, setAttendanceFilter] = useState<'ALL' | 'PARTICIPATING' | 'NOT_PARTICIPATING'>('ALL');
-  const [selectedWorkerCycleFilter, setSelectedWorkerCycleFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH'>('ALL');
+  const [selectedWorkerCycleFilter, setSelectedWorkerCycleFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM'>('ALL');
 
   // Lựa chọn Chu kỳ thanh toán: Mặc định '1_MONTH' (Cả tháng) để khớp 100% với 2.2 Bản Chấm Công & 2.3 Bản Lương
   const [cycleType, setCycleType] = useState<SeasonalCycleType>(() => {
@@ -830,6 +830,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             <option value="1_WEEK">Lương 1 Tuần</option>
             <option value="2_WEEKS">Lương 2 Tuần</option>
             <option value="1_MONTH">Lương Tháng</option>
+            <option value="TEAM">Tổ Đội (Không chấm công)</option>
           </select>
 
           {/* Lọc Dự án */}
@@ -1215,6 +1216,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                                 ? 'Lương 1 Tuần'
                                 : newCycle === '2_WEEKS'
                                 ? 'Lương 2 Tuần'
+                                : newCycle === 'TEAM'
+                                ? 'Tổ Đội'
                                 : 'Lương Tháng'
                             }!`
                           );
@@ -1224,13 +1227,16 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                             ? 'text-amber-800'
                             : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
                             ? 'text-sky-800'
+                            : (w.payrollCycleType || '1_MONTH') === 'TEAM'
+                            ? 'text-purple-800'
                             : 'text-emerald-800'
                         }`}
-                        title="Chọn chu kỳ lương: Lương 1 Tuần, Lương 2 Tuần hoặc Lương Tháng"
+                        title="Chọn chu kỳ lương: Lương 1 Tuần, Lương 2 Tuần, Lương Tháng hoặc Tổ Đội"
                       >
                         <option value="1_WEEK">Lương 1 Tuần</option>
                         <option value="2_WEEKS">Lương 2 Tuần</option>
                         <option value="1_MONTH">Lương Tháng</option>
+                        <option value="TEAM">Tổ Đội</option>
                       </select>
                     </td>
 

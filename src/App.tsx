@@ -224,9 +224,54 @@ function mergeEmployeeListsPreservingAttendance(
         });
       }
 
+      const exProfileTime = Number(existing.updatedAt || 0);
+      const rProfileTime = Number(rEmp.updatedAt || 0);
+
+      let baseProfile: Employee;
+      if (samePerson && exProfileTime > rProfileTime) {
+        baseProfile = {
+          ...rEmp,
+          ...existing,
+          updatedAt: exProfileTime,
+        };
+      } else if (samePerson && exProfileTime === 0 && rProfileTime === 0) {
+        // Trường hợp các bản ghi cũ chưa có updatedAt: nếu máy hiện tại đã nhập Phụ cấp mà Cloud đang = 0 thì giữ lại Phụ cấp đã nhập
+        const hasLocalAllowances =
+          (existing.responsibilityAllowance || 0) > 0 ||
+          (existing.projectAllowance || 0) > 0 ||
+          (existing.mealAllowance || 0) > 0 ||
+          (existing.phoneTravelAllowance || 0) > 0 ||
+          (existing.kpiBonus || 0) > 0;
+        const hasRemoteAllowances =
+          (rEmp.responsibilityAllowance || 0) > 0 ||
+          (rEmp.projectAllowance || 0) > 0 ||
+          (rEmp.mealAllowance || 0) > 0 ||
+          (rEmp.phoneTravelAllowance || 0) > 0 ||
+          (rEmp.kpiBonus || 0) > 0;
+        baseProfile = {
+          ...existing,
+          ...rEmp,
+          ...(hasLocalAllowances && !hasRemoteAllowances
+            ? {
+                responsibilityAllowance: existing.responsibilityAllowance || 0,
+                projectAllowance: existing.projectAllowance || 0,
+                mealAllowance: existing.mealAllowance || 0,
+                phoneTravelAllowance: existing.phoneTravelAllowance || 0,
+                kpiBonus: existing.kpiBonus || 0,
+                updatedAt: Date.now(),
+              }
+            : {}),
+        };
+      } else {
+        baseProfile = {
+          ...(samePerson ? existing : {}),
+          ...rEmp,
+          updatedAt: Math.max(exProfileTime, rProfileTime),
+        };
+      }
+
       map.set(key, {
-        ...existing,
-        ...rEmp,
+        ...baseProfile,
         monthlyAttendance: mergedMonthly,
         periodRecords: samePerson
           ? {
@@ -631,30 +676,71 @@ export default function App() {
     };
   }, []);
 
-  // Hàm tạo chuỗi snapshot đại diện cho dữ liệu để phát hiện thay đổi thực tế của người dùng
+  // Hàm tạo chuỗi snapshot đại diện cho TOÀN BỘ thông tin nhân viên (lương, phụ cấp, bảo hiểm, hợp đồng, ngân hàng, chấm công...)
   const serializeDataSnapshot = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]): string => {
     try {
       return JSON.stringify({
         p: cfg?.periodCode,
         e: emps.map((x) => [
           x.id,
-          x.actualWorkDays,
-          x.advancePayment,
+          x.code,
+          x.fullName,
+          x.title,
+          x.department,
+          x.phone,
+          x.email,
+          x.idCard,
+          x.taxCode,
+          x.joinDate,
+          x.status,
+          x.salaryType,
+          x.dailyRate,
           x.baseSalary,
+          x.insuranceSalary,
+          x.responsibilityAllowance,
+          x.projectAllowance,
+          x.mealAllowance,
+          x.phoneTravelAllowance,
+          x.kpiBonus,
+          x.otherIncome,
+          x.dependents,
+          x.actualWorkDays,
           x.overtimeHours,
+          x.advancePayment,
           x.bankAccount,
           x.bankName,
+          x.contractType,
+          x.contractDuration,
+          x.contractStartDate,
+          x.contractEndDate,
+          x.contractNumber,
+          x.updatedAt,
           x.monthlyAttendance,
         ]),
         s: seas.map((x) => [
           x.id,
+          x.code,
+          x.fullName,
+          x.trade,
+          x.skillLevel,
+          x.project,
+          x.teamName,
+          x.phone,
+          x.idCard,
+          x.paymentMethod,
           x.actualWorkDays,
           x.advancePayment,
           x.dailyRate,
           x.overtimeHours,
+          x.mealAllowance,
+          x.travelSafetyAllowance,
+          x.otherBonus,
+          x.hasTaxCommitment,
+          x.status,
           x.payrollCycleType,
           x.bankAccount,
           x.bankName,
+          x.updatedAt,
           x.monthlyAttendance,
         ]),
       });
@@ -842,16 +928,35 @@ export default function App() {
             ? cw.dailyRate
             : Number(cw.dailyRate ?? existing.dailyRate ?? 0);
 
-        const mergedPeriodRecs: Record<string, any> = {
-          ...(existing.periodRecords || {}),
-          ...(cw.periodRecords || {}),
-        };
+        const exUpdatedAt = Number(existing.updatedAt || (existing as any).dailyRateUpdatedAt || 0);
+        const cwUpdatedAt = Number(cw.updatedAt || (cw as any).dailyRateUpdatedAt || 0);
+        const localIsNewer = exUpdatedAt > cwUpdatedAt;
+        if (localIsNewer) {
+          needsPushToCloud = true;
+        }
+        const resolvedCycleType = localIsNewer
+          ? existing.payrollCycleType || cw.payrollCycleType || '1_MONTH'
+          : cw.payrollCycleType || existing.payrollCycleType || '1_MONTH';
+
+        const mergedPeriodRecs: Record<string, any> = localIsNewer
+          ? {
+              ...(cw.periodRecords || {}),
+              ...(existing.periodRecords || {}),
+            }
+          : {
+              ...(existing.periodRecords || {}),
+              ...(cw.periodRecords || {}),
+            };
         if (resolvedDailyRate >= 0) {
           Object.keys(mergedPeriodRecs).forEach((pKey) => {
             const r = mergedPeriodRecs[pKey];
             if (!r) return;
-            const sByDays = Math.round(resolvedDailyRate * Number(r.actualWorkDays || 0));
-            const otPay = Math.round((resolvedDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+            const recRate =
+              resolvedCycleType === 'TEAM' && r.dailyRate !== undefined && r.dailyRate >= 0
+                ? Number(r.dailyRate)
+                : resolvedDailyRate;
+            const sByDays = Math.round(recRate * Number(r.actualWorkDays || 0));
+            const otPay = Math.round((recRate / 8) * Number(r.overtimeHours || 0) * 1.5);
             const totInc =
               sByDays +
               otPay +
@@ -862,7 +967,7 @@ export default function App() {
             const totDed = tax + Number(r.advancePayment || 0);
             mergedPeriodRecs[pKey] = {
               ...r,
-              dailyRate: resolvedDailyRate,
+              dailyRate: recRate,
               salaryByDays: sByDays,
               overtimePay: otPay,
               totalIncome: totInc,
@@ -894,9 +999,12 @@ export default function App() {
             ? (cw.paymentMethod || 'BANK')
             : (cw.paymentMethod || existing.paymentMethod || 'BANK');
 
+        const baseMerged = localIsNewer ? { ...cw, ...existing } : { ...existing, ...cw };
+
         resultMap.set(key, {
-          ...existing,
-          ...cw,
+          ...baseMerged,
+          payrollCycleType: resolvedCycleType,
+          updatedAt: Math.max(exUpdatedAt, cwUpdatedAt) || undefined,
           bankAccount: resolvedBankAccount,
           bankName: resolvedBankName,
           paymentMethod: resolvedPaymentMethod,
@@ -907,8 +1015,16 @@ export default function App() {
           ...(Math.max(exRateTime, cwRateTime) > 0
             ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
             : {}),
-          actualWorkDays: cw.actualWorkDays !== undefined ? cw.actualWorkDays : existing.actualWorkDays,
-          overtimeHours: cw.overtimeHours !== undefined ? cw.overtimeHours : existing.overtimeHours,
+          actualWorkDays: localIsNewer
+            ? existing.actualWorkDays ?? cw.actualWorkDays
+            : cw.actualWorkDays !== undefined
+            ? cw.actualWorkDays
+            : existing.actualWorkDays,
+          overtimeHours: localIsNewer
+            ? existing.overtimeHours ?? cw.overtimeHours
+            : cw.overtimeHours !== undefined
+            ? cw.overtimeHours
+            : existing.overtimeHours,
           monthlyAttendance: mergedMonthly,
           periodRecords: mergedPeriodRecs,
         } as SeasonalWorker);
@@ -1249,7 +1365,27 @@ export default function App() {
         saveAllToServer(nextCfg, nextEmps, nextSeas).catch(() => {});
 
         const shouldPushEmployeesToCloud =
-          !cloudEmp || cloudEmp.length === 0 || cloudEmp.length !== nextEmps.length;
+          !cloudEmp ||
+          cloudEmp.length === 0 ||
+          cloudEmp.length !== nextEmps.length ||
+          nextEmps.some((ne) => {
+            const ce = cloudEmp.find((c) => c.code === ne.code || c.id === ne.id);
+            if (!ce) return true;
+            return (
+              Number(ne.baseSalary || 0) !== Number(ce.baseSalary || 0) ||
+              Number(ne.insuranceSalary || 0) !== Number(ce.insuranceSalary || 0) ||
+              Number(ne.responsibilityAllowance || 0) !== Number(ce.responsibilityAllowance || 0) ||
+              Number(ne.projectAllowance || 0) !== Number(ce.projectAllowance || 0) ||
+              Number(ne.mealAllowance || 0) !== Number(ce.mealAllowance || 0) ||
+              Number(ne.phoneTravelAllowance || 0) !== Number(ce.phoneTravelAllowance || 0) ||
+              Number(ne.kpiBonus || 0) !== Number(ce.kpiBonus || 0) ||
+              String(ne.bankAccount || '') !== String(ce.bankAccount || '') ||
+              String(ne.bankName || '') !== String(ce.bankName || '') ||
+              String(ne.title || '') !== String(ce.title || '') ||
+              String(ne.department || '') !== String(ce.department || '') ||
+              Number(ne.updatedAt || 0) > Number(ce.updatedAt || 0)
+            );
+          });
 
         if (!hasAnyDataOnCloud || shouldPushSeasonalToCloud || shouldPushEmployeesToCloud) {
           isSyncingRef.current = true;
@@ -1327,7 +1463,7 @@ export default function App() {
     window.addEventListener('focus', handleVisibilityOrFocus);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
-    // Heartbeat dự phòng nhẹ nhàng mỗi 60 giây
+    // Heartbeat tự động đồng bộ mỗi 6 giây để các máy tính khác luôn nhận được phụ cấp / lương / chấm công mới nhất ngay cả khi mạng chặn WebSocket
     const interval = setInterval(() => {
       if (
         document.visibilityState === 'visible' &&
@@ -1337,7 +1473,7 @@ export default function App() {
       ) {
         reloadLatestFromCloud({ silent: true });
       }
-    }, 60000);
+    }, 6000);
 
     return () => {
       window.removeEventListener('focus', handleVisibilityOrFocus);
@@ -1656,49 +1792,72 @@ export default function App() {
     }
   };
 
-  // Cập nhật nhân viên chính thức - phản hồi tức thì trên UI và debounce lưu Cloud 800ms
+  // Cập nhật nhân viên chính thức - phản hồi tức thì trên UI và đồng bộ ngay toàn bộ thông tin (phụ cấp, lương, BHXH, hợp đồng, ngân hàng...) lên Server & Supabase Cloud
   const handleUpdateEmployee = (updated: Employee) => {
-    lastLocalEditAtRef.current = Date.now();
+    const nowTs = Date.now();
+    lastLocalEditAtRef.current = nowTs;
     removeDeletedKeys(DELETED_EMP_STORAGE_KEY, [updated.id, updated.code]);
-    const recalculated = recomputeEmployeePayroll(updated);
+    const recalculated = recomputeEmployeePayroll({
+      ...updated,
+      updatedAt: nowTs,
+    });
     setEmployees((prev) => {
-      const next = prev.map((emp) =>
-        emp.id === recalculated.id || emp.code === recalculated.code
-          ? {
-              ...emp,
-              ...recalculated,
-              monthlyAttendance: {
-                ...(emp.monthlyAttendance || {}),
-                ...(recalculated.monthlyAttendance || {}),
-              },
-              periodRecords: {
-                ...(emp.periodRecords || {}),
-                ...(recalculated.periodRecords || {}),
-              },
-            }
-          : emp
-      );
+      let finalEmpToSync: Employee = recalculated;
+      const next = prev.map((emp) => {
+        if (emp.id === recalculated.id || emp.code === recalculated.code) {
+          finalEmpToSync = {
+            ...emp,
+            ...recalculated,
+            updatedAt: nowTs,
+            monthlyAttendance: {
+              ...(emp.monthlyAttendance || {}),
+              ...(recalculated.monthlyAttendance || {}),
+            },
+            periodRecords: {
+              ...(emp.periodRecords || {}),
+              ...(recalculated.periodRecords || {}),
+            },
+          };
+          return finalEmpToSync;
+        }
+        return emp;
+      });
       employeesRef.current = next;
       const snap = serializeDataSnapshot(configRef.current, next, seasonalWorkersRef.current);
       lastSavedSnapshotRef.current = snap;
       lastServerSnapshotRef.current = snap;
       localStorage.setItem('payroll_employees', JSON.stringify(next));
 
-      const timerKey = `emp_${recalculated.code || recalculated.id}`;
+      // Cập nhật luôn vào slot tháng hiện tại để khi chuyển qua lại giữa các tháng không bao giờ đọc lại giá trị phụ cấp cũ
+      try {
+        const curM = configRef.current.month || realDateInfo.realMonth;
+        const curY = configRef.current.year || realDateInfo.realYear;
+        const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+        localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(next));
+      } catch {}
+
+      const timerKey = `emp_${finalEmpToSync.code || finalEmpToSync.id}`;
       if (singleWorkerSyncTimersRef.current[timerKey]) {
         clearTimeout(singleWorkerSyncTimersRef.current[timerKey]);
       }
       singleWorkerSyncTimersRef.current[timerKey] = setTimeout(async () => {
         try {
-          saveAllToServer(configRef.current, employeesRef.current, seasonalWorkersRef.current);
+          setCloudSyncStatus('syncing');
+          await saveAllToServer(configRef.current, employeesRef.current, seasonalWorkersRef.current);
           if (isSupabaseConfigured()) {
-            await syncSingleEmployeeToSupabase(recalculated, periodCodeRef.current);
+            await syncSingleEmployeeToSupabase(finalEmpToSync, periodCodeRef.current);
+            await syncEmployeesToSupabase(employeesRef.current, periodCodeRef.current);
             setCloudSyncStatus('synced');
             setLastSyncedText(getLastSyncedTime());
             notifyCrossTab();
+          } else {
+            setCloudSyncStatus('synced');
+            setLastSyncedText(getServerLastSyncedTime());
           }
-        } catch {}
-      }, 800);
+        } catch {
+          setCloudSyncStatus('error');
+        }
+      }, 500);
 
       return next;
     });
@@ -2594,7 +2753,12 @@ export default function App() {
                           <CalendarCheck className="w-4 h-4 text-amber-200" />
                           <span>2.2 Bản Chấm Công</span>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                            {syncedSeasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length} đang làm việc
+                            {
+                              syncedSeasonalWorkers.filter(
+                                (w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType !== 'TEAM'
+                              ).length
+                            }{' '}
+                            đang làm việc
                           </span>
                         </button>
 

@@ -649,12 +649,25 @@ export const syncEmployeesToSupabase = async (
         }
       });
 
+      const exTime = Number(existingData?.updatedAt || 0);
+      const localTime = Number(emp.updatedAt || 0);
+      const baseMergedEmp: Employee =
+        samePerson && exTime > localTime
+          ? {
+              ...emp,
+              ...existingData,
+            }
+          : {
+              ...(samePerson ? existingData || {} : {}),
+              ...emp,
+            };
+
       const mergedEmp: Employee = sanitizeEmployeeMonthlyAttendance({
-        ...(samePerson ? existingData || {} : {}),
-        ...emp,
+        ...baseMergedEmp,
         id: canonicalId,
         code: empCode,
         sortOrder,
+        updatedAt: Math.max(exTime, localTime) || Date.now(),
         monthlyAttendance: mergedMonthly,
         periodRecords: samePerson
           ? {
@@ -678,12 +691,23 @@ export const syncEmployeesToSupabase = async (
         bank_name: String(mergedEmp.bankName || ''),
         join_date: String(mergedEmp.joinDate || ''),
         status: String(mergedEmp.status || 'ACTIVE'),
+        contract_type: String(mergedEmp.contractType || ''),
+        salary_type: String(mergedEmp.salaryType || 'MONTHLY'),
         base_salary: Number(mergedEmp.baseSalary || 0),
         insurance_salary: Number(mergedEmp.insuranceSalary || 0),
         standard_work_days: Number(mergedEmp.standardWorkDays || 26),
         actual_work_days: Number(mergedEmp.actualWorkDays || 0),
         overtime_hours: Number(mergedEmp.overtimeHours || 0),
+        overtime_pay: Number(mergedEmp.overtimePay || 0),
+        responsibility_allowance: Number(mergedEmp.responsibilityAllowance || 0),
+        project_allowance: Number(mergedEmp.projectAllowance || 0),
+        meal_allowance: Number(mergedEmp.mealAllowance || 0),
+        phone_travel_allowance: Number(mergedEmp.phoneTravelAllowance || 0),
+        kpi_bonus: Number(mergedEmp.kpiBonus || 0),
+        total_income: Number(mergedEmp.totalIncome || 0),
         advance_payment: Number(mergedEmp.advancePayment || 0),
+        total_insurance: Number(mergedEmp.totalInsurance || 0),
+        union_fee: 0,
         net_salary: Number(mergedEmp.netSalary || 0),
         period_code: String(periodCode || '09/2026'),
         sort_order: sortOrder,
@@ -702,15 +726,13 @@ export const syncEmployeesToSupabase = async (
       usedIds.add(p.id);
     });
 
-    // Xóa triệt để các dòng nhân viên cũ đã bị xóa hoặc bị lệch id/code trên Supabase trước khi upsert
+    // Xóa triệt để các dòng nhân viên cũ đã bị xóa hoặc có cặp (id, code) bị lệch trên Supabase trước khi upsert
     try {
-      const activeCodes = new Set(payload.map((p) => p.code));
-      const activeIds = new Set(payload.map((p) => p.id));
       const staleIdsToDelete: string[] = [];
       existingById.forEach((row: any, rowId: string) => {
         const rowCode = String(row.code || '').trim();
-        const expectedRowForCode = existingByCode.get(rowCode);
-        if (!activeCodes.has(rowCode) || !activeIds.has(rowId) || (expectedRowForCode && String(expectedRowForCode.id) !== rowId)) {
+        const isExactPairInPayload = payload.some((p) => p.id === rowId && p.code === rowCode);
+        if (!isExactPairInPayload) {
           staleIdsToDelete.push(rowId);
         }
       });
@@ -855,6 +877,7 @@ export const loadEmployeesFromSupabase = async (
     const list = data
       .map((item: any) => {
         const emp = (item.employee_data || {}) as Employee;
+        const rowUpdatedTs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
         return {
           ...emp,
           id: String(item.id || emp.id),
@@ -862,12 +885,29 @@ export const loadEmployeesFromSupabase = async (
           fullName: emp.fullName || item.name || 'Nhân viên',
           department: emp.department || item.department || 'Phòng ban',
           title: emp.title || item.title || item.position || 'Nhân viên',
+          phone: emp.phone ?? item.phone ?? '',
+          email: emp.email ?? item.email ?? '',
+          taxCode: emp.taxCode ?? item.tax_code ?? '',
+          idCard: emp.idCard ?? item.id_card ?? '',
+          joinDate: emp.joinDate || item.join_date || '01/01/2026',
+          status: emp.status || item.status || 'ACTIVE',
+          contractType: emp.contractType || item.contract_type || 'HĐLĐ Xác định thời hạn (24 tháng)',
+          salaryType: emp.salaryType || item.salary_type || 'MONTHLY',
           baseSalary: Number(emp.baseSalary ?? item.base_salary ?? 0),
           insuranceSalary: Number(emp.insuranceSalary ?? item.insurance_salary ?? 0),
-          bankAccount: emp.bankAccount || item.bank_account || '',
+          responsibilityAllowance: Number(emp.responsibilityAllowance ?? item.responsibility_allowance ?? 0),
+          projectAllowance: Number(emp.projectAllowance ?? item.project_allowance ?? 0),
+          mealAllowance: Number(emp.mealAllowance ?? item.meal_allowance ?? 0),
+          phoneTravelAllowance: Number(emp.phoneTravelAllowance ?? item.phone_travel_allowance ?? 0),
+          kpiBonus: Number(emp.kpiBonus ?? item.kpi_bonus ?? 0),
+          otherIncome: Number(emp.otherIncome ?? 0),
+          dependents: Number(emp.dependents ?? 0),
+          advancePayment: Number(emp.advancePayment ?? item.advance_payment ?? 0),
+          bankAccount: emp.bankAccount ?? item.bank_account ?? '',
           bankName: emp.bankName || item.bank_name || 'Vietcombank',
           sortOrder: typeof emp.sortOrder === 'number' ? emp.sortOrder : Number(item.sort_order || 99),
-        };
+          updatedAt: Number(emp.updatedAt || rowUpdatedTs || 0),
+        } as Employee;
       })
       .filter((emp) => emp && emp.fullName);
 
@@ -1234,6 +1274,7 @@ export const loadSeasonalWorkersFromSupabase = async (
             item.bank_name ||
             ((w.paymentMethod || item.payment_method) === 'CASH' ? 'Tiền mặt' : 'Vietcombank'),
           paymentMethod: w.paymentMethod || item.payment_method || 'BANK',
+          payrollCycleType: w.payrollCycleType || item.payroll_cycle_type || '1_MONTH',
           phone: w.phone || item.phone || '',
           idCard: w.idCard || item.id_card || '',
           actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
@@ -2306,10 +2347,28 @@ export const syncSingleEmployeeToSupabase = async (
       if (codeMatches && codeMatches.length > 0) {
         existingRowId = codeMatches[0].id;
         existingEmpData = codeMatches[0].employee_data as Employee;
+      } else if (employee.id) {
+        const { data: idMatches } = await client
+          .from('employees')
+          .select('id, code, employee_data')
+          .eq('id', String(employee.id))
+          .limit(1);
+        if (idMatches && idMatches.length > 0) {
+          existingRowId = idMatches[0].id;
+          existingEmpData = idMatches[0].employee_data as Employee;
+        }
       }
     } catch {}
 
     const canonicalId = existingRowId || String(employee.id || empCode);
+
+    // Nếu có dòng khác trên Supabase đang giữ id hoặc code xung đột thì xóa dòng xung đột trước khi upsert
+    try {
+      if (employee.id && String(employee.id) !== String(canonicalId)) {
+        await client.from('employees').delete().eq('id', String(employee.id));
+      }
+    } catch {}
+
     const cleanedExisting = existingEmpData
       ? sanitizeEmployeeMonthlyAttendance(existingEmpData)
       : undefined;
@@ -2333,6 +2392,7 @@ export const syncSingleEmployeeToSupabase = async (
       ...cleanedLocal,
       id: String(canonicalId),
       code: empCode,
+      updatedAt: cleanedLocal.updatedAt || Date.now(),
       monthlyAttendance: mergedMonthly,
       periodRecords: samePerson
         ? {
@@ -2356,12 +2416,23 @@ export const syncSingleEmployeeToSupabase = async (
       bank_name: String(mergedEmployee.bankName || ''),
       join_date: String(mergedEmployee.joinDate || ''),
       status: String(mergedEmployee.status || 'ACTIVE'),
+      contract_type: String(mergedEmployee.contractType || ''),
+      salary_type: String(mergedEmployee.salaryType || 'MONTHLY'),
       base_salary: Number(mergedEmployee.baseSalary || 0),
       insurance_salary: Number(mergedEmployee.insuranceSalary || 0),
       standard_work_days: Number(mergedEmployee.standardWorkDays || 26),
       actual_work_days: Number(mergedEmployee.actualWorkDays || 0),
       overtime_hours: Number(mergedEmployee.overtimeHours || 0),
+      overtime_pay: Number(mergedEmployee.overtimePay || 0),
+      responsibility_allowance: Number(mergedEmployee.responsibilityAllowance || 0),
+      project_allowance: Number(mergedEmployee.projectAllowance || 0),
+      meal_allowance: Number(mergedEmployee.mealAllowance || 0),
+      phone_travel_allowance: Number(mergedEmployee.phoneTravelAllowance || 0),
+      kpi_bonus: Number(mergedEmployee.kpiBonus || 0),
+      total_income: Number(mergedEmployee.totalIncome || 0),
       advance_payment: Number(mergedEmployee.advancePayment || 0),
+      total_insurance: Number(mergedEmployee.totalInsurance || 0),
+      union_fee: 0,
       net_salary: Number(mergedEmployee.netSalary || 0),
       period_code: String(periodCode || '09/2026'),
       employee_data: mergedEmployee,
@@ -2399,6 +2470,16 @@ export const syncSingleEmployeeToSupabase = async (
           onConflict: 'code',
         });
         minErr = retryMinCode.error;
+      }
+      if (minErr) {
+        const retryUpdate = await client
+          .from('employees')
+          .update({
+            employee_data: payload.employee_data,
+            updated_at: payload.updated_at,
+          })
+          .eq('code', empCode);
+        minErr = retryUpdate.error;
       }
       error = minErr;
     }

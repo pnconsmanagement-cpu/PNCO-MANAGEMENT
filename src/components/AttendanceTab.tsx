@@ -362,7 +362,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   }, [modifiedEmployees]);
 
   const activeSeasonal = useMemo(() => {
-    return modifiedSeasonal.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+    return modifiedSeasonal.filter(
+      (w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType !== 'TEAM'
+    );
   }, [modifiedSeasonal]);
 
   // Danh sách Phòng ban / Bộ phận (hoặc Dự án / Tổ đội cho Thời vụ)

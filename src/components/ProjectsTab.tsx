@@ -149,33 +149,53 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({
     setIsModalOpen(false);
   };
 
-  // Tính toán nhân sự và chi phí thực tế cho từng dự án
+  // Tính toán nhân sự và chi phí thực tế cho từng dự án (đồng bộ 100% từ Bản Lương Thời Vụ & Tổ Đội)
   const projectStats = useMemo(() => {
-    return projects.map((proj) => {
-      // Tìm số thợ thời vụ ở dự án
-      const matchingSeasonal = seasonalWorkers.filter(
-        (w) => w.project && w.project.toLowerCase().includes(proj.name.toLowerCase().substring(0, 15))
+    const matchProjectName = (workerProj: string | undefined, proj: Project) => {
+      if (!workerProj) return false;
+      const wp = workerProj.trim().toLowerCase();
+      const pn = proj.name.trim().toLowerCase();
+      const pc = (proj.code || '').trim().toLowerCase();
+      return (
+        wp === pn ||
+        wp.includes(pn.substring(0, Math.min(15, pn.length))) ||
+        pn.includes(wp.substring(0, Math.min(15, wp.length))) ||
+        (pc.length > 0 && wp.includes(pc))
       );
-      // Tìm số tổ đội ở dự án
-      const matchingTeams = teamWorkers.filter(
-        (t) => t.project && t.project.toLowerCase().includes(proj.name.toLowerCase().substring(0, 15))
-      );
-      // Tìm nhân viên kỹ thuật chính thức phụ trách
-      const matchingEmployees = employees.filter(
-        (e) => e.department?.includes('Kỹ thuật') || e.fullName === proj.managerName
-      );
+    };
 
-      const seasonalCost = matchingSeasonal.reduce((sum, w) => sum + (w.totalIncome || 0), 0);
-      const teamCost = matchingTeams.reduce((sum, t) => sum + (t.totalIncome || 0), 0);
-      const actualCost = proj.actualLaborCost || seasonalCost + teamCost;
-      const budgetPercent = proj.laborBudget > 0 ? Math.min(Math.round((actualCost / proj.laborBudget) * 100), 100) : 0;
+    return projects.map((proj) => {
+      // Thợ thời vụ (1 tuần, 2 tuần, tháng) ở dự án
+      const matchingRegularSeasonal = seasonalWorkers.filter(
+        (w) => w.payrollCycleType !== 'TEAM' && matchProjectName(w.project, proj)
+      );
+      // Nhân sự thuộc nhóm Tổ Đội (khai báo tại Thời Vụ -> Tổ Đội) ở dự án
+      const matchingSeasonalTeams = seasonalWorkers.filter(
+        (w) =>
+          w.payrollCycleType === 'TEAM' &&
+          matchProjectName(w.project, proj) &&
+          (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
+      );
+      // Tổ đội khoán ở dự án
+      const matchingTeams = teamWorkers.filter((t) => matchProjectName(t.project, proj));
+
+      const seasonalCost = matchingRegularSeasonal.reduce((sum, w) => sum + (w.totalIncome || 0), 0);
+      const seasonalTeamCost = matchingSeasonalTeams.reduce((sum, w) => sum + (w.totalIncome || 0), 0);
+      const teamCost = matchingTeams.reduce((sum, t) => sum + (t.totalIncome || 0), 0) + seasonalTeamCost;
+      const dynamicTotalCost = seasonalCost + teamCost;
+      const actualCost = dynamicTotalCost > 0 ? dynamicTotalCost : proj.actualLaborCost || 0;
+      const budgetPercent =
+        proj.laborBudget > 0 ? Math.min(Math.round((actualCost / proj.laborBudget) * 100), 100) : 0;
 
       return {
         ...proj,
         calculatedLaborCost: actualCost,
-        seasonalCount: matchingSeasonal.length,
-        teamCount: matchingTeams.length,
-        workerCount: matchingSeasonal.length + matchingTeams.reduce((acc, t) => acc + (t.workerCount || 1), 0),
+        seasonalCount: matchingRegularSeasonal.length,
+        teamCount: matchingTeams.length + matchingSeasonalTeams.length,
+        workerCount:
+          matchingRegularSeasonal.length +
+          matchingSeasonalTeams.length +
+          matchingTeams.reduce((acc, t) => acc + (t.workerCount || 1), 0),
         budgetPercent,
       };
     });
