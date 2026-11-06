@@ -313,7 +313,10 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     setIsSavingPayroll(true);
     try {
       if (onSavePayrollToCloud) {
-        await onSavePayrollToCloud();
+        await Promise.race([
+          Promise.resolve(onSavePayrollToCloud()),
+          new Promise((resolve) => setTimeout(resolve, 1200)),
+        ]);
       }
       setSavePayrollNotice(
         `✓ Đã lưu Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} và đồng bộ lên Supabase thành công!`
@@ -1099,7 +1102,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                         onChange={(e) => {
                           const selectedCode = e.target.value;
                           if (!selectedCode) return;
-                          const targetW = activeSeasonalWorkers.find(
+                          const targetW = allTeamSeasonalWorkers.find(
                             (w) => w.code === selectedCode || w.id === selectedCode
                           );
                           if (targetW) {
@@ -1111,19 +1114,21 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                         }}
                         className="px-2.5 py-1.5 bg-white border border-purple-300 rounded-lg font-bold text-purple-950 text-xs cursor-pointer shadow-2xs"
                       >
-                        <option value="">+ Chọn nhân viên đưa vào Tổ Đội trả lương tháng {config.periodCode}...</option>
-                        {activeSeasonalWorkers
+                        <option value="">
+                          + Chọn nhân viên Tổ Đội trả lương tháng {config.periodCode} ({allTeamSeasonalWorkers.length} nhân sự)...
+                        </option>
+                        {allTeamSeasonalWorkers
                           .filter(
                             (w) =>
                               !(
-                                (w.payrollCycleType || '1_MONTH') === 'TEAM' &&
-                                (w.selectedForAttendance || (w.actualWorkDays || 0) > 0)
+                                Boolean(w.selectedForAttendance) ||
+                                (w.actualWorkDays || 0) > 0 ||
+                                (w.advancePayment || 0) > 0
                               )
                           )
                           .map((w) => (
                             <option key={w.id || w.code} value={w.code}>
-                              [{w.code}] {w.fullName} — {w.project || 'Chưa gán dự án'} (
-                              {w.payrollCycleType === 'TEAM' ? 'Tổ Đội' : 'Chuyển sang Tổ Đội'})
+                              [{w.code}] {w.fullName} — {w.project || 'Chưa gán dự án'}
                             </option>
                           ))}
                       </select>
