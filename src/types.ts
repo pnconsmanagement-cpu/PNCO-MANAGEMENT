@@ -117,6 +117,7 @@ export interface SeasonalWorker {
   currentWeekId?: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5' | 'BI1' | 'BI2'
   attendanceMonth?: number; // Tháng chấm công (1 - 12)
   attendanceYear?: number; // Năm chấm công (vd: 2026)
+  paymentDate?: string; // Ngày chuyển khoản / chi lương (YYYY-MM-DD hoặc DD/MM/YYYY)
   weeklyTimesheet?: WeeklyDayAttendance[]; // Bảng chấm công các ngày trong chu kỳ
   // Bản ghi chấm công lưu độc lập theo từng chu kỳ (Tuần 1, Tuần 2, Đợt 1, Đợt 2...)
   periodRecords?: { [periodKey: string]: SeasonalPeriodRecord };
@@ -173,6 +174,7 @@ export interface SeasonalPeriodRecord {
   isRecorded: boolean; // true nếu đã được chấm và lưu số công / chọn trả lương
   dailyRate?: number; // Đơn giá ngày công / Số tiền thanh toán độc lập của chu kỳ này
   project?: string; // Công trình / Dự án thanh toán trong kỳ này
+  paymentDate?: string; // Ngày chuyển lương trong kỳ này
   actualWorkDays: number;
   salaryByDays: number;
   overtimeHours: number;

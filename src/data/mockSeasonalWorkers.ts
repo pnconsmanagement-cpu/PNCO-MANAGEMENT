@@ -575,6 +575,7 @@ export function syncSeasonalWorkerForMonth(
       return recomputeSeasonalWorkerPayroll({
         ...worker,
         project: teamRec.project || worker.project,
+        paymentDate: teamRec.paymentDate || worker.paymentDate,
         dailyRate: teamRate,
         salaryByDays: teamRec.salaryByDays || Math.round(teamRate * teamWorkDays),
         attendanceMonth: month,
@@ -1056,6 +1057,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
         ...recomputeSeasonalWorkerPayroll({
           ...worker,
           project: existingRecord.project || worker.project,
+          paymentDate: existingRecord.paymentDate || worker.paymentDate,
           dailyRate: teamRate,
           salaryByDays: existingRecord.salaryByDays || Math.round(teamRate * teamDays),
           currentPeriodKey: pKey,
@@ -1336,6 +1338,7 @@ export function recordWorkerPeriod(
     isRecorded: isPeriodParticipating,
     dailyRate: effectivePeriodDailyRate,
     project: patch.project || existingPeriodRec?.project || worker.project,
+    paymentDate: patch.paymentDate !== undefined ? patch.paymentDate : existingPeriodRec?.paymentDate || worker.paymentDate,
     actualWorkDays: updated.actualWorkDays,
     salaryByDays: updated.salaryByDays,
     overtimeHours: updated.overtimeHours,

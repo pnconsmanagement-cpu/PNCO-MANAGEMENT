@@ -282,6 +282,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       {
         payrollCycleType: 'TEAM',
         project: patch.project !== undefined ? patch.project : w.project || baseWorker.project,
+        paymentDate: patch.paymentDate !== undefined ? patch.paymentDate : w.paymentDate || baseWorker.paymentDate,
         dailyRate: effectiveSalaryByDays,
         salaryByDays: effectiveSalaryByDays,
         actualWorkDays: currentEffectiveDays,
@@ -327,6 +328,88 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     } finally {
       setIsSavingPayroll(false);
     }
+  };
+
+  // Modal Tạo Phiếu Chi Lương Tổ Đội
+  const [isTeamVoucherModalOpen, setIsTeamVoucherModalOpen] = useState(false);
+  const [teamVoucherWorkerCode, setTeamVoucherWorkerCode] = useState<string>('');
+  const [teamVoucherSalary, setTeamVoucherSalary] = useState<string>('');
+  const [teamVoucherDate, setTeamVoucherDate] = useState<string>('');
+  const [teamVoucherProject, setTeamVoucherProject] = useState<string>('');
+
+  const getDefaultVoucherDate = (mo: number, yr: number) => {
+    const today = new Date();
+    const dayNum = Math.min(today.getDate(), new Date(yr, mo, 0).getDate());
+    return `${yr}-${String(mo).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+  };
+
+  const handleOpenTeamVoucherModal = (preselectedWorker?: SeasonalWorker) => {
+    const defaultWorker = preselectedWorker || allTeamSeasonalWorkers[0];
+    const defaultDate =
+      defaultWorker?.paymentDate || getDefaultVoucherDate(currentMonth, currentYear);
+    setTeamVoucherWorkerCode(defaultWorker?.code || '');
+    setTeamVoucherSalary(
+      defaultWorker && defaultWorker.salaryByDays > 0
+        ? String(defaultWorker.salaryByDays)
+        : ''
+    );
+    setTeamVoucherDate(defaultDate);
+    setTeamVoucherProject(
+      defaultWorker?.project || availableProjectNames[0] || 'Coherent Vsip 3'
+    );
+    setIsTeamVoucherModalOpen(true);
+  };
+
+  const handleSaveTeamVoucherModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onUpdateSeasonalWorker || !teamVoucherWorkerCode) return;
+    const baseWorker = seasonalWorkers.find(
+      (sw) => sw.code === teamVoucherWorkerCode || sw.id === teamVoucherWorkerCode
+    );
+    if (!baseWorker) return;
+
+    const salaryAmount = Math.max(0, Number(teamVoucherSalary) || 0);
+    const chosenDate = teamVoucherDate || getDefaultVoucherDate(currentMonth, currentYear);
+    const dateParts = chosenDate.split('-');
+    const payYear = parseInt(dateParts[0], 10) || currentYear;
+    const payMonth = parseInt(dateParts[1], 10) || currentMonth;
+    const chosenProject =
+      teamVoucherProject || baseWorker.project || availableProjectNames[0] || 'Coherent Vsip 3';
+
+    const targetPeriod = getPayrollPeriods(payYear, payMonth, 'TEAM')[0];
+    const updatedWorker = recordWorkerPeriod(
+      {
+        ...baseWorker,
+        payrollCycleType: 'TEAM',
+        project: chosenProject,
+        paymentDate: chosenDate,
+      },
+      targetPeriod,
+      {
+        payrollCycleType: 'TEAM',
+        project: chosenProject,
+        paymentDate: chosenDate,
+        dailyRate: salaryAmount,
+        salaryByDays: salaryAmount,
+        actualWorkDays: 1,
+        selectedForAttendance: true,
+      }
+    );
+
+    onUpdateSeasonalWorker({
+      ...updatedWorker,
+      payrollCycleType: 'TEAM',
+      project: chosenProject,
+      paymentDate: chosenDate,
+      updatedAt: Date.now(),
+    });
+
+    if (payMonth !== currentMonth || payYear !== currentYear) {
+      onChangeMonthYear(payMonth, payYear);
+    }
+
+    setIsTeamVoucherModalOpen(false);
+    await handleSavePayrollTable();
   };
 
   // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG hoặc CÓ TẠM ỨNG theo từng Tab Chu kỳ lương đã khai báo
@@ -977,6 +1060,18 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                   <span>{seasonalAttendanceOnly ? '🟢 Chỉ hiện thợ đã có công' : 'Hiện tất cả thợ trong Tab'}</span>
                 </button>
 
+                {seasonalCycleTab === 'TEAM' && onUpdateSeasonalWorker && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenTeamVoucherModal()}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="Tạo phiếu chi lương cho nhân viên thuộc nhóm Tổ Đội"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Tạo phiếu chi lương</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={handleSavePayrollTable}
@@ -1065,134 +1160,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     </button>
                   );
                 })}
-              </div>
-            )}
-
-            {/* Thanh chọn nhân sự Tổ Đội trả lương trong tháng khi đang ở Tab Bản Lương Tổ Đội */}
-            {seasonalCycleTab === 'TEAM' && (
-              <div className="pt-3 border-t border-purple-200 bg-purple-50/60 p-3 rounded-xl space-y-2.5 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-black text-purple-950 flex items-center gap-1.5">
-                      <Building className="w-4 h-4 text-purple-700" />
-                      <span>
-                        CHỌN NHÂN VIÊN TỔ ĐỘI TRẢ LƯƠNG TRONG THÁNG {config.periodCode} (Lưu chi phí theo Tháng & Dự án)
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-purple-800 mt-0.5">
-                      Nhân sự Tổ Đội không chấm công theo ngày — nhập lương trực tiếp vào ô <strong>Lương theo công</strong> bên dưới và bấm <strong>Lưu bản lương</strong> để lưu chi phí theo Tháng & Dự án lên Supabase.
-                    </p>
-                  </div>
-
-                  {/* Nút Lưu bản lương Tổ Đội & Dropdown chọn thêm nhân viên vào Tổ Đội trả lương tháng này */}
-                  {onUpdateSeasonalWorker && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSavePayrollTable}
-                        disabled={isSavingPayroll}
-                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                        title="Lưu bản lương Tổ Đội và đồng bộ ngay lên Supabase"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>{isSavingPayroll ? 'Đang lưu Supabase...' : 'Lưu bản lương Tổ Đội'}</span>
-                      </button>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const selectedCode = e.target.value;
-                          if (!selectedCode) return;
-                          const targetW = allTeamSeasonalWorkers.find(
-                            (w) => w.code === selectedCode || w.id === selectedCode
-                          );
-                          if (targetW) {
-                            handleUpdateTeamSeasonalMonthRecord(targetW, {
-                              selectedForAttendance: true,
-                              actualWorkDays: targetW.actualWorkDays > 0 ? targetW.actualWorkDays : 1,
-                            });
-                          }
-                        }}
-                        className="px-2.5 py-1.5 bg-white border border-purple-300 rounded-lg font-bold text-purple-950 text-xs cursor-pointer shadow-2xs"
-                      >
-                        <option value="">
-                          + Chọn nhân viên Tổ Đội trả lương tháng {config.periodCode} ({allTeamSeasonalWorkers.length} nhân sự)...
-                        </option>
-                        {allTeamSeasonalWorkers
-                          .filter(
-                            (w) =>
-                              !(
-                                Boolean(w.selectedForAttendance) ||
-                                (w.actualWorkDays || 0) > 0 ||
-                                (w.advancePayment || 0) > 0
-                              )
-                          )
-                          .map((w) => (
-                            <option key={w.id || w.code} value={w.code}>
-                              [{w.code}] {w.fullName} — {w.project || 'Chưa gán dự án'}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
-                {/* Danh sách chip nhân viên thuộc nhóm Tổ Đội */}
-                {allTeamSeasonalWorkers.length === 0 ? (
-                  <div className="p-2.5 bg-white/80 rounded-lg border border-purple-200 text-slate-600 text-[11px]">
-                    Chưa có nhân viên nào được phân loại vào nhóm <strong>Tổ Đội</strong>. Bạn có thể chọn chu kỳ <strong>Tổ Đội</strong> khi nhập thông tin nhân viên tại mục <strong>2.1 Danh Sách Thời Vụ</strong> hoặc chọn từ ô danh sách bên trên.
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {allTeamSeasonalWorkers.map((tw) => {
-                      const isSelectedInMonth =
-                        Boolean(tw.selectedForAttendance) ||
-                        (tw.actualWorkDays || 0) > 0 ||
-                        (tw.advancePayment || 0) > 0;
-                      return (
-                        <button
-                          key={tw.id || tw.code}
-                          type="button"
-                          onClick={() => {
-                            if (isSelectedInMonth) {
-                              handleUpdateTeamSeasonalMonthRecord(tw, {
-                                selectedForAttendance: false,
-                                actualWorkDays: 0,
-                              });
-                            } else {
-                              handleUpdateTeamSeasonalMonthRecord(tw, {
-                                selectedForAttendance: true,
-                                actualWorkDays: tw.actualWorkDays > 0 ? tw.actualWorkDays : 1,
-                              });
-                            }
-                          }}
-                          className={`px-2.5 py-1.5 rounded-lg border font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
-                            isSelectedInMonth
-                              ? 'bg-purple-900 text-white border-purple-950 shadow-2xs'
-                              : 'bg-white text-slate-700 border-purple-200 hover:bg-purple-100'
-                          }`}
-                          title={
-                            isSelectedInMonth
-                              ? `Đang có trong Bản Lương tháng ${config.periodCode} (Bấm để bỏ khỏi tháng này)`
-                              : `Bấm để đưa ${tw.fullName} vào Bản Lương tháng ${config.periodCode}`
-                          }
-                        >
-                          <span>
-                            {isSelectedInMonth ? '✓' : '+'} {tw.fullName}
-                          </span>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                              isSelectedInMonth
-                                ? 'bg-amber-400 text-slate-950 font-black'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}
-                          >
-                            {tw.project || 'Dự án'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -1867,7 +1834,9 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <th className="p-2 border-r border-amber-800">Bậc thợ</th>
                 <th className="p-2 border-r border-amber-800">Dự án thi công</th>
                 <th className="p-2 border-r border-amber-800 text-right">Đơn giá ngày</th>
-                <th className="p-2 border-r border-amber-800 text-center">Công TT</th>
+                <th className="p-2 border-r border-amber-800 text-center">
+                  {seasonalCycleTab === 'TEAM' ? 'Ngày chuyển' : 'Công TT'}
+                </th>
                 <th className="p-2 border-r border-amber-800 text-right bg-[#92400e]">Lương theo công</th>
                 <th className="p-2 border-r border-amber-800 text-right bg-[#92400e]">Tăng ca (OT 1.5x)</th>
                 <th className="p-2 border-r border-amber-800 text-right">Phụ cấp & Thưởng</th>
@@ -1885,18 +1854,38 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               {scaledSeasonal.length === 0 ? (
                 <tr>
                   <td colSpan={20} className="p-8 text-center text-slate-500">
-                    <div className="space-y-1">
+                    <div className="space-y-2 flex flex-col items-center">
                       <p className="font-bold text-slate-700">
                         Chưa có nhân viên thời vụ nào trong{' '}
                         {seasonalCycleTab === '1_WEEK'
                           ? 'Tab Bản Lương 1 Tuần'
                           : seasonalCycleTab === '2_WEEKS'
                           ? 'Tab Bản Lương 2 Tuần'
+                          : seasonalCycleTab === 'TEAM'
+                          ? `Tab Bản Lương Tổ Đội (Kỳ ${config.periodCode})`
                           : 'Tab Bản Lương Tháng'}
                       </p>
                       <p className="text-xs text-slate-500">
-                        Khi thêm nhân viên mới hoặc chọn chu kỳ lương tại mục <strong>2.1 Danh Sách Thời Vụ</strong> (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng), nhân viên sẽ tự động xuất hiện tại Tab tương ứng này.
+                        {seasonalCycleTab === 'TEAM' ? (
+                          <>
+                            Bấm nút <strong>Tạo phiếu chi lương</strong> để chọn nhân viên thuộc nhóm Tổ Đội, nhập lương nhận, ngày chuyển và dự án.
+                          </>
+                        ) : (
+                          <>
+                            Khi thêm nhân viên mới hoặc chọn chu kỳ lương tại mục <strong>2.1 Danh Sách Thời Vụ</strong> (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng), nhân viên sẽ tự động xuất hiện tại Tab tương ứng này.
+                          </>
+                        )}
                       </p>
+                      {seasonalCycleTab === 'TEAM' && onUpdateSeasonalWorker && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenTeamVoucherModal()}
+                          className="mt-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Tạo phiếu chi lương</span>
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -2043,12 +2032,24 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-center font-bold text-sky-900 bg-sky-50/30">
                       {w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM' ? (
-                        <span
-                          className="text-[10px] font-semibold text-slate-500 italic"
-                          title="Nhân sự Tổ Đội không chấm công ngày"
-                        >
-                          Không chấm công
-                        </span>
+                        onUpdateSeasonalWorker ? (
+                          <input
+                            type="date"
+                            value={w.paymentDate || getDefaultVoucherDate(currentMonth, currentYear)}
+                            onChange={(e) => {
+                              handleUpdateTeamSeasonalMonthRecord(w, {
+                                paymentDate: e.target.value,
+                                selectedForAttendance: true,
+                              });
+                            }}
+                            className="px-1.5 py-0.5 bg-white border border-slate-200 hover:border-purple-400 rounded text-[11px] font-mono font-bold text-purple-900 cursor-pointer outline-none"
+                            title="Ngày chuyển lương Tổ Đội"
+                          />
+                        ) : (
+                          <span className="text-[11px] font-mono text-purple-900">
+                            {w.paymentDate || '—'}
+                          </span>
+                        )
                       ) : (
                         w.actualWorkDays
                       )}
@@ -2992,6 +2993,158 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                   className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition cursor-pointer shadow-xs"
                 >
                   Lưu thông tin
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Tạo Phiếu Chi Lương Tổ Đội */}
+      {isTeamVoucherModalOpen && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsTeamVoucherModalOpen(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3"
+        >
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
+            <div className="bg-purple-900 text-white px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Building className="w-4 h-4 text-amber-400" />
+                <div>
+                  <h3 className="font-bold text-sm uppercase tracking-wide">
+                    Tạo Phiếu Chi Lương Tổ Đội
+                  </h3>
+                  <p className="text-[11px] text-purple-200 mt-0.5">
+                    Chọn nhân viên thuộc nhóm Tổ Đội, nhập lương nhận, ngày chuyển & dự án
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTeamVoucherModalOpen(false)}
+                className="p-1 text-purple-200 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTeamVoucherModal} className="p-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  1. Tên nhân viên (Thuộc nhóm Tổ Đội) <span className="text-rose-600">*</span>
+                </label>
+                {allTeamSeasonalWorkers.length === 0 ? (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[11px]">
+                    Chưa có nhân viên nào được gán là <strong>Tổ Đội</strong> trong Danh sách nhân viên thời vụ. Vui lòng gán chu kỳ <strong>Tổ Đội</strong> cho nhân viên tại mục <strong>2.1 Danh Sách Thời Vụ</strong> trước.
+                  </div>
+                ) : (
+                  <select
+                    required
+                    value={teamVoucherWorkerCode}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      setTeamVoucherWorkerCode(code);
+                      const found = allTeamSeasonalWorkers.find(
+                        (w) => w.code === code || w.id === code
+                      );
+                      if (found) {
+                        setTeamVoucherProject(
+                          found.project || availableProjectNames[0] || 'Coherent Vsip 3'
+                        );
+                        setTeamVoucherSalary(
+                          found.salaryByDays > 0 ? String(found.salaryByDays) : ''
+                        );
+                        if (found.paymentDate) {
+                          setTeamVoucherDate(found.paymentDate);
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-purple-600 font-bold text-slate-900 bg-white cursor-pointer"
+                  >
+                    <option value="">-- Chọn nhân viên Tổ Đội --</option>
+                    {allTeamSeasonalWorkers.map((w) => (
+                      <option key={w.id || w.code} value={w.code}>
+                        [{w.code}] {w.fullName} — {w.trade}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  2. Lương nhận (VNĐ) <span className="text-rose-600">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="100000"
+                    placeholder="Nhập số tiền lương nhận (VD: 6000000)..."
+                    value={teamVoucherSalary}
+                    onChange={(e) => setTeamVoucherSalary(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-purple-600 font-mono font-black text-sm text-purple-950"
+                  />
+                  {Number(teamVoucherSalary) > 0 && (
+                    <span className="block text-[11px] font-bold text-emerald-700 mt-1">
+                      Số tiền: {formatNumberOnly(Number(teamVoucherSalary))} đ
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  3. Ngày chuyển <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={teamVoucherDate}
+                  onChange={(e) => setTeamVoucherDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-purple-600 font-mono font-bold text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  4. Dự án <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  required
+                  value={teamVoucherProject}
+                  onChange={(e) => setTeamVoucherProject(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-purple-600 font-bold text-[#0f3d64] bg-white cursor-pointer"
+                >
+                  {teamVoucherProject && !availableProjectNames.includes(teamVoucherProject) && (
+                    <option value={teamVoucherProject}>{teamVoucherProject}</option>
+                  )}
+                  {availableProjectNames.map((proj) => (
+                    <option key={proj} value={proj}>
+                      {proj}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setIsTeamVoucherModalOpen(false)}
+                  className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={!teamVoucherWorkerCode || allTeamSeasonalWorkers.length === 0}
+                  className="px-4 py-2 rounded-lg bg-purple-800 hover:bg-purple-900 disabled:opacity-50 text-white font-bold transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Lưu phiếu chi lương</span>
                 </button>
               </div>
             </form>
