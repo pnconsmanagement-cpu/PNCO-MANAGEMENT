@@ -511,7 +511,46 @@ function syncPeriodRecordsDailyRate(
   Object.keys(records).forEach((key) => {
     const rec = records[key];
     if (!rec) return;
-    const rate = typeof unifiedRate === 'number' ? unifiedRate : rec.dailyRate || 0;
+    if (rec.cycleType === 'TEAM') {
+      const teamRate =
+        rec.salaryByDays !== undefined &&
+        rec.salaryByDays > 0 &&
+        (!rec.actualWorkDays || rec.actualWorkDays === 1)
+          ? Number(rec.salaryByDays)
+          : Number(rec.dailyRate ?? rec.salaryByDays ?? unifiedRate ?? 0);
+      const workDays =
+        Number(rec.actualWorkDays || 0) > 0
+          ? Number(rec.actualWorkDays)
+          : rec.isRecorded
+          ? 1
+          : 0;
+      const salaryByDays = workDays > 0 ? Math.round(teamRate * workDays) : 0;
+      const otHours = Number(rec.overtimeHours || 0);
+      const overtimePay = Math.round((teamRate / 8) * otHours * 1.5);
+      const mealAllowance = Number(rec.mealAllowance || 0);
+      const travelSafetyAllowance = Number(rec.travelSafetyAllowance || 0);
+      const otherBonus = Number(rec.otherBonus || 0);
+      const totalIncome =
+        salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+      const hasTaxCommitment = rec.hasTaxCommitment ?? true;
+      const personalIncomeTax =
+        !hasTaxCommitment && totalIncome >= 2000000 ? Math.round(totalIncome * 0.1) : 0;
+      const advancePayment = Number(rec.advancePayment || 0);
+      const totalDeductions = personalIncomeTax + advancePayment;
+      result[key] = {
+        ...rec,
+        dailyRate: teamRate,
+        actualWorkDays: workDays,
+        salaryByDays,
+        overtimePay,
+        totalIncome,
+        personalIncomeTax,
+        totalDeductions,
+        netSalary: Math.max(0, totalIncome - totalDeductions),
+      };
+      return;
+    }
+    const rate = typeof unifiedRate === 'number' && unifiedRate > 0 ? unifiedRate : rec.dailyRate || 0;
     const workDays = Number(rec.actualWorkDays || 0);
     const otHours = Number(rec.overtimeHours || 0);
     const salaryByDays = Math.round(rate * workDays);
@@ -2176,14 +2215,14 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
     if (isSyntheticDays || (octWork > 0 && novWork === octWork && novOt === octOt)) {
       delete nextMonthly['2026-11'];
       Object.keys(nextPeriods).forEach((k) => {
-        if (k.startsWith('2026-11_')) {
+        if (k.startsWith('2026-11_') && nextPeriods[k]?.cycleType !== 'TEAM' && worker.payrollCycleType !== 'TEAM') {
           delete nextPeriods[k];
         }
       });
     }
-  } else {
+  } else if (worker.payrollCycleType !== 'TEAM') {
     Object.keys(nextPeriods).forEach((k) => {
-      if (k.startsWith('2026-11_')) {
+      if (k.startsWith('2026-11_') && nextPeriods[k]?.cycleType !== 'TEAM') {
         delete nextPeriods[k];
       }
     });

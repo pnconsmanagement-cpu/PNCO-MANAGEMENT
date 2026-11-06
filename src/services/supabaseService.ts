@@ -112,12 +112,17 @@ export const materializeSeasonalMonthlyAttendance = (
     const novPRec = nextPeriodRecords['2026-11_MONTH'];
     const novPWork = Number(novPRec.actualWorkDays || 0);
     const novPOt = Number(novPRec.overtimeHours || 0);
+    const isTeamRecord =
+      worker.payrollCycleType === 'TEAM' ||
+      novPRec.cycleType === 'TEAM' ||
+      Boolean(novPRec.paymentDate);
     if (
-      !nextMonthly['2026-11'] ||
-      (octWork > 0 && novPWork === octWork && novPOt === octOt)
+      !isTeamRecord &&
+      (!nextMonthly['2026-11'] ||
+        (octWork > 0 && novPWork === octWork && novPOt === octOt))
     ) {
       Object.keys(nextPeriodRecords).forEach((k) => {
-        if (k.startsWith('2026-11_')) {
+        if (k.startsWith('2026-11_') && nextPeriodRecords[k]?.cycleType !== 'TEAM') {
           delete nextPeriodRecords[k];
         }
       });
@@ -1045,9 +1050,11 @@ export const syncSeasonalWorkersToSupabase = async (
         ...(cleanedExisting?.periodRecords || {}),
         ...(cleanedLocal.periodRecords || {}),
       };
-      if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+      if (!cleanedLocal.monthlyAttendance?.['2026-11'] && cleanedLocal.payrollCycleType !== 'TEAM') {
         Object.keys(mergedPeriodRecords).forEach((k) => {
-          if (k.startsWith('2026-11_')) delete mergedPeriodRecords[k];
+          if (k.startsWith('2026-11_') && mergedPeriodRecords[k]?.cycleType !== 'TEAM') {
+            delete mergedPeriodRecords[k];
+          }
         });
       }
 
@@ -1260,6 +1267,7 @@ export const loadSeasonalWorkersFromSupabase = async (
         const w = (item.worker_data || {}) as SeasonalWorker;
         const canonicalId = item.id || w.id;
         const canonicalCode = item.code || w.code;
+        const rowUpdatedTs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
         return {
           ...w,
           id: String(canonicalId),
@@ -1280,6 +1288,7 @@ export const loadSeasonalWorkersFromSupabase = async (
           actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
           overtimeHours: Number(w.overtimeHours ?? item.overtime_hours ?? 0),
           dailyRate: Number(w.dailyRate ?? item.daily_rate ?? 0),
+          updatedAt: Math.max(Number(w.updatedAt || 0), rowUpdatedTs),
         };
       })
       .filter((w) => w && (w.fullName || w.code));
@@ -2023,38 +2032,58 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       ...(cleanedExisting?.periodRecords || {}),
       ...(cleanedLocal.periodRecords || {}),
     };
-    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
+    if (!cleanedLocal.monthlyAttendance?.['2026-11'] && cleanedLocal.payrollCycleType !== 'TEAM') {
       Object.keys(mergedPeriodRecords).forEach((k) => {
-        if (k.startsWith('2026-11_')) delete mergedPeriodRecords[k];
+        if (k.startsWith('2026-11_') && mergedPeriodRecords[k]?.cycleType !== 'TEAM') {
+          delete mergedPeriodRecords[k];
+        }
       });
     }
     const effectiveDailyRate = Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
-    if (effectiveDailyRate > 0) {
-      Object.keys(mergedPeriodRecords).forEach((k) => {
-        const r = mergedPeriodRecords[k];
-        if (!r) return;
-        const sByDays = Math.round(effectiveDailyRate * Number(r.actualWorkDays || 0));
-        const otPay = Math.round((effectiveDailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
-        const totInc =
-          sByDays +
-          otPay +
-          Number(r.mealAllowance || 0) +
-          Number(r.travelSafetyAllowance || 0) +
-          Number(r.otherBonus || 0);
-        const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
-        const totDed = tax + Number(r.advancePayment || 0);
-        mergedPeriodRecords[k] = {
-          ...r,
-          dailyRate: effectiveDailyRate,
-          salaryByDays: sByDays,
-          overtimePay: otPay,
-          totalIncome: totInc,
-          personalIncomeTax: tax,
-          totalDeductions: totDed,
-          netSalary: totInc - totDed,
-        };
-      });
-    }
+    Object.keys(mergedPeriodRecords).forEach((k) => {
+      const r = mergedPeriodRecords[k];
+      if (!r) return;
+      const isTeamRec = worker.payrollCycleType === 'TEAM' || r.cycleType === 'TEAM';
+      const recRate = isTeamRec
+        ? Number(
+            r.salaryByDays !== undefined &&
+              r.salaryByDays > 0 &&
+              (!r.actualWorkDays || r.actualWorkDays === 1)
+              ? r.salaryByDays
+              : r.dailyRate ?? r.salaryByDays ?? effectiveDailyRate ?? 0
+          )
+        : effectiveDailyRate > 0
+        ? effectiveDailyRate
+        : Number(r.dailyRate || 0);
+      const workDays = isTeamRec
+        ? Number(r.actualWorkDays || 0) > 0
+          ? Number(r.actualWorkDays)
+          : r.isRecorded
+          ? 1
+          : 0
+        : Number(r.actualWorkDays || 0);
+      const sByDays = workDays > 0 ? Math.round(recRate * workDays) : 0;
+      const otPay = Math.round((recRate / 8) * Number(r.overtimeHours || 0) * 1.5);
+      const totInc =
+        sByDays +
+        otPay +
+        Number(r.mealAllowance || 0) +
+        Number(r.travelSafetyAllowance || 0) +
+        Number(r.otherBonus || 0);
+      const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+      const totDed = tax + Number(r.advancePayment || 0);
+      mergedPeriodRecords[k] = {
+        ...r,
+        dailyRate: recRate,
+        actualWorkDays: workDays,
+        salaryByDays: sByDays,
+        overtimePay: otPay,
+        totalIncome: totInc,
+        personalIncomeTax: tax,
+        totalDeductions: totDed,
+        netSalary: Math.max(0, totInc - totDed),
+      };
+    });
 
     const sortOrder = typeof worker.sortOrder === 'number'
       ? worker.sortOrder

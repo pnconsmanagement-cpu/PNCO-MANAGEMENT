@@ -740,8 +740,12 @@ export default function App() {
           x.payrollCycleType,
           x.bankAccount,
           x.bankName,
+          x.salaryByDays,
+          x.paymentDate,
+          x.selectedForAttendance,
           x.updatedAt,
           x.monthlyAttendance,
+          x.periodRecords,
         ]),
       });
     } catch {
@@ -938,24 +942,67 @@ export default function App() {
           ? existing.payrollCycleType || cw.payrollCycleType || '1_MONTH'
           : cw.payrollCycleType || existing.payrollCycleType || '1_MONTH';
 
-        const mergedPeriodRecs: Record<string, any> = localIsNewer
-          ? {
-              ...(cw.periodRecords || {}),
-              ...(existing.periodRecords || {}),
+        const mergedPeriodRecs: Record<string, any> = {};
+        const allPeriodKeys = new Set([
+          ...Object.keys(existing.periodRecords || {}),
+          ...Object.keys(cw.periodRecords || {}),
+        ]);
+        allPeriodKeys.forEach((pKey) => {
+          const exPRec = existing.periodRecords?.[pKey];
+          const cwPRec = cw.periodRecords?.[pKey];
+          if (exPRec && !cwPRec) {
+            mergedPeriodRecs[pKey] = exPRec;
+            if (exPRec.isRecorded || Number(exPRec.salaryByDays || 0) > 0 || Number(exPRec.actualWorkDays || 0) > 0) {
+              needsPushToCloud = true;
             }
-          : {
-              ...(existing.periodRecords || {}),
-              ...(cw.periodRecords || {}),
-            };
+          } else if (!exPRec && cwPRec) {
+            mergedPeriodRecs[pKey] = cwPRec;
+          } else if (exPRec && cwPRec) {
+            const exRecorded =
+              Boolean(exPRec.isRecorded) ||
+              Number(exPRec.salaryByDays || 0) > 0 ||
+              Number(exPRec.actualWorkDays || 0) > 0;
+            const cwRecorded =
+              Boolean(cwPRec.isRecorded) ||
+              Number(cwPRec.salaryByDays || 0) > 0 ||
+              Number(cwPRec.actualWorkDays || 0) > 0;
+            if (localIsNewer) {
+              mergedPeriodRecs[pKey] = exPRec;
+            } else if (cwRecorded && !exRecorded) {
+              mergedPeriodRecs[pKey] = cwPRec;
+            } else if (exRecorded && !cwRecorded && exUpdatedAt >= cwUpdatedAt) {
+              mergedPeriodRecs[pKey] = exPRec;
+              needsPushToCloud = true;
+            } else {
+              mergedPeriodRecs[pKey] = cwPRec;
+            }
+          }
+        });
+
         if (resolvedDailyRate >= 0) {
           Object.keys(mergedPeriodRecs).forEach((pKey) => {
             const r = mergedPeriodRecs[pKey];
             if (!r) return;
-            const recRate =
-              resolvedCycleType === 'TEAM' && r.dailyRate !== undefined && r.dailyRate >= 0
-                ? Number(r.dailyRate)
-                : resolvedDailyRate;
-            const sByDays = Math.round(recRate * Number(r.actualWorkDays || 0));
+            const isTeamRec = resolvedCycleType === 'TEAM' || r.cycleType === 'TEAM';
+            const recRate = isTeamRec
+              ? Number(
+                  r.salaryByDays !== undefined &&
+                    r.salaryByDays > 0 &&
+                    (!r.actualWorkDays || r.actualWorkDays === 1)
+                    ? r.salaryByDays
+                    : r.dailyRate ?? r.salaryByDays ?? resolvedDailyRate ?? 0
+                )
+              : resolvedDailyRate > 0
+              ? resolvedDailyRate
+              : Number(r.dailyRate || 0);
+            const workDays = isTeamRec
+              ? Number(r.actualWorkDays || 0) > 0
+                ? Number(r.actualWorkDays)
+                : r.isRecorded
+                ? 1
+                : 0
+              : Number(r.actualWorkDays || 0);
+            const sByDays = workDays > 0 ? Math.round(recRate * workDays) : 0;
             const otPay = Math.round((recRate / 8) * Number(r.overtimeHours || 0) * 1.5);
             const totInc =
               sByDays +
@@ -968,12 +1015,13 @@ export default function App() {
             mergedPeriodRecs[pKey] = {
               ...r,
               dailyRate: recRate,
+              actualWorkDays: workDays,
               salaryByDays: sByDays,
               overtimePay: otPay,
               totalIncome: totInc,
               personalIncomeTax: tax,
               totalDeductions: totDed,
-              netSalary: totInc - totDed,
+              netSalary: Math.max(0, totInc - totDed),
             };
           });
         }
@@ -1077,6 +1125,7 @@ export default function App() {
       }
 
       let nextSea = latestSeasonal;
+      let shouldPushSeaToCloud = false;
       if (cloudSea && cloudSea.length > 0) {
         const mergedRes = mergeSeasonalListsPreservingAttendance(
           latestSeasonal,
@@ -1086,6 +1135,13 @@ export default function App() {
           curPeriod
         );
         nextSea = mergedRes.mergedList;
+        shouldPushSeaToCloud = mergedRes.needsPushToCloud;
+      }
+
+      if (shouldPushSeaToCloud) {
+        syncSeasonalWorkersToSupabase(nextSea, curPeriod).catch((err) =>
+          console.warn('[Auto Push Missing Seasonal Data]', err)
+        );
       }
 
       const nextCfg = mergeRemoteConfigPreservingPeriod(latestConfig, cloudCfg);
