@@ -909,6 +909,10 @@ export function resolveWorkerTimesheetForReceipt(
   month?: number,
   year?: number
 ): WeeklyDayAttendance[] {
+  // Nhân viên thuộc nhóm Tổ Đội không chấm công nên không in bảng chấm công chi tiết
+  if (worker.payrollCycleType === 'TEAM') {
+    return [];
+  }
   const yr = year || worker.attendanceYear || 2026;
   const mo = month || worker.attendanceMonth || 10;
   const mStr = String(mo).padStart(2, '0');

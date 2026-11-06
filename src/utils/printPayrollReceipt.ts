@@ -31,12 +31,15 @@ export function generateSeasonalWorkerReceiptHTML(
 
   const logoUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/assets/aistudio/image_1ca8dbc7.png`;
 
+  const isTeamWorker =
+    worker.payrollCycleType === 'TEAM' ||
+    (periodText || '').toLowerCase().includes('tổ đội');
+
   // Chuẩn hóa danh sách chấm công chi tiết các ngày trong kỳ khớp 100% với Số ngày công & Giờ tăng ca trên phiếu lương
-  const timesheetList: WeeklyDayAttendance[] = resolveWorkerTimesheetForReceipt(
-    worker,
-    activeMo,
-    activeYr
-  );
+  // Nhân viên thuộc nhóm Tổ Đội không chấm công nên không hiển thị bảng chấm công chi tiết
+  const timesheetList: WeeklyDayAttendance[] = isTeamWorker
+    ? []
+    : resolveWorkerTimesheetForReceipt(worker, activeMo, activeYr);
 
   // Xây dựng bảng chấm công tuần / đợt chi tiết
   // Khi nhân sự tính lương tháng (28 - 31 ngày), chia thành 2 đợt (Nửa đầu tháng: ngày 1-15, Nửa cuối tháng: ngày 16-hết tháng)
@@ -394,10 +397,14 @@ export function generateSeasonalWorkerReceiptHTML(
           </tr>
           <tr>
             <td>
-              Hình thức lương: <span>Theo ngày công (${formatNumberOnly(worker.dailyRate)} đ/ngày)</span>
+              Hình thức lương: <span>${isTeamWorker ? 'Khoán / Tổ Đội (Không chấm công)' : `Theo ngày công (${formatNumberOnly(worker.dailyRate)} đ/ngày)`}</span>
             </td>
             <td>
-              Ngày công: <strong style="color: #0f3d64;">${worker.actualWorkDays} ngày</strong> ${worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h OT)` : ''}
+              ${
+                isTeamWorker
+                  ? `Nhóm lương: <strong style="color: #0f3d64;">Bản Lương Tổ Đội</strong>`
+                  : `Ngày công: <strong style="color: #0f3d64;">${worker.actualWorkDays} ngày</strong> ${worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h OT)` : ''}`
+              }
             </td>
           </tr>
           <tr>
@@ -436,6 +443,10 @@ export function generateSeasonalWorkerReceiptHTML(
           </tr>
         </thead>
         <tbody>
+          ${
+            isTeamWorker
+              ? ''
+              : `
           <!-- PHẦN A: SỐ CÔNG & THỐNG KÊ LÀM VIỆC -->
           <tr class="section-row-a">
             <td style="text-align: center;">A</td>
@@ -453,30 +464,40 @@ export function generateSeasonalWorkerReceiptHTML(
             <td style="padding-left: 14px;">Số giờ làm thêm / tăng ca công trình (OT hệ số 150%)</td>
             <td style="text-align: center; font-family: monospace; font-weight: bold; color: #c2410c;">${worker.overtimeHours} giờ</td>
             <td style="text-align: right; font-family: monospace; font-weight: bold; color: #c2410c;">${worker.overtimeHours > 0 ? `${worker.overtimeHours} giờ OT` : '—'}</td>
-          </tr>
+          </tr>`
+          }
 
           <!-- PHẦN B: CÁC KHOẢN TIỀN CÔNG VÀ THU NHẬP -->
           <tr class="section-row-b">
-            <td style="text-align: center;">B</td>
+            <td style="text-align: center;">${isTeamWorker ? 'A' : 'B'}</td>
             <td colspan="2" style="text-transform: uppercase;">CÁC KHOẢN TIỀN CÔNG VÀ THU NHẬP</td>
             <td style="text-align: right; font-family: monospace; font-weight: bold;">${formatNumberOnly(worker.totalIncome)}</td>
           </tr>
           <tr>
-            <td style="text-align: center; font-weight: bold;">3</td>
+            <td style="text-align: center; font-weight: bold;">${isTeamWorker ? '1' : '3'}</td>
             <td style="padding-left: 14px;">
-              Lương theo đơn giá ngày công (${worker.actualWorkDays} ngày × ${formatNumberOnly(worker.dailyRate)} đ/ngày)
+              ${
+                isTeamWorker
+                  ? `Tiền lương / Khoán thanh toán Tổ Đội trong kỳ (${monthSuffix})`
+                  : `Lương theo đơn giá ngày công (${worker.actualWorkDays} ngày × ${formatNumberOnly(worker.dailyRate)} đ/ngày)`
+              }
             </td>
-            <td style="text-align: center; font-family: monospace;">${worker.actualWorkDays} công</td>
+            <td style="text-align: center; font-family: monospace;">${isTeamWorker ? 'Theo kỳ' : `${worker.actualWorkDays} công`}</td>
             <td style="text-align: right; font-family: monospace; font-weight: bold; color: #000000;">${formatNumberOnly(worker.salaryByDays)}</td>
           </tr>
+          ${
+            !isTeamWorker || worker.overtimePay > 0
+              ? `
           <tr>
-            <td style="text-align: center; font-weight: bold;">4</td>
+            <td style="text-align: center; font-weight: bold;">${isTeamWorker ? '2' : '4'}</td>
             <td style="padding-left: 14px;">
               Tiền làm thêm giờ / tăng ca (${worker.overtimeHours} giờ × hệ số 150%)
             </td>
             <td style="text-align: center; font-family: monospace;">${worker.overtimeHours} giờ</td>
             <td style="text-align: right; font-family: monospace; font-weight: bold; color: #c2410c;">${formatNumberOnly(worker.overtimePay)}</td>
-          </tr>
+          </tr>`
+              : ''
+          }
           ${
             worker.mealAllowance > 0
               ? `

@@ -64,6 +64,9 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
   };
 
   const activePeriodText = periodLabel || worker.currentWeekLabel || config.period;
+  const isTeamWorker =
+    worker.payrollCycleType === 'TEAM' ||
+    (activePeriodText || '').toLowerCase().includes('tổ đội');
 
   const handlePrint = () => {
     setBlockedNotice(false);
@@ -277,12 +280,20 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
               </div>
               <div className="flex">
                 <span className="w-28 text-slate-600 shrink-0">Hình thức lương:</span>
-                <span className="font-semibold text-slate-800">Theo ngày công ({formatNumberOnly(worker.dailyRate)} đ/ngày)</span>
+                <span className="font-semibold text-slate-800">
+                  {isTeamWorker
+                    ? 'Khoán / Tổ Đội (Không chấm công)'
+                    : `Theo ngày công (${formatNumberOnly(worker.dailyRate)} đ/ngày)`}
+                </span>
               </div>
               <div className="flex">
-                <span className="w-28 text-slate-600 shrink-0">Ngày công:</span>
+                <span className="w-28 text-slate-600 shrink-0">
+                  {isTeamWorker ? 'Nhóm lương:' : 'Ngày công:'}
+                </span>
                 <span className="font-bold text-slate-800">
-                  {worker.actualWorkDays} ngày {worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h tăng ca)` : ''}
+                  {isTeamWorker
+                    ? 'Bản Lương Tổ Đội'
+                    : `${worker.actualWorkDays} ngày ${worker.overtimeHours > 0 ? `(+${worker.overtimeHours}h tăng ca)` : ''}`}
                 </span>
               </div>
               <div className="flex">
@@ -311,8 +322,9 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
             </div>
           </div>
 
-          {/* Bảng chấm công chi tiết theo chu kỳ (1 tuần, 2 tuần hoặc cả tháng) */}
+          {/* Bảng chấm công chi tiết theo chu kỳ (1 tuần, 2 tuần hoặc cả tháng) — ẩn đối với nhân sự Tổ Đội */}
           {(() => {
+            if (isTeamWorker) return null;
             const list = resolveWorkerTimesheetForReceipt(
               worker,
               worker.attendanceMonth || config.month,
@@ -448,44 +460,48 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {/* Group A */}
-                <tr className="bg-sky-100/90 font-bold text-sky-950 border-b border-sky-200">
-                  <td className="py-1.5 px-3 text-center">A</td>
-                  <td className="py-1.5 px-3 uppercase tracking-wide text-[11px]" colSpan={2}>
-                    SỐ NGÀY CÔNG ĐI LÀM & DỮ LIỆU ĐẦU VÀO
-                  </td>
-                  <td className="py-1.5 px-3 text-right text-[10.5px] font-semibold text-sky-900">
-                    THỐNG KÊ
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 px-3 text-center text-slate-500">1</td>
-                  <td className="py-1 px-3 pl-6 text-slate-700">
-                    Số ngày công đi làm thực tế
-                  </td>
-                  <td className="py-1 px-3 text-center font-mono text-slate-700">
-                    {worker.actualWorkDays} ngày
-                  </td>
-                  <td className="py-1 px-3 text-right font-mono font-bold text-[#0f3d64]">
-                    {worker.actualWorkDays} công
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 px-3 text-center text-slate-500">2</td>
-                  <td className="py-1 px-3 pl-6 text-slate-700">
-                    Số giờ làm thêm / tăng ca công trình (OT hệ số 150%)
-                  </td>
-                  <td className="py-1 px-3 text-center font-mono text-slate-700">
-                    {worker.overtimeHours} giờ
-                  </td>
-                  <td className="py-1 px-3 text-right font-mono font-bold text-amber-700">
-                    {worker.overtimeHours > 0 ? `${worker.overtimeHours} giờ OT` : '—'}
-                  </td>
-                </tr>
+                {/* Group A — Chỉ hiển thị khi không phải nhân sự Tổ Đội */}
+                {!isTeamWorker && (
+                  <>
+                    <tr className="bg-sky-100/90 font-bold text-sky-950 border-b border-sky-200">
+                      <td className="py-1.5 px-3 text-center">A</td>
+                      <td className="py-1.5 px-3 uppercase tracking-wide text-[11px]" colSpan={2}>
+                        SỐ NGÀY CÔNG ĐI LÀM & DỮ LIỆU ĐẦU VÀO
+                      </td>
+                      <td className="py-1.5 px-3 text-right text-[10.5px] font-semibold text-sky-900">
+                        THỐNG KÊ
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 px-3 text-center text-slate-500">1</td>
+                      <td className="py-1 px-3 pl-6 text-slate-700">
+                        Số ngày công đi làm thực tế
+                      </td>
+                      <td className="py-1 px-3 text-center font-mono text-slate-700">
+                        {worker.actualWorkDays} ngày
+                      </td>
+                      <td className="py-1 px-3 text-right font-mono font-bold text-[#0f3d64]">
+                        {worker.actualWorkDays} công
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 px-3 text-center text-slate-500">2</td>
+                      <td className="py-1 px-3 pl-6 text-slate-700">
+                        Số giờ làm thêm / tăng ca công trình (OT hệ số 150%)
+                      </td>
+                      <td className="py-1 px-3 text-center font-mono text-slate-700">
+                        {worker.overtimeHours} giờ
+                      </td>
+                      <td className="py-1 px-3 text-right font-mono font-bold text-amber-700">
+                        {worker.overtimeHours > 0 ? `${worker.overtimeHours} giờ OT` : '—'}
+                      </td>
+                    </tr>
+                  </>
+                )}
 
                 {/* Group B */}
                 <tr className="bg-sky-50 font-bold text-sky-950">
-                  <td className="py-1.5 px-3 text-center">B</td>
+                  <td className="py-1.5 px-3 text-center">{isTeamWorker ? 'A' : 'B'}</td>
                   <td className="py-1.5 px-3 uppercase tracking-wide text-[11px]" colSpan={2}>
                     CÁC KHOẢN TIỀN CÔNG VÀ THU NHẬP
                   </td>
@@ -494,29 +510,33 @@ export const SeasonalWorkerReceiptModal: React.FC<SeasonalWorkerReceiptModalProp
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-1 px-3 text-center text-slate-500">3</td>
+                  <td className="py-1 px-3 text-center text-slate-500">{isTeamWorker ? '1' : '3'}</td>
                   <td className="py-1 px-3 pl-6 text-slate-700">
-                    Lương theo đơn giá ngày công ({worker.actualWorkDays} ngày × {formatNumberOnly(worker.dailyRate)} đ/ngày)
+                    {isTeamWorker
+                      ? 'Tiền lương / Khoán thanh toán Tổ Đội trong kỳ'
+                      : `Lương theo đơn giá ngày công (${worker.actualWorkDays} ngày × ${formatNumberOnly(worker.dailyRate)} đ/ngày)`}
                   </td>
                   <td className="py-1 px-3 text-center font-mono text-slate-700">
-                    {worker.actualWorkDays} công
+                    {isTeamWorker ? 'Theo kỳ' : `${worker.actualWorkDays} công`}
                   </td>
                   <td className="py-1 px-3 text-right font-mono font-bold text-slate-800">
                     {formatNumberOnly(worker.salaryByDays)}
                   </td>
                 </tr>
-                <tr>
-                  <td className="py-1 px-3 text-center text-slate-500">4</td>
-                  <td className="py-1 px-3 pl-6 text-slate-700">
-                    Tiền làm thêm giờ công trình ({worker.overtimeHours} giờ × hệ số 150%)
-                  </td>
-                  <td className="py-1 px-3 text-center font-mono text-slate-700">
-                    {worker.overtimeHours} giờ
-                  </td>
-                  <td className="py-1 px-3 text-right font-mono font-bold text-amber-700">
-                    {formatNumberOnly(worker.overtimePay)}
-                  </td>
-                </tr>
+                {(!isTeamWorker || worker.overtimePay > 0) && (
+                  <tr>
+                    <td className="py-1 px-3 text-center text-slate-500">{isTeamWorker ? '2' : '4'}</td>
+                    <td className="py-1 px-3 pl-6 text-slate-700">
+                      Tiền làm thêm giờ công trình ({worker.overtimeHours} giờ × hệ số 150%)
+                    </td>
+                    <td className="py-1 px-3 text-center font-mono text-slate-700">
+                      {worker.overtimeHours} giờ
+                    </td>
+                    <td className="py-1 px-3 text-right font-mono font-bold text-amber-700">
+                      {formatNumberOnly(worker.overtimePay)}
+                    </td>
+                  </tr>
+                )}
                 {worker.mealAllowance > 0 && (
                   <tr>
                     <td className="py-1 px-3 text-center text-slate-500">5</td>
