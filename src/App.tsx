@@ -1551,14 +1551,21 @@ export default function App() {
       let finalWorkerToSync: SeasonalWorker;
       if (idx !== -1) {
         next = [...prev];
+        const effectiveCycleType =
+          recalculated.payrollCycleType || next[idx].payrollCycleType || '1_MONTH';
         const mergedRecords = {
           ...(next[idx].periodRecords || {}),
           ...(recalculated.periodRecords || {}),
         };
-        if (typeof recalculated.dailyRate === 'number' && recalculated.dailyRate >= 0) {
+        if (
+          effectiveCycleType !== 'TEAM' &&
+          typeof recalculated.dailyRate === 'number' &&
+          recalculated.dailyRate >= 0
+        ) {
           Object.keys(mergedRecords).forEach((k) => {
             if (mergedRecords[k]) {
               const r = mergedRecords[k];
+              if (r.cycleType === 'TEAM') return;
               const sByDays = Math.round(recalculated.dailyRate * Number(r.actualWorkDays || 0));
               const otPay = Math.round((recalculated.dailyRate / 8) * Number(r.overtimeHours || 0) * 1.5);
               const totInc = sByDays + otPay + Number(r.mealAllowance || 0) + Number(r.travelSafetyAllowance || 0) + Number(r.otherBonus || 0);
@@ -1591,6 +1598,7 @@ export default function App() {
           paymentMethod: recalculated.paymentMethod || next[idx].paymentMethod || 'BANK',
           bankUpdatedAt: Date.now(),
           dailyRateUpdatedAt: Date.now(),
+          updatedAt: Date.now(),
           monthlyAttendance: {
             ...(next[idx].monthlyAttendance || {}),
             ...(recalculated.monthlyAttendance || {}),
@@ -1603,6 +1611,7 @@ export default function App() {
           ...recalculated,
           bankUpdatedAt: Date.now(),
           dailyRateUpdatedAt: Date.now(),
+          updatedAt: Date.now(),
         } as SeasonalWorker;
         next = [...prev, finalWorkerToSync];
       }
@@ -1619,15 +1628,23 @@ export default function App() {
       }
       singleWorkerSyncTimersRef.current[timerKey] = setTimeout(async () => {
         try {
+          setCloudSyncStatus('syncing');
           saveAttendanceToServer(finalWorkerToSync);
+          await saveAllToServer(configRef.current, employeesRef.current, seasonalWorkersRef.current);
           if (isSupabaseConfigured()) {
             await syncSingleSeasonalWorkerToSupabase(finalWorkerToSync, periodCodeRef.current);
+            await syncSeasonalWorkersToSupabase(seasonalWorkersRef.current, periodCodeRef.current);
             setCloudSyncStatus('synced');
             setLastSyncedText(getLastSyncedTime());
             notifyCrossTab();
+          } else {
+            setCloudSyncStatus('synced');
+            setLastSyncedText(getServerLastSyncedTime());
           }
-        } catch {}
-      }, 800);
+        } catch {
+          setCloudSyncStatus('error');
+        }
+      }, 500);
 
       return next;
     });
@@ -2699,6 +2716,7 @@ export default function App() {
                       onUpdateEmployee={handleUpdateEmployee}
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
+                      onSavePayrollToCloud={handleManualForceSync}
                       forcedCategory="PERMANENT"
                     />
                   )}
@@ -2779,10 +2797,13 @@ export default function App() {
                               syncedSeasonalWorkers.filter(
                                 (w) =>
                                   (w.status || 'ACTIVE') === 'ACTIVE' &&
-                                  ((w.actualWorkDays || 0) > 0 || (w.overtimeHours || 0) > 0)
+                                  ((w.actualWorkDays || 0) > 0 ||
+                                    (w.overtimeHours || 0) > 0 ||
+                                    (w.payrollCycleType === 'TEAM' &&
+                                      (Boolean(w.selectedForAttendance) || (w.salaryByDays || 0) > 0)))
                               ).length
                             }{' '}
-                            tham gia chấm công
+                            nhận lương
                           </span>
                         </button>
 
@@ -2914,6 +2935,7 @@ export default function App() {
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
+                      onSavePayrollToCloud={handleManualForceSync}
                       forcedCategory="SEASONAL"
                     />
                   )}

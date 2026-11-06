@@ -20,6 +20,8 @@ import {
   Sparkles,
   Printer,
   X,
+  Save,
+  CheckCircle2,
 } from 'lucide-react';
 import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, SeasonalCycleType } from '../types';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
@@ -53,6 +55,7 @@ interface PayrollTableTabProps {
   onAddEmployee: (emp: Employee) => void;
   onDeleteEmployee: (id: string) => void;
   onUpdateSeasonalWorker?: (worker: SeasonalWorker) => void;
+  onSavePayrollToCloud?: () => Promise<void> | void;
   forcedCategory?: 'PERMANENT' | 'SEASONAL' | 'TEAM' | 'ALL';
 }
 
@@ -66,6 +69,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onAddEmployee,
   onDeleteEmployee,
   onUpdateSeasonalWorker,
+  onSavePayrollToCloud,
   forcedCategory,
 }) => {
   const { realMonth, realYear } = getRealCurrentDateInfo();
@@ -260,6 +264,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         : w.actualWorkDays > 0
         ? w.actualWorkDays
         : 1;
+    const effectiveSalaryByDays =
+      patch.salaryByDays !== undefined
+        ? patch.salaryByDays
+        : patch.dailyRate !== undefined
+        ? patch.dailyRate
+        : w.salaryByDays !== undefined
+        ? w.salaryByDays
+        : w.dailyRate || 0;
     const updatedWorker = recordWorkerPeriod(
       {
         ...baseWorker,
@@ -270,7 +282,8 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       {
         payrollCycleType: 'TEAM',
         project: patch.project !== undefined ? patch.project : w.project || baseWorker.project,
-        dailyRate: patch.dailyRate !== undefined ? patch.dailyRate : w.dailyRate,
+        dailyRate: effectiveSalaryByDays,
+        salaryByDays: effectiveSalaryByDays,
         actualWorkDays: currentEffectiveDays,
         overtimeHours: patch.overtimeHours !== undefined ? patch.overtimeHours : w.overtimeHours || 0,
         mealAllowance: patch.mealAllowance !== undefined ? patch.mealAllowance : w.mealAllowance || 0,
@@ -290,6 +303,27 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       payrollCycleType: 'TEAM',
       updatedAt: Date.now(),
     });
+  };
+
+  // Trạng thái lưu bản lương & đồng bộ Supabase
+  const [isSavingPayroll, setIsSavingPayroll] = useState(false);
+  const [savePayrollNotice, setSavePayrollNotice] = useState<string | null>(null);
+
+  const handleSavePayrollTable = async () => {
+    setIsSavingPayroll(true);
+    try {
+      if (onSavePayrollToCloud) {
+        await onSavePayrollToCloud();
+      }
+      setSavePayrollNotice(
+        `✓ Đã lưu Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} và đồng bộ lên Supabase thành công!`
+      );
+      setTimeout(() => {
+        setSavePayrollNotice(null);
+      }, 4500);
+    } finally {
+      setIsSavingPayroll(false);
+    }
   };
 
   // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG hoặc CÓ TẠM ỨNG theo từng Tab Chu kỳ lương đã khai báo
@@ -941,6 +975,17 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 </button>
 
                 <button
+                  type="button"
+                  onClick={handleSavePayrollTable}
+                  disabled={isSavingPayroll}
+                  className="px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-60 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  title="Lưu lại toàn bộ Bản Lương tháng này và đồng bộ trực tiếp lên Supabase"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingPayroll ? 'Đang lưu & đồng bộ...' : 'Lưu bản lương'}</span>
+                </button>
+
+                <button
                   id="btn-export-excel"
                   onClick={handleExportExcel}
                   className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
@@ -950,6 +995,22 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 </button>
               </div>
             </div>
+
+            {savePayrollNotice && (
+              <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{savePayrollNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSavePayrollNotice(null)}
+                  className="text-emerald-700 hover:text-emerald-950 font-black px-1.5 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Thanh chọn Tuần (W1..W5) hoặc Đợt (BI1..BI2) khi đang ở Tab Bản Lương 1 Tuần hoặc Bản Lương 2 Tuần */}
             {(seasonalCycleTab === '1_WEEK' || seasonalCycleTab === '2_WEEKS') && (
@@ -1016,13 +1077,23 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-purple-800 mt-0.5">
-                      Nhân sự Tổ Đội không hiển thị bên Bản Chấm Công. Bấm chọn tên nhân viên bên dưới để đưa vào Bản Lương tháng {config.periodCode} và nhập số tiền thanh toán / dự án.
+                      Nhân sự Tổ Đội không chấm công theo ngày — nhập lương trực tiếp vào ô <strong>Lương theo công</strong> bên dưới và bấm <strong>Lưu bản lương</strong> để lưu chi phí theo Tháng & Dự án lên Supabase.
                     </p>
                   </div>
 
-                  {/* Dropdown chọn thêm bất kỳ nhân viên nào từ Danh sách Thời Vụ sang Tổ Đội trả lương tháng này */}
+                  {/* Nút Lưu bản lương Tổ Đội & Dropdown chọn thêm nhân viên vào Tổ Đội trả lương tháng này */}
                   {onUpdateSeasonalWorker && (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSavePayrollTable}
+                        disabled={isSavingPayroll}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                        title="Lưu bản lương Tổ Đội và đồng bộ ngay lên Supabase"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSavingPayroll ? 'Đang lưu Supabase...' : 'Lưu bản lương Tổ Đội'}</span>
+                      </button>
                       <select
                         value=""
                         onChange={(e) => {
@@ -1930,7 +2001,14 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                      {onUpdateSeasonalWorker ? (
+                      {w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM' ? (
+                        <span
+                          className="text-[11px] font-sans font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200"
+                          title="Nhân sự Tổ Đội không tính theo đơn giá ngày mà nhập trực tiếp tại cột Lương theo công"
+                        >
+                          Khoán / Tổ đội
+                        </span>
+                      ) : onUpdateSeasonalWorker ? (
                         <div className="flex items-center justify-end gap-0.5">
                           <input
                             type="number"
@@ -1941,10 +2019,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                             onChange={(e) => {
                               const rawVal = e.target.value;
                               const newRate = rawVal === '' ? 0 : Math.max(0, Number(rawVal) || 0);
-                              if (w.payrollCycleType === 'TEAM') {
-                                handleUpdateTeamSeasonalMonthRecord(w, { dailyRate: newRate });
-                                return;
-                              }
                               const baseWorker =
                                 seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
                               onUpdateSeasonalWorker({
@@ -1955,11 +2029,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                               } as SeasonalWorker);
                             }}
                             className="w-28 text-right font-mono font-bold text-slate-800 bg-white border border-slate-200 hover:border-amber-400 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs outline-none transition-colors"
-                            title={
-                              w.payrollCycleType === 'TEAM'
-                                ? 'Nhập đơn giá / số tiền thanh toán Tổ Đội trong tháng này'
-                                : 'Sửa đơn giá ngày (tự động đồng bộ sang Danh sách thời vụ & mọi kỳ lương)'
-                            }
+                            title="Sửa đơn giá ngày (tự động đồng bộ sang Danh sách thời vụ & mọi kỳ lương)"
                           />
                         </div>
                       ) : (
@@ -1967,28 +2037,43 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-center font-bold text-sky-900 bg-sky-50/30">
-                      {onUpdateSeasonalWorker && w.payrollCycleType === 'TEAM' ? (
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          value={w.actualWorkDays !== undefined ? w.actualWorkDays : 1}
-                          onChange={(e) => {
-                            const nextDays = Math.max(0, parseFloat(e.target.value) || 0);
-                            handleUpdateTeamSeasonalMonthRecord(w, {
-                              actualWorkDays: nextDays,
-                              selectedForAttendance: nextDays > 0,
-                            });
-                          }}
-                          className="w-14 text-center font-mono font-bold text-sky-900 bg-white border border-slate-200 hover:border-purple-400 rounded px-1 py-0.5 text-xs outline-none"
-                          title="Số lượng công / đợt thanh toán (mặc định 1 đợt = Đơn giá x 1)"
-                        />
+                      {w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM' ? (
+                        <span
+                          className="text-[10px] font-semibold text-slate-500 italic"
+                          title="Nhân sự Tổ Đội không chấm công ngày"
+                        >
+                          Không chấm công
+                        </span>
                       ) : (
                         w.actualWorkDays
                       )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
-                      {formatNumberOnly(w.salaryByDays)}
+                      {onUpdateSeasonalWorker && (w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') ? (
+                        <div className="flex items-center justify-end">
+                          <input
+                            type="number"
+                            step="100000"
+                            min="0"
+                            placeholder="Nhập lương..."
+                            value={w.salaryByDays ? w.salaryByDays : ''}
+                            onChange={(e) => {
+                              const rawVal = e.target.value;
+                              const newSalary = rawVal === '' ? 0 : Math.max(0, Number(rawVal) || 0);
+                              handleUpdateTeamSeasonalMonthRecord(w, {
+                                salaryByDays: newSalary,
+                                dailyRate: newSalary,
+                                actualWorkDays: 1,
+                                selectedForAttendance: true,
+                              });
+                            }}
+                            className="w-36 text-right font-mono font-black text-purple-950 bg-purple-50/70 border-2 border-purple-400 hover:border-purple-600 focus:border-purple-700 focus:bg-white rounded-md px-2 py-1 text-xs outline-none transition-colors shadow-2xs"
+                            title="Nhập trực tiếp số tiền lương thanh toán cho nhân sự Tổ Đội trong tháng này (tự động đồng bộ Supabase)"
+                          />
+                        </div>
+                      ) : (
+                        formatNumberOnly(w.salaryByDays)
+                      )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono text-amber-900 font-semibold bg-amber-50/30">
                       {w.overtimePay > 0 ? `${formatNumberOnly(w.overtimePay)} (${w.overtimeHours}h)` : '-'}
@@ -2139,20 +2224,32 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                           <Printer className="w-3.5 h-3.5" />
                           <span>In bản lương</span>
                         </button>
-                        {w.payrollCycleType === 'TEAM' && onUpdateSeasonalWorker && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleUpdateTeamSeasonalMonthRecord(w, {
-                                selectedForAttendance: false,
-                                actualWorkDays: 0,
-                              })
-                            }
-                            className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded cursor-pointer"
-                            title="Bỏ chọn khỏi Bản Lương tháng này"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+                        {(w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') && onUpdateSeasonalWorker && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleSavePayrollTable}
+                              disabled={isSavingPayroll}
+                              className="px-2 py-1 bg-purple-700 hover:bg-purple-800 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                              title="Lưu lại bản lương và đồng bộ lên Supabase"
+                            >
+                              <Save className="w-3 h-3" />
+                              <span>Lưu</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdateTeamSeasonalMonthRecord(w, {
+                                  selectedForAttendance: false,
+                                  actualWorkDays: 0,
+                                })
+                              }
+                              className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded cursor-pointer"
+                              title="Bỏ chọn khỏi Bản Lương tháng này"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>

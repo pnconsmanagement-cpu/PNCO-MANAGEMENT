@@ -350,12 +350,22 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
   const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
   const otherBonus = Math.max(0, worker.otherBonus || 0);
 
-  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công
-  const hasParticipated = actualWorkDays > 0 || overtimeHours > 0;
+  const isTeamCycle = worker.payrollCycleType === 'TEAM';
+  const directTeamSalary =
+    isTeamCycle && typeof worker.salaryByDays === 'number' && worker.salaryByDays > 0 && dailyRate === 0
+      ? Math.round(worker.salaryByDays)
+      : 0;
+  const effectiveDailyRate = directTeamSalary > 0 ? directTeamSalary : dailyRate;
+
+  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công (trừ Tổ Đội đã chọn trả lương)
+  const hasParticipated =
+    actualWorkDays > 0 ||
+    overtimeHours > 0 ||
+    (isTeamCycle && (Boolean(worker.selectedForAttendance) || effectiveDailyRate > 0));
   if (!hasParticipated) {
     return {
       ...worker,
-      dailyRate,
+      dailyRate: effectiveDailyRate,
       actualWorkDays: 0,
       salaryByDays: 0,
       overtimeHours: 0,
@@ -371,11 +381,13 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
     };
   }
 
-  // 1. Tiền lương theo ngày công
-  const salaryByDays = Math.round(dailyRate * actualWorkDays);
+  // 1. Tiền lương theo ngày công (hoặc lương trực tiếp đối với Tổ Đội)
+  const salaryByDays = isTeamCycle
+    ? Math.round(effectiveDailyRate * (actualWorkDays > 0 ? actualWorkDays : 1))
+    : Math.round(effectiveDailyRate * actualWorkDays);
 
   // 2. Tiền làm thêm giờ (Đơn giá 1 giờ = Đơn giá ngày / 8 giờ, hệ số OT x 1.5)
-  const hourlyRate = dailyRate / 8;
+  const hourlyRate = effectiveDailyRate / 8;
   const overtimePay = Math.round(hourlyRate * overtimeHours * 1.5);
 
   // 3. Tổng thu nhập
@@ -546,9 +558,16 @@ export function syncSeasonalWorkerForMonth(
     const teamRec = worker.periodRecords?.[monthPeriodKey];
     const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
     const emptySheet = createEmptyTimesheetForPeriod(mPeriodOption);
-    if (teamRec && (teamRec.isRecorded || Number(teamRec.actualWorkDays || 0) > 0)) {
+    if (
+      teamRec &&
+      (teamRec.isRecorded ||
+        Number(teamRec.actualWorkDays || 0) > 0 ||
+        Number(teamRec.salaryByDays || 0) > 0)
+    ) {
       const teamRate =
-        teamRec.dailyRate !== undefined && teamRec.dailyRate >= 0
+        teamRec.salaryByDays !== undefined && teamRec.salaryByDays > 0 && (!teamRec.actualWorkDays || teamRec.actualWorkDays === 1)
+          ? teamRec.salaryByDays
+          : teamRec.dailyRate !== undefined && teamRec.dailyRate >= 0
           ? teamRec.dailyRate
           : effectiveRate;
       const teamWorkDays =
@@ -557,6 +576,7 @@ export function syncSeasonalWorkerForMonth(
         ...worker,
         project: teamRec.project || worker.project,
         dailyRate: teamRate,
+        salaryByDays: teamRec.salaryByDays || Math.round(teamRate * teamWorkDays),
         attendanceMonth: month,
         attendanceYear: year,
         currentPeriodKey: monthPeriodKey,
@@ -1010,9 +1030,18 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
   // Nếu là nhân sự Tổ Đội (TEAM): Lấy trực tiếp từ bản ghi kỳ thanh toán (không phụ thuộc lịch chấm công 31 ngày)
   if (worker.payrollCycleType === 'TEAM') {
     const emptySheet = createEmptyTimesheetForPeriod(period);
-    if (existingRecord && (existingRecord.isRecorded || Number(existingRecord.actualWorkDays || 0) > 0)) {
+    if (
+      existingRecord &&
+      (existingRecord.isRecorded ||
+        Number(existingRecord.actualWorkDays || 0) > 0 ||
+        Number(existingRecord.salaryByDays || 0) > 0)
+    ) {
       const teamRate =
-        existingRecord.dailyRate !== undefined && existingRecord.dailyRate >= 0
+        existingRecord.salaryByDays !== undefined &&
+        existingRecord.salaryByDays > 0 &&
+        (!existingRecord.actualWorkDays || existingRecord.actualWorkDays === 1)
+          ? existingRecord.salaryByDays
+          : existingRecord.dailyRate !== undefined && existingRecord.dailyRate >= 0
           ? existingRecord.dailyRate
           : periodDailyRate;
       const teamDays =
@@ -1024,6 +1053,7 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
           ...worker,
           project: existingRecord.project || worker.project,
           dailyRate: teamRate,
+          salaryByDays: existingRecord.salaryByDays || Math.round(teamRate * teamDays),
           currentPeriodKey: pKey,
           currentWeekId: period.id,
           currentWeekLabel: period.label,
@@ -1267,7 +1297,9 @@ export function recordWorkerPeriod(
     patch.payrollCycleType || worker.payrollCycleType || period.cycleType || '1_MONTH';
 
   const effectivePeriodDailyRate =
-    patch.dailyRate !== undefined && patch.dailyRate >= 0
+    declaredCycle === 'TEAM' && patch.salaryByDays !== undefined && patch.salaryByDays >= 0
+      ? patch.salaryByDays
+      : patch.dailyRate !== undefined && patch.dailyRate >= 0
       ? patch.dailyRate
       : declaredCycle === 'TEAM' && existingPeriodRec?.dailyRate !== undefined
       ? existingPeriodRec.dailyRate
