@@ -39,37 +39,12 @@ export const isValidDailyAttendanceMap = (obj: any): boolean => {
  * Nhận diện bản ghi Tháng 11/2026 bị tự động sao chép nhầm từ Tháng 10/2026
  * (do hàm buildSeasonalMonthlyAttendanceRecord tự sinh hoặc trùng khớp 100% số công & OT của Tháng 10).
  */
-export const isLeakedNov2026Record = (novRec: any, octRec?: any): boolean => {
+export const isLeakedNov2026Record = (novRec: any, _octRec?: any): boolean => {
   if (!novRec) return false;
-  const novWork = Number(novRec.totalWorkDays ?? novRec.total_work_days ?? 0);
-  const novOt = Number(novRec.totalOtHours ?? novRec.total_ot_hours ?? 0);
-  if (novWork === 0 && novOt === 0) return false;
-
-  const daysObj = novRec.days || novRec.attendance_data || {};
-  const dayValues = Object.values(daysObj) as any[];
-
-  // Bản ghi do buildSeasonalMonthlyAttendanceRecord tự sinh luôn có note = 'Thi công tại công trình'
-  if (
-    dayValues.length > 0 &&
-    dayValues.every(
-      (d) =>
-        d &&
-        (d.note === 'Thi công tại công trình' ||
-          d.note === 'Thi công bình thường' ||
-          (typeof d.note === 'string' && d.note.startsWith('Thi công + ')))
-    )
-  ) {
+  // Chỉ coi là bản ghi mẫu bị rò rỉ nếu mang dấu thời gian khởi tạo mẫu mặc định
+  if (novRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z') {
     return true;
   }
-
-  if (octRec) {
-    const octWork = Number(octRec.totalWorkDays ?? octRec.total_work_days ?? 0);
-    const octOt = Number(octRec.totalOtHours ?? octRec.total_ot_hours ?? 0);
-    if (octWork > 0 && novWork === octWork && novOt === octOt) {
-      return true;
-    }
-  }
-
   return false;
 };
 
@@ -84,49 +59,22 @@ export const materializeSeasonalMonthlyAttendance = (
   const nextMonthly: Record<string, any> = { ...(worker.monthlyAttendance || {}) };
   const nextPeriodRecords: Record<string, any> = { ...(worker.periodRecords || {}) };
 
-  // Loại bỏ triệt để dữ liệu Tháng 11/2026 bị sao chép nhầm từ Tháng 10/2026
+  // Loại bỏ bản ghi Tháng 11/2026 chỉ khi đó là bản ghi mẫu mặc định (2026-09-01T00:00:00.000Z)
   if (
     nextMonthly['2026-11'] &&
     isLeakedNov2026Record(nextMonthly['2026-11'], nextMonthly['2026-10'])
   ) {
     delete nextMonthly['2026-11'];
     Object.keys(nextPeriodRecords).forEach((k) => {
-      if (k.startsWith('2026-11_')) {
+      if (
+        k.startsWith('2026-11_') &&
+        worker.payrollCycleType !== 'TEAM' &&
+        nextPeriodRecords[k]?.cycleType !== 'TEAM' &&
+        !nextPeriodRecords[k]?.isRecorded
+      ) {
         delete nextPeriodRecords[k];
       }
     });
-  }
-
-  // Kiểm tra thêm nếu periodRecords['2026-11_MONTH'] bị dính công sao chép từ Tháng 10
-  const octWork = Number(
-    nextMonthly['2026-10']?.totalWorkDays ??
-      nextPeriodRecords['2026-10_MONTH']?.actualWorkDays ??
-      0
-  );
-  const octOt = Number(
-    nextMonthly['2026-10']?.totalOtHours ??
-      nextPeriodRecords['2026-10_MONTH']?.overtimeHours ??
-      0
-  );
-  if (nextPeriodRecords['2026-11_MONTH']) {
-    const novPRec = nextPeriodRecords['2026-11_MONTH'];
-    const novPWork = Number(novPRec.actualWorkDays || 0);
-    const novPOt = Number(novPRec.overtimeHours || 0);
-    const isTeamRecord =
-      worker.payrollCycleType === 'TEAM' ||
-      novPRec.cycleType === 'TEAM' ||
-      Boolean(novPRec.paymentDate);
-    if (
-      !isTeamRecord &&
-      (!nextMonthly['2026-11'] ||
-        (octWork > 0 && novPWork === octWork && novPOt === octOt))
-    ) {
-      Object.keys(nextPeriodRecords).forEach((k) => {
-        if (k.startsWith('2026-11_') && nextPeriodRecords[k]?.cycleType !== 'TEAM') {
-          delete nextPeriodRecords[k];
-        }
-      });
-    }
   }
 
   const w: SeasonalWorker = {
@@ -136,51 +84,54 @@ export const materializeSeasonalMonthlyAttendance = (
   };
 
   // 1. Phục hồi các tháng trong monthlyAttendance có totalWorkDays > 0 hoặc totalOtHours > 0 nhưng bị mất chi tiết days
-  Object.entries(w.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
-    if (!mRec) return;
-    const mNum = Number(mRec.month || mKey.split('-')[1] || 0);
-    const yNum = Number(mRec.year || mKey.split('-')[0] || 0);
-    if (!mNum || !yNum) return;
-    const workDays = Number(mRec.totalWorkDays || 0);
-    const otHours = Number(mRec.totalOtHours || 0);
-    if ((workDays > 0 || otHours > 0) && !isValidDailyAttendanceMap(mRec.days)) {
-      w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
-        w,
-        mNum,
-        yNum,
-        workDays,
-        otHours,
-        mRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
-      );
-    }
-  });
-
-  // 2. Đồng bộ từ periodRecords của các tháng lịch sử (2026-09, 2026-10) sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày
-  Object.entries(w.periodRecords || {}).forEach(([pKey, pRec]) => {
-    if (!pRec) return;
-    const match = pKey.match(/^(\d{4})-(\d{2})_(.+)$/);
-    if (!match) return;
-    const yNum = Number(match[1]);
-    const mNum = Number(match[2]);
-    const suffix = match[3];
-    const mKey = `${yNum}-${String(mNum).padStart(2, '0')}`;
-    if (mKey === '2026-11') return;
-    const workDays = Number(pRec.actualWorkDays || 0);
-    const otHours = Number(pRec.overtimeHours || 0);
-    if (suffix === 'MONTH' && (workDays > 0 || otHours > 0)) {
-      const existing = w.monthlyAttendance![mKey];
-      if (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0)) {
+  if (w.payrollCycleType !== 'TEAM') {
+    Object.entries(w.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
+      if (!mRec) return;
+      const mNum = Number(mRec.month || mKey.split('-')[1] || 0);
+      const yNum = Number(mRec.year || mKey.split('-')[0] || 0);
+      if (!mNum || !yNum) return;
+      const workDays = Number(mRec.totalWorkDays || 0);
+      const otHours = Number(mRec.totalOtHours || 0);
+      if ((workDays > 0 || otHours > 0) && !isValidDailyAttendanceMap(mRec.days)) {
         w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
           w,
           mNum,
           yNum,
           workDays,
           otHours,
-          existing?.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
+          mRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
         );
       }
-    }
-  });
+    });
+  }
+
+  // 2. Đồng bộ từ periodRecords của các tháng sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày (không áp dụng cho Tổ Đội)
+  if (w.payrollCycleType !== 'TEAM') {
+    Object.entries(w.periodRecords || {}).forEach(([pKey, pRec]) => {
+      if (!pRec || pRec.cycleType === 'TEAM') return;
+      const match = pKey.match(/^(\d{4})-(\d{2})_(.+)$/);
+      if (!match) return;
+      const yNum = Number(match[1]);
+      const mNum = Number(match[2]);
+      const suffix = match[3];
+      const mKey = `${yNum}-${String(mNum).padStart(2, '0')}`;
+      const workDays = Number(pRec.actualWorkDays || 0);
+      const otHours = Number(pRec.overtimeHours || 0);
+      if (suffix === 'MONTH' && (workDays > 0 || otHours > 0)) {
+        const existing = w.monthlyAttendance![mKey];
+        if (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0)) {
+          w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
+            w,
+            mNum,
+            yNum,
+            workDays,
+            otHours,
+            existing?.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
+          );
+        }
+      }
+    });
+  }
 
   return w;
 };
@@ -1009,24 +960,55 @@ export const syncSeasonalWorkersToSupabase = async (
     }
 
     const materializedWorkers: SeasonalWorker[] = [];
+    const claimedRowIds = new Set<string>();
+    const usedIds = new Set<string>();
+    const usedCodes = new Set<string>();
 
     const payload = workers.map((w, idx) => {
       const sortOrder = typeof w.sortOrder === 'number' ? w.sortOrder : idx + 1;
-      const workerCode = String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
-      const matched = existingByCode.get(workerCode) || existingById.get(String(w.id || '').trim());
-      const canonicalId = matched?.id ? String(matched.id) : String(w.id || `SW_${idx + 1}`);
-      const existingData = matched?.worker_data;
+      let workerCode = String(w.code || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
+      const rawId = String(w.id || '').trim();
 
-      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại (đã lọc sạch bản ghi 2026-11 bị rò rỉ)
-      const cleanedExisting = existingData ? materializeSeasonalMonthlyAttendance(existingData) : undefined;
+      let matched = rawId ? existingById.get(rawId) : undefined;
+      if (!matched || claimedRowIds.has(String(matched.id))) {
+        const byCode = existingByCode.get(workerCode);
+        if (byCode && !claimedRowIds.has(String(byCode.id))) {
+          matched = byCode;
+        } else {
+          matched = undefined;
+        }
+      }
+      if (matched?.id) {
+        claimedRowIds.add(String(matched.id));
+      }
+
+      if (usedCodes.has(workerCode)) {
+        let suffix = idx + 1;
+        while (usedCodes.has(`PNC-TV${String(suffix).padStart(2, '0')}`)) {
+          suffix++;
+        }
+        workerCode = `PNC-TV${String(suffix).padStart(2, '0')}`;
+      }
+      usedCodes.add(workerCode);
+
+      let canonicalId = matched?.id ? String(matched.id) : String(rawId || workerCode || `SW_${idx + 1}`);
+      if (usedIds.has(canonicalId)) {
+        canonicalId = `${workerCode}_${idx + 1}`;
+      }
+      usedIds.add(canonicalId);
+
+      const existingData = matched?.worker_data;
+      const samePerson =
+        existingData &&
+        normalizeEmpName(existingData.fullName) === normalizeEmpName(w.fullName);
+
+      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại
+      const cleanedExisting =
+        samePerson && existingData ? materializeSeasonalMonthlyAttendance(existingData) : undefined;
       const cleanedLocal = materializeSeasonalMonthlyAttendance(w);
       const mergedMonthlyAttendance: Record<string, any> = {
         ...(cleanedExisting?.monthlyAttendance || {}),
       };
-      // Nếu ở máy hiện tại đã xóa 2026-11 thì không lấy lại 2026-11 cũ từ Cloud
-      if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
-        delete mergedMonthlyAttendance['2026-11'];
-      }
       Object.entries(cleanedLocal.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
         if (!newRec) return;
         const oldRec = mergedMonthlyAttendance[mKey];
@@ -1046,17 +1028,36 @@ export const syncSeasonalWorkersToSupabase = async (
         }
       });
 
-      const mergedPeriodRecords = {
+      const mergedPeriodRecords: Record<string, any> = {
         ...(cleanedExisting?.periodRecords || {}),
-        ...(cleanedLocal.periodRecords || {}),
       };
-      if (!cleanedLocal.monthlyAttendance?.['2026-11'] && cleanedLocal.payrollCycleType !== 'TEAM') {
-        Object.keys(mergedPeriodRecords).forEach((k) => {
-          if (k.startsWith('2026-11_') && mergedPeriodRecords[k]?.cycleType !== 'TEAM') {
-            delete mergedPeriodRecords[k];
+      Object.entries(cleanedLocal.periodRecords || {}).forEach(([pKey, locPRec]: [string, any]) => {
+        if (!locPRec) return;
+        const exPRec = mergedPeriodRecords[pKey];
+        if (!exPRec) {
+          mergedPeriodRecords[pKey] = locPRec;
+        } else {
+          const locRecorded =
+            Boolean(locPRec.isRecorded) ||
+            Number(locPRec.salaryByDays || 0) > 0 ||
+            Number(locPRec.actualWorkDays || 0) > 0;
+          const exRecorded =
+            Boolean(exPRec.isRecorded) ||
+            Number(exPRec.salaryByDays || 0) > 0 ||
+            Number(exPRec.actualWorkDays || 0) > 0;
+          const locTs = Number(locPRec.updatedAt || cleanedLocal.updatedAt || 0);
+          const exTs = Number(exPRec.updatedAt || cleanedExisting?.updatedAt || 0);
+          if (locRecorded && !exRecorded) {
+            mergedPeriodRecords[pKey] = locPRec;
+          } else if (!locRecorded && exRecorded && locTs <= exTs) {
+            mergedPeriodRecords[pKey] = exPRec;
+          } else if (locTs >= exTs) {
+            mergedPeriodRecords[pKey] = locPRec;
+          } else {
+            mergedPeriodRecords[pKey] = exPRec;
           }
-        });
-      }
+        }
+      });
 
       const fullWorker = materializeSeasonalMonthlyAttendance(
         {
@@ -1088,8 +1089,14 @@ export const syncSeasonalWorkersToSupabase = async (
         daily_rate: Number(fullWorker.dailyRate || 0),
         actual_work_days: Number(fullWorker.actualWorkDays || 0),
         overtime_hours: Number(fullWorker.overtimeHours || 0),
+        overtime_pay: Number(fullWorker.overtimePay || 0),
+        meal_allowance: Number(fullWorker.mealAllowance || 0),
+        travel_safety_allowance: Number(fullWorker.travelSafetyAllowance || 0),
+        other_bonus: Number(fullWorker.otherBonus || 0),
+        total_income: Number(fullWorker.totalIncome || 0),
         advance_payment: Number(fullWorker.advancePayment || 0),
-        has_tax_commitment: Boolean(fullWorker.hasTaxCommitment ?? true),
+        personal_income_tax: Number(fullWorker.personalIncomeTax || 0),
+        total_deductions: Number(fullWorker.totalDeductions || 0),
         payment_method: String(fullWorker.paymentMethod || 'BANK'),
         payroll_cycle_type: String(fullWorker.payrollCycleType || '1_WEEK'),
         status: String(fullWorker.status || 'ACTIVE'),
@@ -1101,14 +1108,13 @@ export const syncSeasonalWorkersToSupabase = async (
       };
     });
 
-    // Xóa các dòng thợ thời vụ cũ đã bị xóa trên máy hiện tại khỏi bảng seasonal_workers
+    // Xóa các dòng thợ thời vụ cũ bị lệch cặp (id, code) hoặc đã bị xóa trên máy hiện tại khỏi bảng seasonal_workers
     try {
-      const activeCodes = new Set(payload.map((p) => p.code));
-      const activeIds = new Set(payload.map((p) => p.id));
       const staleIds: string[] = [];
       existingById.forEach((row: any, rowId: string) => {
         const rowCode = String(row.code || '').trim();
-        if (!activeCodes.has(rowCode) || !activeIds.has(rowId)) {
+        const isExactPairInPayload = payload.some((p) => p.id === rowId && p.code === rowCode);
+        if (!isExactPairInPayload) {
           staleIds.push(rowId);
         }
       });
@@ -1151,6 +1157,19 @@ export const syncSeasonalWorkersToSupabase = async (
           onConflict: 'code',
         });
         retryErr = retryCodeMin.error;
+      }
+      if (retryErr) {
+        const ultraMinimalPayload = payload.map((p) => ({
+          id: p.id,
+          code: p.code,
+          name: p.name,
+          worker_data: p.worker_data,
+          updated_at: p.updated_at,
+        }));
+        const ultraRetry = await client.from('seasonal_workers').upsert(ultraMinimalPayload, {
+          onConflict: 'id',
+        });
+        retryErr = ultraRetry.error;
       }
       if (retryErr) {
         console.error('Sync seasonal_workers minimal fallback failed:', retryErr);
@@ -1288,7 +1307,7 @@ export const loadSeasonalWorkersFromSupabase = async (
           actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
           overtimeHours: Number(w.overtimeHours ?? item.overtime_hours ?? 0),
           dailyRate: Number(w.dailyRate ?? item.daily_rate ?? 0),
-          updatedAt: Math.max(Number(w.updatedAt || 0), rowUpdatedTs),
+          updatedAt: Number(w.updatedAt || rowUpdatedTs || 0),
         };
       })
       .filter((w) => w && (w.fullName || w.code));
@@ -1310,7 +1329,7 @@ export const loadSeasonalWorkersFromSupabase = async (
           const monthKey = `${yNum}-${mStr}`;
           if (!w.monthlyAttendance) w.monthlyAttendance = {};
 
-          // Nếu là bản ghi Tháng 11/2026 bị tự động sao chép nhầm từ Tháng 10/2026 -> bỏ qua và đánh dấu xóa trên DB
+          // Nếu là bản ghi Tháng 11/2026 mẫu mặc định bị rò rỉ -> bỏ qua
           if (
             mNum === 11 &&
             yNum === 2026 &&
@@ -1341,8 +1360,8 @@ export const loadSeasonalWorkersFromSupabase = async (
                 submittedBy: 'WORKER',
               };
             }
-          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0) && monthKey !== '2026-11') {
-            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca của các tháng trước nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
+          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0) && w.payrollCycleType !== 'TEAM') {
+            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
             w.monthlyAttendance[monthKey] = buildSeasonalMonthlyAttendanceRecord(
               w,
               mNum,
@@ -1684,39 +1703,60 @@ export const syncPayrollRecordsToSupabase = async (
   if (records.length === 0) return { success: true, count: 0, message: 'Danh sách bảng lương rỗng.' };
 
   try {
-    const payload = records.map((r) => ({
-      id: String(r.id),
-      period_type: String(r.periodType || 'MONTH'),
-      period_code: String(r.periodCode || '09/2026'),
-      worker_type: String(r.workerType || 'PERMANENT'),
-      worker_id: String(r.workerId),
-      worker_code: String(r.workerCode),
-      worker_name: String(r.workerName),
-      department_or_project: String(r.departmentOrProject || ''),
-      standard_work_days: Number(r.standardWorkDays || 26),
-      actual_work_days: Number(r.actualWorkDays || 0),
-      base_salary_or_rate: Number(r.baseSalaryOrRate || 0),
-      salary_by_days: Number(r.salaryByDays || 0),
-      overtime_hours: Number(r.overtimeHours || 0),
-      overtime_pay: Number(r.overtimePay || 0),
-      allowances: Number(r.allowances || 0),
-      bonuses: Number(r.bonuses || 0),
-      total_income: Number(r.totalIncome || 0),
-      insurance_deduction: Number(r.insuranceDeduction || 0),
-      tax_deduction: Number(r.taxDeduction || 0),
-      advance_payment: Number(r.advancePayment || 0),
-      total_deductions: Number(r.totalDeductions || 0),
-      net_salary: Number(r.netSalary || 0),
-      payment_method: String(r.paymentMethod || 'BANK'),
-      bank_account: String(r.bankAccount || ''),
-      bank_name: String(r.bankName || ''),
-      payment_status: String(r.paymentStatus || 'PENDING'),
-      notes: String(r.notes || ''),
-      payroll_data: r,
-      updated_at: new Date().toISOString(),
-    }));
+    const dedupMap = new Map<string, any>();
+    records.forEach((r) => {
+      const recId = String(r.id || `${r.workerCode}_${r.periodCode}`);
+      dedupMap.set(recId, {
+        id: recId,
+        period_type: String(r.periodType || 'MONTH'),
+        period_code: String(r.periodCode || '09/2026'),
+        worker_type: String(r.workerType || 'PERMANENT'),
+        worker_id: String(r.workerId),
+        worker_code: String(r.workerCode),
+        worker_name: String(r.workerName),
+        department_or_project: String(r.departmentOrProject || ''),
+        standard_work_days: Number(r.standardWorkDays || 26),
+        actual_work_days: Number(r.actualWorkDays || 0),
+        base_salary_or_rate: Number(r.baseSalaryOrRate || 0),
+        salary_by_days: Number(r.salaryByDays || 0),
+        overtime_hours: Number(r.overtimeHours || 0),
+        overtime_pay: Number(r.overtimePay || 0),
+        allowances: Number(r.allowances || 0),
+        bonuses: Number(r.bonuses || 0),
+        total_income: Number(r.totalIncome || 0),
+        insurance_deduction: Number(r.insuranceDeduction || 0),
+        tax_deduction: Number(r.taxDeduction || 0),
+        advance_payment: Number(r.advancePayment || 0),
+        total_deductions: Number(r.totalDeductions || 0),
+        net_salary: Number(r.netSalary || 0),
+        payment_method: String(r.paymentMethod || 'BANK'),
+        bank_account: String(r.bankAccount || ''),
+        bank_name: String(r.bankName || ''),
+        payment_status: String(r.paymentStatus || 'PENDING'),
+        notes: String(r.notes || ''),
+        payroll_data: r,
+        updated_at: new Date().toISOString(),
+      });
+    });
+    const payload = Array.from(dedupMap.values());
 
-    const { error } = await client.from('payroll_records').upsert(payload, { onConflict: 'id' });
+    let { error } = await client.from('payroll_records').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      const minimalPayload = payload.map((p) => ({
+        id: p.id,
+        period_type: p.period_type,
+        period_code: p.period_code,
+        worker_type: p.worker_type,
+        worker_id: p.worker_id,
+        worker_code: p.worker_code,
+        worker_name: p.worker_name,
+        net_salary: p.net_salary,
+        payroll_data: p.payroll_data,
+        updated_at: p.updated_at,
+      }));
+      const retry = await client.from('payroll_records').upsert(minimalPayload, { onConflict: 'id' });
+      error = retry.error;
+    }
     if (error) {
       console.error('Sync payroll_records failed:', error);
       return { success: false, count: 0, message: error.message, error: error.message };
@@ -1981,17 +2021,25 @@ export const syncSingleSeasonalWorkerToSupabase = async (
         .limit(1);
 
       if (codeMatches && codeMatches.length > 0) {
-        existingRowId = codeMatches[0].id;
-        existingWorkerData = codeMatches[0].worker_data as SeasonalWorker;
-      } else if (worker.id) {
+        existingRowId = String(codeMatches[0].id);
+        existingWorkerData = (codeMatches[0].worker_data as SeasonalWorker) || null;
+      }
+
+      if (worker.id) {
         const { data: idMatches } = await client
           .from('seasonal_workers')
           .select('id, code, worker_data')
           .eq('id', String(worker.id))
           .limit(1);
         if (idMatches && idMatches.length > 0) {
-          existingRowId = idMatches[0].id;
-          existingWorkerData = idMatches[0].worker_data as SeasonalWorker;
+          const matchedRowId = String(idMatches[0].id);
+          if (existingRowId && existingRowId !== matchedRowId) {
+            // Nếu có 2 dòng xung đột giữa id và code, xóa dòng cũ theo id để giữ đúng dòng có code = workerCode
+            await client.from('seasonal_workers').delete().eq('id', matchedRowId);
+          } else if (!existingRowId) {
+            existingRowId = matchedRowId;
+            existingWorkerData = (idMatches[0].worker_data as SeasonalWorker) || null;
+          }
         }
       }
     } catch (lookupErr) {
@@ -1999,18 +2047,19 @@ export const syncSingleSeasonalWorkerToSupabase = async (
     }
 
     const canonicalId = existingRowId || worker.id || workerCode;
+    const samePerson =
+      existingWorkerData &&
+      normalizeEmpName(existingWorkerData.fullName) === normalizeEmpName(worker.fullName);
 
-    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó (đã lọc sạch 2026-11 bị rò rỉ)
-    const cleanedExisting = existingWorkerData
-      ? materializeSeasonalMonthlyAttendance(existingWorkerData)
-      : undefined;
+    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó
+    const cleanedExisting =
+      samePerson && existingWorkerData
+        ? materializeSeasonalMonthlyAttendance(existingWorkerData)
+        : undefined;
     const cleanedLocal = materializeSeasonalMonthlyAttendance(worker);
     const mergedMonthlyAttendance: Record<string, any> = {
       ...(cleanedExisting?.monthlyAttendance || {}),
     };
-    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
-      delete mergedMonthlyAttendance['2026-11'];
-    }
     Object.entries(cleanedLocal.monthlyAttendance || {}).forEach(([mKey, newRec]) => {
       if (!newRec) return;
       const oldRec = mergedMonthlyAttendance[mKey];
@@ -2028,17 +2077,10 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       }
     });
 
-    const mergedPeriodRecords = {
+    const mergedPeriodRecords: Record<string, any> = {
       ...(cleanedExisting?.periodRecords || {}),
       ...(cleanedLocal.periodRecords || {}),
     };
-    if (!cleanedLocal.monthlyAttendance?.['2026-11'] && cleanedLocal.payrollCycleType !== 'TEAM') {
-      Object.keys(mergedPeriodRecords).forEach((k) => {
-        if (k.startsWith('2026-11_') && mergedPeriodRecords[k]?.cycleType !== 'TEAM') {
-          delete mergedPeriodRecords[k];
-        }
-      });
-    }
     const effectiveDailyRate = Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
     Object.keys(mergedPeriodRecords).forEach((k) => {
       const r = mergedPeriodRecords[k];
@@ -2074,6 +2116,7 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       const totDed = tax + Number(r.advancePayment || 0);
       mergedPeriodRecords[k] = {
         ...r,
+        ...(isTeamRec ? { cycleType: 'TEAM' } : {}),
         dailyRate: recRate,
         actualWorkDays: workDays,
         salaryByDays: sByDays,
@@ -2136,13 +2179,20 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       daily_rate: Number(mergedWorker.dailyRate || 0),
       actual_work_days: Number(mergedWorker.actualWorkDays || 0),
       overtime_hours: Number(mergedWorker.overtimeHours || 0),
+      overtime_pay: Number(mergedWorker.overtimePay || 0),
+      meal_allowance: Number(mergedWorker.mealAllowance || 0),
+      travel_safety_allowance: Number(mergedWorker.travelSafetyAllowance || 0),
+      other_bonus: Number(mergedWorker.otherBonus || 0),
+      total_income: Number(mergedWorker.totalIncome || 0),
       advance_payment: Number(mergedWorker.advancePayment || 0),
-      has_tax_commitment: Boolean(mergedWorker.hasTaxCommitment ?? true),
+      personal_income_tax: Number(mergedWorker.personalIncomeTax || 0),
+      total_deductions: Number(mergedWorker.totalDeductions || 0),
       payment_method: String(mergedWorker.paymentMethod || 'BANK'),
       payroll_cycle_type: String(mergedWorker.payrollCycleType || '1_WEEK'),
       status: String(mergedWorker.status || 'ACTIVE'),
       net_salary: Number(mergedWorker.netSalary || 0),
       period_code: String(periodCode || '09/2026'),
+      sort_order: sortOrder,
       worker_data: mergedWorker,
       updated_at: new Date().toISOString(),
     };

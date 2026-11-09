@@ -357,15 +357,15 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
       : 0;
   const effectiveDailyRate = directTeamSalary > 0 ? directTeamSalary : dailyRate;
 
-  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công (trừ Tổ Đội đã chọn trả lương)
+  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công (trừ Tổ Đội đã chọn trả lương trong kỳ)
   const hasParticipated =
     actualWorkDays > 0 ||
     overtimeHours > 0 ||
-    (isTeamCycle && (Boolean(worker.selectedForAttendance) || effectiveDailyRate > 0));
+    (isTeamCycle && Boolean(worker.selectedForAttendance));
   if (!hasParticipated) {
     return {
       ...worker,
-      dailyRate: effectiveDailyRate,
+      dailyRate: isTeamCycle ? 0 : effectiveDailyRate,
       actualWorkDays: 0,
       salaryByDays: 0,
       overtimeHours: 0,
@@ -504,14 +504,15 @@ export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
 
 function syncPeriodRecordsDailyRate(
   records: Record<string, SeasonalPeriodRecord> | undefined,
-  unifiedRate: number
+  unifiedRate: number,
+  isTeamWorker = false
 ): Record<string, SeasonalPeriodRecord> {
   if (!records) return {};
   const result: Record<string, SeasonalPeriodRecord> = {};
   Object.keys(records).forEach((key) => {
     const rec = records[key];
     if (!rec) return;
-    if (rec.cycleType === 'TEAM') {
+    if (rec.cycleType === 'TEAM' || isTeamWorker) {
       const teamRate =
         rec.salaryByDays !== undefined &&
         rec.salaryByDays > 0 &&
@@ -539,6 +540,7 @@ function syncPeriodRecordsDailyRate(
       const totalDeductions = personalIncomeTax + advancePayment;
       result[key] = {
         ...rec,
+        cycleType: 'TEAM',
         dailyRate: teamRate,
         actualWorkDays: workDays,
         salaryByDays,
@@ -637,7 +639,8 @@ export function syncSeasonalWorkerForMonth(
     }
     return recomputeSeasonalWorkerPayroll({
       ...worker,
-      dailyRate: effectiveRate,
+      dailyRate: 0,
+      salaryByDays: 0,
       attendanceMonth: month,
       attendanceYear: year,
       currentPeriodKey: monthPeriodKey,
@@ -1394,6 +1397,7 @@ export function recordWorkerPeriod(
     weeklyTimesheet: effectiveTimesheet,
     notes: updated.notes,
   };
+  (periodRecord as any).updatedAt = Date.now();
 
   const periodRecords =
     declaredCycle === 'TEAM'
@@ -1437,11 +1441,12 @@ export function recordWorkerPeriod(
     });
   }
 
-  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này (chỉ ghi đè days khi người dùng thực sự sửa số công / OT / lịch)
+  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này (chỉ ghi đè days khi người dùng thực sự sửa số công / OT / lịch và không phải Tổ Đội)
   const isAttendancePatched =
-    patch.actualWorkDays !== undefined ||
-    patch.overtimeHours !== undefined ||
-    patch.weeklyTimesheet !== undefined;
+    declaredCycle !== 'TEAM' &&
+    (patch.actualWorkDays !== undefined ||
+      patch.overtimeHours !== undefined ||
+      patch.weeklyTimesheet !== undefined);
   const monthlyAttendance = worker.monthlyAttendance ? { ...worker.monthlyAttendance } : {};
   if (isAttendancePatched && effectiveTimesheet && effectiveTimesheet.length > 0) {
     const pYear = period.year || 2026;
@@ -2163,16 +2168,20 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
  * giúp người dùng bấm xem lại Tháng 9 / Tháng 10 luôn có đầy đủ công & lương.
  */
 export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): SeasonalWorker {
-  const codeMatch = initialSeasonalWorkers.find(
-    (x) =>
-      x.code === worker.code &&
-      x.fullName.trim().toLowerCase() === (worker.fullName || '').trim().toLowerCase()
-  );
+  const isTeamWorker = worker.payrollCycleType === 'TEAM';
+  const codeMatch = !isTeamWorker
+    ? initialSeasonalWorkers.find(
+        (x) =>
+          x.code === worker.code &&
+          x.fullName.trim().toLowerCase() === (worker.fullName || '').trim().toLowerCase()
+      )
+    : undefined;
   const unifiedRate = getUnifiedWorkerDailyRate(worker);
   const nextMonthly = { ...(worker.monthlyAttendance || {}) };
   const nextPeriods = syncPeriodRecordsDailyRate(
     { ...(worker.periodRecords || {}) },
-    unifiedRate
+    unifiedRate,
+    isTeamWorker
   );
 
   if (!nextMonthly['2026-09'] && codeMatch?.monthlyAttendance?.['2026-09']) {
@@ -2194,35 +2203,17 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
     };
   }
 
-  // Làm sạch bản ghi Tháng 11/2026 nếu bị tự động sao chép nhầm từ Tháng 10/2026
+  // Làm sạch bản ghi Tháng 11/2026 chỉ khi mang dấu thời gian khởi tạo mẫu mặc định (2026-09-01T00:00:00.000Z)
   const novRec = nextMonthly['2026-11'];
-  const octRec = nextMonthly['2026-10'];
-  if (novRec) {
-    const novWork = Number(novRec.totalWorkDays || 0);
-    const novOt = Number(novRec.totalOtHours || 0);
-    const octWork = Number(octRec?.totalWorkDays || 0);
-    const octOt = Number(octRec?.totalOtHours || 0);
-    const dayVals = Object.values(novRec.days || {}) as any[];
-    const isSyntheticDays =
-      dayVals.length > 0 &&
-      dayVals.every(
-        (d) =>
-          d &&
-          (d.note === 'Thi công tại công trình' ||
-            d.note === 'Thi công bình thường' ||
-            (typeof d.note === 'string' && d.note.startsWith('Thi công + ')))
-      );
-    if (isSyntheticDays || (octWork > 0 && novWork === octWork && novOt === octOt)) {
-      delete nextMonthly['2026-11'];
-      Object.keys(nextPeriods).forEach((k) => {
-        if (k.startsWith('2026-11_') && nextPeriods[k]?.cycleType !== 'TEAM' && worker.payrollCycleType !== 'TEAM') {
-          delete nextPeriods[k];
-        }
-      });
-    }
-  } else if (worker.payrollCycleType !== 'TEAM') {
+  if (novRec && novRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z') {
+    delete nextMonthly['2026-11'];
     Object.keys(nextPeriods).forEach((k) => {
-      if (k.startsWith('2026-11_') && nextPeriods[k]?.cycleType !== 'TEAM') {
+      if (
+        k.startsWith('2026-11_') &&
+        nextPeriods[k]?.cycleType !== 'TEAM' &&
+        worker.payrollCycleType !== 'TEAM' &&
+        !nextPeriods[k]?.isRecorded
+      ) {
         delete nextPeriods[k];
       }
     });
@@ -2232,7 +2223,7 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
     ...worker,
     dailyRate: unifiedRate > 0 ? unifiedRate : worker.dailyRate,
     monthlyAttendance: nextMonthly,
-    periodRecords: syncPeriodRecordsDailyRate(nextPeriods, unifiedRate),
+    periodRecords: syncPeriodRecordsDailyRate(nextPeriods, unifiedRate, isTeamWorker),
   };
 }
 

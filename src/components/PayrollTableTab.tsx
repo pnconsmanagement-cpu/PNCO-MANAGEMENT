@@ -250,13 +250,33 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return Array.from(set);
   }, [seasonalWorkers, teamWorkers]);
 
+  // Helper tìm đúng nhân sự gốc trong seasonalWorkers (ưu tiên khớp ID hoặc nhân sự thuộc chu kỳ TEAM khi trùng mã code)
+  const findTeamBaseWorker = (target: SeasonalWorker | string): SeasonalWorker | undefined => {
+    if (typeof target === 'string') {
+      const key = target.trim();
+      return (
+        seasonalWorkers.find((sw) => sw.payrollCycleType === 'TEAM' && (sw.id === key || sw.code === key)) ||
+        seasonalWorkers.find((sw) => sw.id === key) ||
+        seasonalWorkers.find((sw) => sw.code === key)
+      );
+    }
+    return (
+      seasonalWorkers.find((sw) => target.id && sw.id === target.id) ||
+      seasonalWorkers.find(
+        (sw) => sw.payrollCycleType === 'TEAM' && sw.code === target.code
+      ) ||
+      seasonalWorkers.find((sw) => sw.code === target.code) ||
+      target
+    );
+  };
+
   // Helper cập nhật bản ghi lương tháng cho nhân sự Tổ Đội (TEAM) độc lập từng tháng
   const handleUpdateTeamSeasonalMonthRecord = (
     w: SeasonalWorker,
     patch: Partial<SeasonalWorker>
   ) => {
     if (!onUpdateSeasonalWorker) return;
-    const baseWorker = seasonalWorkers.find((sw) => sw.id === w.id || sw.code === w.code) || w;
+    const baseWorker = findTeamBaseWorker(w) || w;
     const mPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
     const currentEffectiveDays =
       patch.actualWorkDays !== undefined
@@ -313,10 +333,34 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const handleSavePayrollTable = async () => {
     setIsSavingPayroll(true);
     try {
+      // Đảm bảo tất cả nhân sự Tổ Đội đang được chọn trả lương trên bảng đều được đóng gói đầy đủ vào periodRecords trước khi đồng bộ
+      if (onUpdateSeasonalWorker) {
+        const mPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
+        activeSeasonalWorkers.forEach((w) => {
+          if (
+            w.payrollCycleType === 'TEAM' &&
+            (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0)
+          ) {
+            const baseWorker = findTeamBaseWorker(w) || w;
+            const existingRec = baseWorker.periodRecords?.[mPeriod.periodKey];
+            const salAmount = w.salaryByDays || w.dailyRate || existingRec?.salaryByDays || 0;
+            if (!existingRec || !existingRec.isRecorded || existingRec.salaryByDays !== salAmount) {
+              handleUpdateTeamSeasonalMonthRecord(w, {
+                salaryByDays: salAmount,
+                dailyRate: salAmount,
+                actualWorkDays: w.actualWorkDays > 0 ? w.actualWorkDays : 1,
+                paymentDate: w.paymentDate || existingRec?.paymentDate,
+                project: w.project || existingRec?.project,
+                selectedForAttendance: true,
+              });
+            }
+          }
+        });
+      }
       if (onSavePayrollToCloud) {
         await Promise.race([
           Promise.resolve(onSavePayrollToCloud()),
-          new Promise((resolve) => setTimeout(resolve, 1200)),
+          new Promise((resolve) => setTimeout(resolve, 3500)),
         ]);
       }
       setSavePayrollNotice(
@@ -343,19 +387,42 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     return `${yr}-${String(mo).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
   };
 
+  const normalizeToIsoDate = (rawDate: string | undefined, mo: number, yr: number): string => {
+    const fallback = getDefaultVoucherDate(mo, yr);
+    if (!rawDate || !rawDate.trim()) return fallback;
+    const trimmed = rawDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (dmyMatch) {
+      const dd = dmyMatch[1].padStart(2, '0');
+      const mm = dmyMatch[2].padStart(2, '0');
+      const yyyy = dmyMatch[3];
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return fallback;
+  };
+
   const handleOpenTeamVoucherModal = (preselectedWorker?: SeasonalWorker) => {
     const defaultWorker = preselectedWorker || allTeamSeasonalWorkers[0];
-    const defaultDate =
-      defaultWorker?.paymentDate || getDefaultVoucherDate(currentMonth, currentYear);
-    setTeamVoucherWorkerCode(defaultWorker?.code || '');
-    setTeamVoucherSalary(
-      defaultWorker && defaultWorker.salaryByDays > 0
-        ? String(defaultWorker.salaryByDays)
-        : ''
-    );
+    const mPeriodKey = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0].periodKey;
+    const baseW = defaultWorker ? findTeamBaseWorker(defaultWorker) : undefined;
+    const periodRec = baseW?.periodRecords?.[mPeriodKey];
+    const defaultDate = periodRec?.paymentDate
+      ? normalizeToIsoDate(periodRec.paymentDate, currentMonth, currentYear)
+      : getDefaultVoucherDate(currentMonth, currentYear);
+    setTeamVoucherWorkerCode(defaultWorker ? defaultWorker.id || defaultWorker.code : '');
+    const initialSalary =
+      periodRec && periodRec.salaryByDays > 0
+        ? periodRec.salaryByDays
+        : defaultWorker && defaultWorker.salaryByDays > 0
+        ? defaultWorker.salaryByDays
+        : 0;
+    setTeamVoucherSalary(initialSalary > 0 ? String(initialSalary) : '');
     setTeamVoucherDate(defaultDate);
     setTeamVoucherProject(
-      defaultWorker?.project || availableProjectNames[0] || 'Coherent Vsip 3'
+      periodRec?.project || defaultWorker?.project || availableProjectNames[0] || 'Coherent Vsip 3'
     );
     setIsTeamVoucherModalOpen(true);
   };
@@ -363,20 +430,16 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const handleSaveTeamVoucherModal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!onUpdateSeasonalWorker || !teamVoucherWorkerCode) return;
-    const baseWorker = seasonalWorkers.find(
-      (sw) => sw.code === teamVoucherWorkerCode || sw.id === teamVoucherWorkerCode
-    );
+    const baseWorker = findTeamBaseWorker(teamVoucherWorkerCode);
     if (!baseWorker) return;
 
     const salaryAmount = Math.max(0, Number(teamVoucherSalary) || 0);
-    const chosenDate = teamVoucherDate || getDefaultVoucherDate(currentMonth, currentYear);
-    const dateParts = chosenDate.split('-');
-    const payYear = parseInt(dateParts[0], 10) || currentYear;
-    const payMonth = parseInt(dateParts[1], 10) || currentMonth;
+    const chosenDate = normalizeToIsoDate(teamVoucherDate, currentMonth, currentYear);
     const chosenProject =
       teamVoucherProject || baseWorker.project || availableProjectNames[0] || 'Coherent Vsip 3';
 
-    const targetPeriod = getPayrollPeriods(payYear, payMonth, 'TEAM')[0];
+    // Luôn lưu phiếu chi lương vào đúng Kỳ tính lương (Tháng/Năm) đang mở trên màn hình
+    const targetPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
     const updatedWorker = recordWorkerPeriod(
       {
         ...baseWorker,
@@ -396,20 +459,39 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       }
     );
 
+    setSeasonalCycleTab('TEAM');
+    setSelectedSeasonalSubPeriodId('ALL_PERIODS');
+
     onUpdateSeasonalWorker({
       ...updatedWorker,
       payrollCycleType: 'TEAM',
       project: chosenProject,
       paymentDate: chosenDate,
+      dailyRate: salaryAmount,
+      salaryByDays: salaryAmount,
+      actualWorkDays: 1,
+      selectedForAttendance: true,
       updatedAt: Date.now(),
     });
 
-    if (payMonth !== currentMonth || payYear !== currentYear) {
-      onChangeMonthYear(payMonth, payYear);
-    }
-
     setIsTeamVoucherModalOpen(false);
-    await handleSavePayrollTable();
+    setIsSavingPayroll(true);
+    try {
+      if (onSavePayrollToCloud) {
+        await Promise.race([
+          Promise.resolve(onSavePayrollToCloud()),
+          new Promise((resolve) => setTimeout(resolve, 3500)),
+        ]);
+      }
+      setSavePayrollNotice(
+        `✓ Đã lưu phiếu chi lương của ${baseWorker.fullName} (Kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear}) lên Supabase thành công!`
+      );
+      setTimeout(() => {
+        setSavePayrollNotice(null);
+      }, 4500);
+    } finally {
+      setIsSavingPayroll(false);
+    }
   };
 
   // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG hoặc CÓ TẠM ỨNG theo từng Tab Chu kỳ lương đã khai báo
@@ -3044,28 +3126,40 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     required
                     value={teamVoucherWorkerCode}
                     onChange={(e) => {
-                      const code = e.target.value;
-                      setTeamVoucherWorkerCode(code);
+                      const val = e.target.value;
+                      setTeamVoucherWorkerCode(val);
                       const found = allTeamSeasonalWorkers.find(
-                        (w) => w.code === code || w.id === code
+                        (w) => (w.id || w.code) === val || w.code === val || w.id === val
                       );
                       if (found) {
+                        const mPeriodKey = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0].periodKey;
+                        const baseW = findTeamBaseWorker(found);
+                        const periodRec = baseW?.periodRecords?.[mPeriodKey];
                         setTeamVoucherProject(
-                          found.project || availableProjectNames[0] || 'Coherent Vsip 3'
+                          periodRec?.project ||
+                            found.project ||
+                            availableProjectNames[0] ||
+                            'Coherent Vsip 3'
                         );
-                        setTeamVoucherSalary(
-                          found.salaryByDays > 0 ? String(found.salaryByDays) : ''
+                        const existSal =
+                          periodRec && periodRec.salaryByDays > 0
+                            ? periodRec.salaryByDays
+                            : found.salaryByDays > 0
+                            ? found.salaryByDays
+                            : 0;
+                        setTeamVoucherSalary(existSal > 0 ? String(existSal) : '');
+                        setTeamVoucherDate(
+                          periodRec?.paymentDate
+                            ? normalizeToIsoDate(periodRec.paymentDate, currentMonth, currentYear)
+                            : getDefaultVoucherDate(currentMonth, currentYear)
                         );
-                        if (found.paymentDate) {
-                          setTeamVoucherDate(found.paymentDate);
-                        }
                       }
                     }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-purple-600 font-bold text-slate-900 bg-white cursor-pointer"
                   >
                     <option value="">-- Chọn nhân viên Tổ Đội --</option>
                     {allTeamSeasonalWorkers.map((w) => (
-                      <option key={w.id || w.code} value={w.code}>
+                      <option key={w.id || w.code} value={w.id || w.code}>
                         [{w.code}] {w.fullName} — {w.trade}
                       </option>
                     ))}
