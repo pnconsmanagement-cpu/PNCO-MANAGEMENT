@@ -319,20 +319,18 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   };
 
   useEffect(() => {
-    if (!isAdminPreview) {
-      syncLatestAttendance();
-    }
+    syncLatestAttendance();
 
     // 1. Tự động cập nhật khi có thay đổi trên Supabase Realtime (khi máy tính bấm chấm công)
     const unsubscribeSupabase = subscribeToSupabaseRealtime((table) => {
-      if (table === 'seasonal_workers' && Date.now() - lastLocalEditAtRef.current >= 12000) {
+      if (table === 'seasonal_workers' && Date.now() - lastLocalEditAtRef.current >= 4000) {
         syncLatestAttendance();
       }
     });
 
     // 2. Tự động cập nhật khi có tín hiệu từ server
     const unsubscribeServer = subscribeToSync((serverData) => {
-      if (Date.now() - lastLocalEditAtRef.current < 12000) return;
+      if (Date.now() - lastLocalEditAtRef.current < 4000) return;
       if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
         const matched = serverData.seasonalWorkers.find(
           (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
@@ -344,12 +342,16 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       }
     });
 
-    // 3. Polling dự phòng chu kỳ 30 giây khi tab đang mở (thay vì 3s gây nghẽn)
+    // 3. Polling dự phòng chu kỳ 15 giây khi tab đang mở
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !isAdminPreview) {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        Date.now() - lastLocalEditAtRef.current >= 4000
+      ) {
         syncLatestAttendance();
       }
-    }, 30000);
+    }, 15000);
 
     return () => {
       unsubscribeSupabase();
@@ -409,6 +411,9 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   // Nạp dữ liệu chấm công khi đổi công nhân, đổi tháng hoặc khi dữ liệu công nhân cập nhật từ xa
   useEffect(() => {
     if (!currentWorker) return;
+    // Không ghi đè state đang chấm công tức thời bằng prop cũ từ parent trong vòng 3.5 giây sau khi bấm lưu
+    if (Date.now() - lastLocalEditAtRef.current < 3500) return;
+
     const workerCode = currentWorker.code || selectedWorkerCode;
     const cacheKey = `pncons_mobile_days_${workerCode}_${year}_${month}`;
     const mKey = `${year}-${String(month).padStart(2, '0')}`;

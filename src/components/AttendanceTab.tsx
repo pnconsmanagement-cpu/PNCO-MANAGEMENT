@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 import { isSupabaseConfigured } from '../services/supabaseService';
+import { updateWorkerMonthlyAttendance } from '../utils/seasonalAttendanceHelper';
 
 interface AttendanceTabProps {
   employees: Employee[];
@@ -48,6 +49,8 @@ interface AttendanceTabProps {
   onBatchUpdate: (updated: Employee[]) => void;
   onBatchUpdateSeasonal?: (updated: SeasonalWorker[]) => void;
   onBatchUpdateTeam?: (updated: TeamWorker[]) => void;
+  onUpdateEmployee?: (updated: Employee) => void;
+  onUpdateSeasonalWorker?: (updated: SeasonalWorker) => void;
   onGoToEmployeeList?: () => void;
   onGoToSeasonalAttendance?: () => void;
   onOpenMobileView?: (workerCode?: string) => void;
@@ -269,6 +272,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onChangeMonthYear,
   onBatchUpdate,
   onBatchUpdateSeasonal,
+  onUpdateEmployee,
+  onUpdateSeasonalWorker,
   onOpenMobileView,
   forcedGroup,
   onManualSync,
@@ -581,7 +586,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             submittedBy: 'MANUAL_USER' as any,
           };
 
-          const nextEmp: Employee = {
+          const nextEmp: Employee = recomputeEmployeePayroll({
             ...syncedEmp,
             actualWorkDays: recalcTotals.totalCong,
             overtimeHours: recalcTotals.totalOT,
@@ -592,14 +597,20 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               ...(syncedEmp.monthlyAttendance || {}),
               [monthKey]: updatedMonthRecord,
             },
-          };
-          return recomputeEmployeePayroll(nextEmp);
+          });
+          if (onUpdateEmployee) {
+            onUpdateEmployee(nextEmp);
+          }
+          return nextEmp;
         }
         return emp;
       });
       setModifiedEmployees(updatedList);
-      onBatchUpdate(updatedList);
+      if (!onUpdateEmployee) {
+        onBatchUpdate(updatedList);
+      }
     } else {
+      let updatedSingleWorker: SeasonalWorker | null = null;
       const updatedList = modifiedSeasonal.map((w) => {
         if (w.code === workerCode) {
           const syncedW = syncSeasonalWorkerForMonth(w, currentMonth, currentYear);
@@ -623,7 +634,6 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               delete finalMap[dNum];
             }
           });
-          const recalcTotals = calculateRowTotalsFromDays(finalMap);
 
           if (typeof window !== 'undefined' && w.code) {
             try {
@@ -634,86 +644,25 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             } catch {}
           }
 
-          const updatedMonthRecord: MonthlyAttendanceRecord = {
-            monthKey,
-            month: currentMonth,
-            year: currentYear,
-            totalWorkDays: recalcTotals.totalCong,
-            totalOtHours: recalcTotals.totalOT,
-            days: finalMap,
-            lastSubmittedAt: new Date().toISOString(),
-            submittedBy: 'ADMIN',
-          };
-
-          const mStr = String(currentMonth).padStart(2, '0');
-          const monthPeriodId = `${currentYear}-${mStr}_MONTH`;
-          const nextPeriodRecords = { ...(syncedW.periodRecords || {}) };
-          if (recalcTotals.totalCong === 0 && recalcTotals.totalOT === 0) {
-            ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1', 'MONTH'].forEach((suffix) => {
-              const pid = `${currentYear}-${mStr}_${suffix}`;
-              if (nextPeriodRecords[pid]) {
-                nextPeriodRecords[pid] = {
-                  ...nextPeriodRecords[pid],
-                  actualWorkDays: 0,
-                  overtimeHours: 0,
-                  isRecorded: false,
-                };
-              }
-            });
-          } else {
-            const existingMonthRec = nextPeriodRecords[monthPeriodId];
-            const rate = Number(syncedW.dailyRate || existingMonthRec?.dailyRate || 0);
-            const salaryByDays = Math.round(rate * recalcTotals.totalCong);
-            const overtimePay = Math.round((rate / 8) * recalcTotals.totalOT * 1.5);
-            const mealAllowance = Number(existingMonthRec?.mealAllowance ?? syncedW.mealAllowance ?? 0);
-            const travelSafetyAllowance = Number(existingMonthRec?.travelSafetyAllowance ?? syncedW.travelSafetyAllowance ?? 0);
-            const otherBonus = Number(existingMonthRec?.otherBonus ?? syncedW.otherBonus ?? 0);
-            const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
-            const hasTaxCommitment = existingMonthRec?.hasTaxCommitment ?? syncedW.hasTaxCommitment ?? true;
-            const personalIncomeTax = !hasTaxCommitment && totalIncome >= 2000000 ? Math.round(totalIncome * 0.1) : 0;
-            const advancePayment = Number(existingMonthRec?.advancePayment ?? syncedW.advancePayment ?? 0);
-            const totalDeductions = personalIncomeTax + advancePayment;
-
-            nextPeriodRecords[monthPeriodId] = {
-              ...(existingMonthRec || {}),
-              periodKey: monthPeriodId,
-              periodLabel: `Cả tháng ${mStr}/${currentYear}`,
-              cycleType: '1_MONTH',
-              isRecorded: true,
-              dailyRate: rate,
-              actualWorkDays: recalcTotals.totalCong,
-              salaryByDays,
-              overtimeHours: recalcTotals.totalOT,
-              overtimePay,
-              mealAllowance,
-              travelSafetyAllowance,
-              otherBonus,
-              totalIncome,
-              hasTaxCommitment,
-              personalIncomeTax,
-              advancePayment,
-              totalDeductions,
-              netSalary: totalIncome - totalDeductions,
-            };
-          }
-
-          const nextWorker: SeasonalWorker = {
-            ...syncedW,
-            actualWorkDays: recalcTotals.totalCong,
-            overtimeHours: recalcTotals.totalOT,
-            selectedForAttendance: recalcTotals.totalCong > 0 || recalcTotals.totalOT > 0,
-            periodRecords: nextPeriodRecords,
-            monthlyAttendance: {
-              ...(syncedW.monthlyAttendance || {}),
-              [monthKey]: updatedMonthRecord,
-            },
-          };
-          return recomputeSeasonalWorkerPayroll(nextWorker);
+          const updatedFromHelper = updateWorkerMonthlyAttendance(
+            syncedW,
+            currentYear,
+            currentMonth,
+            finalMap,
+            'ADMIN'
+          );
+          const nextWorker = recomputeSeasonalWorkerPayroll(updatedFromHelper);
+          updatedSingleWorker = nextWorker;
+          return nextWorker;
         }
         return w;
       });
       setModifiedSeasonal(updatedList);
-      onBatchUpdateSeasonal?.(updatedList);
+      if (updatedSingleWorker && onUpdateSeasonalWorker) {
+        onUpdateSeasonalWorker(updatedSingleWorker);
+      } else {
+        onBatchUpdateSeasonal?.(updatedList);
+      }
     }
   };
 
@@ -804,9 +753,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   // Xóa trắng toàn bộ ngày trong tháng của 1 nhân sự -> Trạng thái "Chưa chấm công" (0 đ)
   const handleClearMonthForWorker = (workerCode: string) => {
     if (attendanceGroup === 'PERMANENT') {
+      let updatedSingleEmp: Employee | null = null;
       const updatedList = modifiedEmployees.map((emp) => {
         if (emp.code === workerCode) {
-          return recomputeEmployeePayroll({
+          const nextEmp = recomputeEmployeePayroll({
             ...emp,
             actualWorkDays: 0,
             overtimeHours: 0,
@@ -827,13 +777,19 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               },
             },
           });
+          updatedSingleEmp = nextEmp;
+          return nextEmp;
         }
         return emp;
       });
       setModifiedEmployees(updatedList);
-      onBatchUpdate(updatedList);
+      if (updatedSingleEmp && onUpdateEmployee) {
+        onUpdateEmployee(updatedSingleEmp);
+      } else {
+        onBatchUpdate(updatedList);
+      }
     } else {
-      const mStr = String(currentMonth).padStart(2, '0');
+      let updatedSingleWorker: SeasonalWorker | null = null;
       const updatedList = modifiedSeasonal.map((w) => {
         if (w.code === workerCode) {
           if (typeof window !== 'undefined' && w.code) {
@@ -841,43 +797,25 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               localStorage.setItem(`pncons_mobile_days_${w.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
             } catch {}
           }
-          const nextPeriodRecords = { ...(w.periodRecords || {}) };
-          ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1'].forEach((suffix) => {
-            const pid = `${currentYear}-${mStr}_${suffix}`;
-            if (nextPeriodRecords[pid]) {
-              nextPeriodRecords[pid] = {
-                ...nextPeriodRecords[pid],
-                actualWorkDays: 0,
-                overtimeHours: 0,
-                isRecorded: false,
-              };
-            }
-          });
-          return recomputeSeasonalWorkerPayroll({
-            ...w,
-            actualWorkDays: 0,
-            overtimeHours: 0,
-            selectedForAttendance: false,
-            periodRecords: nextPeriodRecords,
-            monthlyAttendance: {
-              ...(w.monthlyAttendance || {}),
-              [monthKey]: {
-                monthKey,
-                month: currentMonth,
-                year: currentYear,
-                totalWorkDays: 0,
-                totalOtHours: 0,
-                days: {},
-                lastSubmittedAt: new Date().toISOString(),
-                submittedBy: 'ADMIN',
-              },
-            },
-          });
+          const clearedFromHelper = updateWorkerMonthlyAttendance(
+            w,
+            currentYear,
+            currentMonth,
+            {},
+            'ADMIN'
+          );
+          const nextWorker = recomputeSeasonalWorkerPayroll(clearedFromHelper);
+          updatedSingleWorker = nextWorker;
+          return nextWorker;
         }
         return w;
       });
       setModifiedSeasonal(updatedList);
-      onBatchUpdateSeasonal?.(updatedList);
+      if (updatedSingleWorker && onUpdateSeasonalWorker) {
+        onUpdateSeasonalWorker(updatedSingleWorker);
+      } else {
+        onBatchUpdateSeasonal?.(updatedList);
+      }
     }
     setEditingCell(null);
     setToastMessage(`Đã đặt về "Chưa chấm công" (0 công) tháng ${currentMonth}/${currentYear} của ${workerCode}!`);

@@ -893,16 +893,25 @@ export const loadEmployeesFromSupabase = async (
           const existingRec = emp.monthlyAttendance[monthKey];
           const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
           const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
+          const attHasDays = isValidDailyAttendanceMap(att.attendance_data);
+          const attIsExplicitClear =
+            !attHasDays &&
+            att.attendance_data &&
+            typeof att.attendance_data === 'object' &&
+            Object.keys(att.attendance_data).length === 0 &&
+            Number(att.total_work_days || 0) === 0 &&
+            Number(att.total_ot_hours || 0) === 0 &&
+            attTs > existingTs;
 
-          if (isValidDailyAttendanceMap(att.attendance_data)) {
-            if (!existingRec || (attTs > 0 && attTs > existingTs)) {
+          if (attHasDays || attIsExplicitClear) {
+            if (!existingRec || (attTs > 0 && attTs >= existingTs)) {
               emp.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
                 year: yNum,
                 totalWorkDays: Number(att.total_work_days || 0),
                 totalOtHours: Number(att.total_ot_hours || 0),
-                days: att.attendance_data,
+                days: attHasDays ? att.attendance_data : {},
                 lastSubmittedAt: att.updated_at,
                 submittedBy: 'WORKER',
               };
@@ -1018,10 +1027,15 @@ export const syncSeasonalWorkersToSupabase = async (
           const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
           const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
           const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+          const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
+          const newTs = newRec.lastSubmittedAt ? new Date(newRec.lastSubmittedAt).getTime() : 0;
 
           if (newIsDefault && !oldIsDefault && (oldHasDays || Number(oldRec.totalWorkDays || 0) > 0)) {
-            // Không để dữ liệu mẫu khởi tạo ghi đè lên dữ liệu chấm công thật đã có trên Cloud
             mergedMonthlyAttendance[mKey] = oldRec;
+          } else if (!newIsDefault && oldIsDefault) {
+            mergedMonthlyAttendance[mKey] = newRec;
+          } else if (newTs > 0 && oldTs > 0) {
+            mergedMonthlyAttendance[mKey] = newTs >= oldTs ? newRec : oldRec;
           } else {
             mergedMonthlyAttendance[mKey] = newRec;
           }
@@ -1346,8 +1360,16 @@ export const loadSeasonalWorkersFromSupabase = async (
           const existingHasValidDays = isValidDailyAttendanceMap(existingRec?.days);
           const attWorkDays = Number(att.total_work_days || 0);
           const attOtHours = Number(att.total_ot_hours || 0);
+          const attIsExplicitClear =
+            !attHasValidDays &&
+            att.attendance_data &&
+            typeof att.attendance_data === 'object' &&
+            Object.keys(att.attendance_data).length === 0 &&
+            attWorkDays === 0 &&
+            attOtHours === 0 &&
+            attTs > existingTs;
 
-          if (attHasValidDays) {
+          if (attHasValidDays || attIsExplicitClear) {
             if (!existingRec || !existingHasValidDays || (attTs > 0 && attTs >= existingTs)) {
               w.monthlyAttendance[monthKey] = {
                 monthKey,
@@ -1355,7 +1377,7 @@ export const loadSeasonalWorkersFromSupabase = async (
                 year: yNum,
                 totalWorkDays: attWorkDays,
                 totalOtHours: attOtHours,
-                days: att.attendance_data,
+                days: attHasValidDays ? att.attendance_data : {},
                 lastSubmittedAt: att.updated_at,
                 submittedBy: 'WORKER',
               };
@@ -1995,10 +2017,25 @@ export const getLastSyncedTime = (): string | null => {
   }
 };
 
+const singleWorkerSyncLocks = new Map<string, Promise<any>>();
+
 /**
- * Đồng bộ ngay lập tức 1 công nhân thời vụ lên Supabase (không cần chờ debounce)
+ * Đồng bộ ngay lập tức 1 công nhân thời vụ lên Supabase (tuần tự hóa theo mã thợ để không bao giờ bị race condition khi chấm công liên tiếp)
  */
 export const syncSingleSeasonalWorkerToSupabase = async (
+  worker: SeasonalWorker,
+  periodCode?: string
+): Promise<{ success: boolean; message: string; error?: string }> => {
+  const lockKey = String(worker.code || worker.id || 'DEFAULT').trim();
+  const prevLock = singleWorkerSyncLocks.get(lockKey) || Promise.resolve();
+  const nextPromise = prevLock
+    .catch(() => {})
+    .then(() => executeSyncSingleSeasonalWorkerToSupabase(worker, periodCode));
+  singleWorkerSyncLocks.set(lockKey, nextPromise);
+  return nextPromise;
+};
+
+const executeSyncSingleSeasonalWorkerToSupabase = async (
   worker: SeasonalWorker,
   periodCode?: string
 ): Promise<{ success: boolean; message: string; error?: string }> => {
@@ -2051,7 +2088,7 @@ export const syncSingleSeasonalWorkerToSupabase = async (
       existingWorkerData &&
       normalizeEmpName(existingWorkerData.fullName) === normalizeEmpName(worker.fullName);
 
-    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó
+    // Hợp nhất dữ liệu chấm công: Không bao giờ để mất các tháng/kỳ đã chấm trước đó, ưu tiên bản ghi có lastSubmittedAt mới hơn
     const cleanedExisting =
       samePerson && existingWorkerData
         ? materializeSeasonalMonthlyAttendance(existingWorkerData)
@@ -2069,8 +2106,14 @@ export const syncSingleSeasonalWorkerToSupabase = async (
         const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
         const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
         const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+        const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
+        const newTs = newRec.lastSubmittedAt ? new Date(newRec.lastSubmittedAt).getTime() : 0;
         if (newIsDefault && !oldIsDefault && (oldHasDays || Number(oldRec.totalWorkDays || 0) > 0)) {
           mergedMonthlyAttendance[mKey] = oldRec;
+        } else if (!newIsDefault && oldIsDefault) {
+          mergedMonthlyAttendance[mKey] = newRec;
+        } else if (newTs > 0 && oldTs > 0) {
+          mergedMonthlyAttendance[mKey] = newTs >= oldTs ? newRec : oldRec;
         } else {
           mergedMonthlyAttendance[mKey] = newRec;
         }
