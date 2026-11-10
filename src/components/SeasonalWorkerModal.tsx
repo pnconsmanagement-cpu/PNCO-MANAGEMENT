@@ -281,12 +281,30 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       setAttendanceMonth(mo);
 
       const periods = getPayrollPeriods(yr, mo, activeCycle);
-      const targetPeriodId =
+      let targetPeriodId =
         initialPeriod?.cycleType === activeCycle
           ? initialPeriod.id
           : worker?.payrollCycleType === activeCycle && worker?.currentWeekId
           ? worker.currentWeekId
           : periods[0]?.id || (activeCycle === '1_MONTH' ? 'M1' : activeCycle === '2_WEEKS' ? 'BI1' : 'W1');
+
+      if (worker && activeCycle !== 'TEAM' && activeCycle !== '1_MONTH') {
+        const initPeriodCandidate = periods.find((p) => p.id === targetPeriodId) || periods[0];
+        const initCandidateState = getWorkerForPeriod(
+          { ...worker, payrollCycleType: activeCycle },
+          initPeriodCandidate
+        );
+        if ((initCandidateState.actualWorkDays || 0) === 0 && (initCandidateState.overtimeHours || 0) === 0) {
+          const firstRecordedPeriod = periods.find((p) => {
+            const st = getWorkerForPeriod({ ...worker, payrollCycleType: activeCycle }, p);
+            return (st.actualWorkDays || 0) > 0 || (st.overtimeHours || 0) > 0;
+          });
+          if (firstRecordedPeriod) {
+            targetPeriodId = firstRecordedPeriod.id;
+          }
+        }
+      }
+
       setSelectedPeriodId(targetPeriodId);
 
       const curPeriod = periods.find((p) => p.id === targetPeriodId) || periods[0];
@@ -562,20 +580,27 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setForm((prev) => ({ ...prev, weeklyTimesheet: updated }));
   };
 
-  // Chấm nhanh công cho cả kỳ (ưu tiên T2 - T7, sau đó đến CN nếu thừa công)
+  // Chấm nhanh công cho cả kỳ (chỉ điền vào các ngày thuộc đúng tháng đang chọn, ưu tiên T2 - T7 trước)
   const handleQuickFillPeriod = (workDaysCount: number) => {
-    let remaining = workDaysCount;
-    const nonSundays = timesheet.filter((d) => d.dayOfWeek !== 'CN');
+    const isSameMonthDay = (d: WeeklyDayAttendance) => {
+      if (!d.dateLabel) return true;
+      const parts = d.dateLabel.split('/');
+      const itemM = parts.length > 1 ? parseInt(parts[1], 10) : attendanceMonth;
+      return itemM === attendanceMonth;
+    };
+    const remaining = workDaysCount;
+    const nonSundays = timesheet.filter((d) => isSameMonthDay(d) && d.dayOfWeek !== 'CN');
     let remainingNonSunday = Math.min(remaining, nonSundays.length);
     let remainingSunday = Math.max(0, remaining - nonSundays.length);
 
     const updated = timesheet.map((d) => {
       const isSunday = d.dayOfWeek === 'CN';
+      const inMonth = isSameMonthDay(d);
       let wUnits = 0;
-      if (!isSunday && remainingNonSunday > 0) {
+      if (inMonth && !isSunday && remainingNonSunday > 0) {
         wUnits = 1;
         remainingNonSunday -= 1;
-      } else if (isSunday && remainingSunday > 0) {
+      } else if (inMonth && isSunday && remainingSunday > 0) {
         wUnits = 1;
         remainingSunday -= 1;
       }
@@ -698,6 +723,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       bankName: cleanedBankName,
       paymentMethod: cleanedPaymentMethod,
       bankUpdatedAt: Date.now(),
+      allowanceUpdatedAt: Date.now(),
       payrollCycleType: cycleType,
     } as SeasonalWorker);
   };
@@ -1459,22 +1485,36 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                       const pYear = p.year || parseInt(p.periodKey?.split('-')[0], 10) || attendanceYear;
                       const pMonth = p.month || parseInt(p.periodKey?.split('-')[1]?.split('_')[0], 10) || attendanceMonth;
                       const mKey = `${pYear}-${String(pMonth).padStart(2, '0')}`;
-                      const mDays = form.monthlyAttendance?.[mKey]?.days || worker?.monthlyAttendance?.[mKey]?.days;
+                      const mDays = form.monthlyAttendance?.[mKey]?.days ?? worker?.monthlyAttendance?.[mKey]?.days;
+                      const hasMonthlyMap = mDays !== undefined;
                       let periodDaysFromMonthly = 0;
+                      let periodOtFromMonthly = 0;
                       if (mDays && p.dates) {
                         p.dates.forEach((dateStr) => {
-                          const dayNum = parseInt(dateStr.split('/')[0], 10);
-                          if (mDays[dayNum]) {
-                            periodDaysFromMonthly += Number(mDays[dayNum].workUnits || 0);
+                          const parts = dateStr.split('/');
+                          const dayNum = parseInt(parts[0], 10);
+                          const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
+                          // Chỉ tính các ngày thuộc đúng tháng pMonth (tránh Tuần 6 30/11-06/12 lấy nhầm ngày 01..06 của tháng 11)
+                          if (itemMonth === pMonth && mDays[dayNum]) {
+                            const dRec = mDays[dayNum];
+                            if (dRec.statusType !== 'ABSENT' && dRec.statusType !== 'LEAVE') {
+                              periodDaysFromMonthly +=
+                                dRec.statusType === 'LATE' && !(Number(dRec.workUnits || 0) > 0)
+                                  ? 1
+                                  : Number(dRec.workUnits || 0);
+                            }
+                            periodOtFromMonthly += Number(dRec.otHours || 0);
                           }
                         });
                       }
                       periodDaysFromMonthly = Math.round(periodDaysFromMonthly * 10) / 10;
 
-                      const hasRecord = Boolean(form.periodRecords?.[p.periodKey]?.isRecorded || periodDaysFromMonthly > 0);
-                      const recDays = (form.periodRecords?.[p.periodKey]?.actualWorkDays !== undefined && form.periodRecords?.[p.periodKey]?.actualWorkDays > 0)
-                        ? form.periodRecords?.[p.periodKey]?.actualWorkDays
-                        : (periodDaysFromMonthly > 0 ? periodDaysFromMonthly : form.periodRecords?.[p.periodKey]?.actualWorkDays);
+                      const recDays = hasMonthlyMap
+                        ? periodDaysFromMonthly
+                        : Number(form.periodRecords?.[p.periodKey]?.actualWorkDays || 0);
+                      const hasRecord = hasMonthlyMap
+                        ? periodDaysFromMonthly > 0 || periodOtFromMonthly > 0
+                        : Boolean(form.periodRecords?.[p.periodKey]?.isRecorded && recDays > 0);
 
                       return (
                         <button

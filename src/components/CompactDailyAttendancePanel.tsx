@@ -84,11 +84,17 @@ export const CompactDailyAttendancePanel: React.FC<CompactDailyAttendancePanelPr
   const periodDays = useMemo(() => {
     const dates = activePeriod?.dates || [];
     return dates.map((dateLabel) => {
-      const dayNum = parseInt(dateLabel.split('/')[0], 10);
+      const parts = dateLabel.split('/');
+      const dayNum = parseInt(parts[0], 10);
+      const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
+      const isSameMonth = itemMonth === month;
       const dayInfo = getDayOfWeekInfo(dateLabel, year, month);
-      const saved: DailyAttendanceDetail | undefined = currentMonthRecord.days?.[dayNum];
+      const saved: DailyAttendanceDetail | undefined = isSameMonth
+        ? currentMonthRecord.days?.[dayNum]
+        : undefined;
       return {
         dayNum,
+        isSameMonth,
         dateLabel,
         dateStr: `${dateLabel}/${year}`,
         dayOfWeek: dayInfo.dayOfWeek,
@@ -120,8 +126,10 @@ export const CompactDailyAttendancePanel: React.FC<CompactDailyAttendancePanelPr
       let pDays = 0;
       let pOt = 0;
       activePeriod.dates.forEach((dLabel) => {
-        const dNum = parseInt(dLabel.split('/')[0], 10);
-        const rec = updatedDaysMap[dNum];
+        const parts = dLabel.split('/');
+        const dNum = parseInt(parts[0], 10);
+        const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
+        const rec = itemMonth === month ? updatedDaysMap[dNum] : undefined;
         if (rec) {
           pDays += Number(rec.workUnits || 0);
           pOt += Number(rec.otHours || 0);
@@ -462,8 +470,13 @@ export const CompactDailyAttendancePanel: React.FC<CompactDailyAttendancePanelPr
             const isSelected = p.id === activePeriod?.id;
             let pWorkDays = 0;
             p.dates.forEach((dStr: string) => {
-              const dNum = parseInt(dStr.split('/')[0], 10);
-              const dRec = currentMonthRecord.days ? currentMonthRecord.days[dNum] : undefined;
+              const parts = dStr.split('/');
+              const dNum = parseInt(parts[0], 10);
+              const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
+              const dRec =
+                itemMonth === month && currentMonthRecord.days
+                  ? currentMonthRecord.days[dNum]
+                  : undefined;
               pWorkDays += Number(dRec?.workUnits || 0);
             });
             pWorkDays = Math.round(pWorkDays * 10) / 10;

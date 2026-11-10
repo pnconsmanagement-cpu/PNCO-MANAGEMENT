@@ -1207,6 +1207,37 @@ export default function App() {
             ? (cw.paymentMethod || 'BANK')
             : (cw.paymentMethod || existing.paymentMethod || 'BANK');
 
+        const exAllowTime = Number((existing as any).allowanceUpdatedAt || 0);
+        const cwAllowTime = Number((cw as any).allowanceUpdatedAt || 0);
+        const maxAllowTime = Math.max(exAllowTime, cwAllowTime);
+        if (exAllowTime > cwAllowTime) {
+          needsPushToCloud = true;
+        }
+        const resolvedMealAllowance =
+          exAllowTime > cwAllowTime
+            ? Number(existing.mealAllowance || 0)
+            : cwAllowTime > exAllowTime
+            ? Number(cw.mealAllowance || 0)
+            : maxAllowTime > 0
+            ? Number(cw.mealAllowance ?? existing.mealAllowance ?? 0)
+            : 0;
+        const resolvedTravelAllowance =
+          exAllowTime > cwAllowTime
+            ? Number(existing.travelSafetyAllowance || 0)
+            : cwAllowTime > exAllowTime
+            ? Number(cw.travelSafetyAllowance || 0)
+            : maxAllowTime > 0
+            ? Number(cw.travelSafetyAllowance ?? existing.travelSafetyAllowance ?? 0)
+            : 0;
+        const resolvedOtherBonus =
+          exAllowTime > cwAllowTime
+            ? Number(existing.otherBonus || 0)
+            : cwAllowTime > exAllowTime
+            ? Number(cw.otherBonus || 0)
+            : maxAllowTime > 0
+            ? Number(cw.otherBonus ?? existing.otherBonus ?? 0)
+            : 0;
+
         const baseMerged = localIsNewer ? { ...cw, ...existing } : { ...existing, ...cw };
 
         resultMap.set(key, {
@@ -1222,6 +1253,14 @@ export default function App() {
           dailyRate: resolvedDailyRate,
           ...(Math.max(exRateTime, cwRateTime) > 0
             ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
+            : {}),
+          ...(resolvedCycleType !== 'TEAM'
+            ? {
+                mealAllowance: resolvedMealAllowance,
+                travelSafetyAllowance: resolvedTravelAllowance,
+                otherBonus: resolvedOtherBonus,
+                ...(maxAllowTime > 0 ? { allowanceUpdatedAt: maxAllowTime } : {}),
+              }
             : {}),
           actualWorkDays: localIsNewer
             ? existing.actualWorkDays ?? cw.actualWorkDays

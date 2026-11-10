@@ -278,23 +278,28 @@ export function createTimesheetForPeriod(
   let remainingOT = otHours;
 
   return period.dates.map((dateStr) => {
+    const parts = dateStr.split('/');
+    const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
+    const isSameMonth = itemMonth === pMonth;
     const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
 
     let dayWork = 0;
-    // Ưu tiên chấm các ngày làm việc (T2 - T7) trước
-    if (!isSunday && remainingDays >= 1) {
-      dayWork = 1;
-      remainingDays -= 1;
-    } else if (remainingDays >= 1) {
-      dayWork = 1;
-      remainingDays -= 1;
-    } else if (remainingDays >= 0.5) {
-      dayWork = 0.5;
-      remainingDays -= 0.5;
+    // Chỉ điền công vào các ngày thuộc đúng tháng của kỳ (isSameMonth), ưu tiên T2 - T7 trước
+    if (isSameMonth) {
+      if (!isSunday && remainingDays >= 1) {
+        dayWork = 1;
+        remainingDays -= 1;
+      } else if (remainingDays >= 1) {
+        dayWork = 1;
+        remainingDays -= 1;
+      } else if (remainingDays >= 0.5) {
+        dayWork = 0.5;
+        remainingDays -= 0.5;
+      }
     }
 
     let dayOT = 0;
-    if (dayWork > 0 && remainingOT > 0) {
+    if (isSameMonth && dayWork > 0 && remainingOT > 0) {
       dayOT = Math.min(remainingOT, 4);
       remainingOT -= dayOT;
     }
@@ -502,10 +507,89 @@ export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
   return 0;
 }
 
+const LEGACY_MOCK_WORKER_CODES = new Set([
+  'PNC-TV01',
+  'PNC-TV02',
+  'PNC-TV03',
+  'PNC-TV04',
+  'PNC-TV05',
+  'PNC-TV06',
+  'PNC-TV07',
+  'PNC-TV08',
+  'PNC-TV09',
+  'PNC-TV10',
+  'PNC-TV11',
+  'PNC-TV12',
+]);
+
+export function sanitizeLegacySeasonalAllowances(worker: SeasonalWorker): SeasonalWorker {
+  if (!worker || worker.payrollCycleType === 'TEAM') return worker;
+  if ((worker as any).allowanceUpdatedAt) return worker;
+
+  const isLegacySlot = LEGACY_MOCK_WORKER_CODES.has(String(worker.code || '').trim());
+  const pRecs = worker.periodRecords || {};
+  const hasZeroSubPeriod = Object.entries(pRecs).some(
+    ([k, r]) =>
+      r &&
+      (k.includes('_W') || k.includes('_BI')) &&
+      Number(r.mealAllowance || 0) === 0 &&
+      Number(r.travelSafetyAllowance || 0) === 0 &&
+      Number(r.otherBonus || 0) === 0
+  );
+  const hasAutoMealOnly =
+    Number(worker.mealAllowance || 0) > 0 &&
+    Number(worker.mealAllowance || 0) % 30000 === 0 &&
+    Number(worker.travelSafetyAllowance || 0) === 0 &&
+    Number(worker.otherBonus || 0) === 0;
+
+  if (!isLegacySlot && !hasZeroSubPeriod && !hasAutoMealOnly) {
+    return worker;
+  }
+
+  const cleanedRecords: Record<string, SeasonalPeriodRecord> = {};
+  Object.entries(pRecs).forEach(([k, r]) => {
+    if (!r) return;
+    if (r.cycleType === 'TEAM') {
+      cleanedRecords[k] = r;
+      return;
+    }
+    const sal = Number(r.salaryByDays || 0);
+    const otPay = Number(r.overtimePay || 0);
+    const totInc = sal + otPay;
+    const hasTax = r.hasTaxCommitment ?? worker.hasTaxCommitment ?? true;
+    const tax = !hasTax && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+    const adv = Number(r.advancePayment || 0);
+    const totDed = tax + adv;
+    cleanedRecords[k] = {
+      ...r,
+      mealAllowance: 0,
+      travelSafetyAllowance: 0,
+      otherBonus: 0,
+      totalIncome: totInc,
+      personalIncomeTax: tax,
+      totalDeductions: totDed,
+      netSalary: Math.max(0, totInc - totDed),
+    };
+  });
+
+  return {
+    ...worker,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
+    periodRecords: cleanedRecords,
+  };
+}
+
 function syncPeriodRecordsDailyRate(
   records: Record<string, SeasonalPeriodRecord> | undefined,
   unifiedRate: number,
-  isTeamWorker = false
+  isTeamWorker = false,
+  configuredAllowances?: {
+    mealAllowance: number;
+    travelSafetyAllowance: number;
+    otherBonus: number;
+  }
 ): Record<string, SeasonalPeriodRecord> {
   if (!records) return {};
   const result: Record<string, SeasonalPeriodRecord> = {};
@@ -555,12 +639,19 @@ function syncPeriodRecordsDailyRate(
     const rate = typeof unifiedRate === 'number' && unifiedRate > 0 ? unifiedRate : rec.dailyRate || 0;
     const workDays = Number(rec.actualWorkDays || 0);
     const otHours = Number(rec.overtimeHours || 0);
+    const hasActivity = workDays > 0 || otHours > 0;
     const salaryByDays = Math.round(rate * workDays);
     const hourlyRate = rate / 8;
     const overtimePay = Math.round(hourlyRate * otHours * 1.5);
-    const mealAllowance = Number(rec.mealAllowance || 0);
-    const travelSafetyAllowance = Number(rec.travelSafetyAllowance || 0);
-    const otherBonus = Number(rec.otherBonus || 0);
+    const mealAllowance = hasActivity
+      ? Number(configuredAllowances ? configuredAllowances.mealAllowance : rec.mealAllowance || 0)
+      : 0;
+    const travelSafetyAllowance = hasActivity
+      ? Number(configuredAllowances ? configuredAllowances.travelSafetyAllowance : rec.travelSafetyAllowance || 0)
+      : 0;
+    const otherBonus = hasActivity
+      ? Number(configuredAllowances ? configuredAllowances.otherBonus : rec.otherBonus || 0)
+      : 0;
     const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
     const hasTaxCommitment = rec.hasTaxCommitment ?? true;
     const personalIncomeTax =
@@ -574,6 +665,9 @@ function syncPeriodRecordsDailyRate(
       dailyRate: rate,
       salaryByDays,
       overtimePay,
+      mealAllowance,
+      travelSafetyAllowance,
+      otherBonus,
       totalIncome,
       personalIncomeTax,
       totalDeductions,
@@ -584,10 +678,11 @@ function syncPeriodRecordsDailyRate(
 }
 
 export function syncSeasonalWorkerForMonth(
-  worker: SeasonalWorker,
+  rawWorker: SeasonalWorker,
   month: number,
   year: number
 ): SeasonalWorker {
+  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
   const monthPeriodKey = `${monthKey}_MONTH`;
@@ -658,7 +753,17 @@ export function syncSeasonalWorkerForMonth(
     });
   }
 
-  const syncedRecords = syncPeriodRecordsDailyRate(worker.periodRecords, effectiveRate);
+  const configuredAllowances = {
+    mealAllowance: Math.max(0, Number(worker.mealAllowance || 0)),
+    travelSafetyAllowance: Math.max(0, Number(worker.travelSafetyAllowance || 0)),
+    otherBonus: Math.max(0, Number(worker.otherBonus || 0)),
+  };
+  const syncedRecords = syncPeriodRecordsDailyRate(
+    worker.periodRecords,
+    effectiveRate,
+    false,
+    configuredAllowances
+  );
 
   if (
     monthRec &&
@@ -688,11 +793,13 @@ export function syncSeasonalWorkerForMonth(
         dailyRate: effectiveRate,
         actualWorkDays: 0,
         overtimeHours: 0,
-        mealAllowance: 0,
+        mealAllowance: configuredAllowances.mealAllowance,
+        travelSafetyAllowance: configuredAllowances.travelSafetyAllowance,
+        otherBonus: configuredAllowances.otherBonus,
         selectedForAttendance: false,
       });
       const clearedPeriodRecords: Record<string, SeasonalPeriodRecord> = { ...syncedRecords };
-      ['W1', 'W2', 'W3', 'W4', 'W5', 'BI1', 'BI2', 'M1', 'MONTH'].forEach((suffix) => {
+      ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'BI1', 'BI2', 'M1', 'MONTH'].forEach((suffix) => {
         const pid = `${monthKey}_${suffix}`;
         if (clearedPeriodRecords[pid] && clearedPeriodRecords[pid].cycleType !== 'TEAM') {
           clearedPeriodRecords[pid] = {
@@ -702,6 +809,9 @@ export function syncSeasonalWorkerForMonth(
             salaryByDays: 0,
             overtimeHours: 0,
             overtimePay: 0,
+            mealAllowance: 0,
+            travelSafetyAllowance: 0,
+            otherBonus: 0,
             totalIncome: 0,
             personalIncomeTax: 0,
             netSalary: 0,
@@ -719,8 +829,8 @@ export function syncSeasonalWorkerForMonth(
         overtimeHours: 0,
         overtimePay: 0,
         mealAllowance: 0,
-        travelSafetyAllowance: recomputedZero.travelSafetyAllowance,
-        otherBonus: recomputedZero.otherBonus,
+        travelSafetyAllowance: 0,
+        otherBonus: 0,
         totalIncome: 0,
         hasTaxCommitment: recomputedZero.hasTaxCommitment,
         personalIncomeTax: 0,
@@ -810,9 +920,9 @@ export function syncSeasonalWorkerForMonth(
         const prevSubRec = nextSyncedRecords[pOpt.periodKey];
         const salByDays = pRecorded ? Math.round(effectiveRate * rDays) : 0;
         const otPay = pRecorded ? Math.round((effectiveRate / 8) * rOt * 1.5) : 0;
-        const meal = pRecorded ? Number(prevSubRec?.mealAllowance ?? worker.mealAllowance ?? 0) : 0;
-        const travel = pRecorded ? Number(prevSubRec?.travelSafetyAllowance ?? worker.travelSafetyAllowance ?? 0) : 0;
-        const bonus = pRecorded ? Number(prevSubRec?.otherBonus ?? worker.otherBonus ?? 0) : 0;
+        const meal = pRecorded ? configuredAllowances.mealAllowance : 0;
+        const travel = pRecorded ? configuredAllowances.travelSafetyAllowance : 0;
+        const bonus = pRecorded ? configuredAllowances.otherBonus : 0;
         const totInc = pRecorded ? salByDays + otPay + meal + travel + bonus : 0;
         const hasTax = prevSubRec?.hasTaxCommitment ?? worker.hasTaxCommitment ?? true;
         const tax = pRecorded && !hasTax && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
@@ -870,9 +980,9 @@ export function syncSeasonalWorkerForMonth(
       });
 
       const existingPeriodRec = nextSyncedRecords[monthPeriodKey];
-      const effectiveMeal = existingPeriodRec?.mealAllowance ?? (roundedWork > 0 ? (worker.mealAllowance || roundedWork * 30000) : 0);
-      const effectiveTravel = existingPeriodRec?.travelSafetyAllowance ?? (roundedWork > 0 ? (worker.travelSafetyAllowance || 0) : 0);
-      const effectiveBonus = existingPeriodRec?.otherBonus ?? (roundedWork > 0 ? (worker.otherBonus || 0) : 0);
+      const effectiveMeal = isParticipating ? configuredAllowances.mealAllowance : 0;
+      const effectiveTravel = isParticipating ? configuredAllowances.travelSafetyAllowance : 0;
+      const effectiveBonus = isParticipating ? configuredAllowances.otherBonus : 0;
       const effectiveAdvance =
         worker.advancePayment !== undefined && worker.advancePayment > 0
           ? worker.advancePayment
@@ -963,9 +1073,9 @@ export function syncSeasonalWorkerForMonth(
         weeklyTimesheet: sheetFromFull,
         actualWorkDays: fullMonthRec.actualWorkDays,
         overtimeHours: fullMonthRec.overtimeHours,
-        mealAllowance: fullMonthRec.mealAllowance,
-        travelSafetyAllowance: fullMonthRec.travelSafetyAllowance,
-        otherBonus: fullMonthRec.otherBonus,
+        mealAllowance: configuredAllowances.mealAllowance,
+        travelSafetyAllowance: configuredAllowances.travelSafetyAllowance,
+        otherBonus: configuredAllowances.otherBonus,
         advancePayment: fullMonthRec.advancePayment,
         selectedForAttendance: true,
         periodRecords: syncedRecords,
@@ -976,23 +1086,19 @@ export function syncSeasonalWorkerForMonth(
       });
     }
 
-    // Hoặc cộng gộp các tuần W1..W5 / đợt BI1..BI2 trong tháng đó
-    const weekKeys = matchingPeriodKeys.filter((k) => k.includes('_W') || k.includes('_BI'));
-    if (weekKeys.length > 0) {
+    // Hoặc cộng gộp các tuần W1..W6 in tháng đó
+    const weekKeys = matchingPeriodKeys.filter((k) => k.includes('_W'));
+    const biKeys = matchingPeriodKeys.filter((k) => k.includes('_BI'));
+    const subKeysToSum = weekKeys.length > 0 ? weekKeys : biKeys;
+    if (subKeysToSum.length > 0) {
       let sumDays = 0;
       let sumOt = 0;
-      let sumMeal = 0;
-      let sumTravel = 0;
-      let sumBonus = 0;
       let sumAdv = 0;
-      weekKeys.forEach((wk) => {
+      subKeysToSum.forEach((wk) => {
         const r = syncedRecords[wk];
         if (r && r.isRecorded) {
           sumDays += Number(r.actualWorkDays || 0);
           sumOt += Number(r.overtimeHours || 0);
-          sumMeal += Number(r.mealAllowance || 0);
-          sumTravel += Number(r.travelSafetyAllowance || 0);
-          sumBonus += Number(r.otherBonus || 0);
           sumAdv += Number(r.advancePayment || 0);
         }
       });
@@ -1008,9 +1114,9 @@ export function syncSeasonalWorkerForMonth(
           weeklyTimesheet: sheetFromSub,
           actualWorkDays: roundedDays,
           overtimeHours: sumOt,
-          mealAllowance: sumMeal || worker.mealAllowance,
-          travelSafetyAllowance: sumTravel || worker.travelSafetyAllowance,
-          otherBonus: sumBonus || worker.otherBonus,
+          mealAllowance: configuredAllowances.mealAllowance,
+          travelSafetyAllowance: configuredAllowances.travelSafetyAllowance,
+          otherBonus: configuredAllowances.otherBonus,
           advancePayment: sumAdv || worker.advancePayment,
           selectedForAttendance: true,
           periodRecords: syncedRecords,
@@ -1159,7 +1265,8 @@ export function resolveWorkerTimesheetForReceipt(
  * - Nếu chu kỳ đã được chấm và record: Hiển thị lại đúng số công, OT, tạm ứng đã lưu
  * - Nếu chu kỳ chưa chấm: MẶC ĐỊNH SỐ CÔNG = 0, OT = 0, TẠM ỨNG = 0 (bắt buộc người dùng chấm lại, không để sẵn)
  */
-export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriodOption): SeasonalWorker {
+export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPeriodOption): SeasonalWorker {
+  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
   const pKey = period.periodKey;
   const existingRecord = worker.periodRecords?.[pKey];
   const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
@@ -1234,38 +1341,66 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     };
   }
 
-  // Kiểm tra nếu đã có dữ liệu chấm công từ link chấm công di động (monthlyAttendance)
+  const configuredMeal = Math.max(0, Number(worker.mealAllowance || 0));
+  const configuredTravel = Math.max(0, Number(worker.travelSafetyAllowance || 0));
+  const configuredBonus = Math.max(0, Number(worker.otherBonus || 0));
+
+  // Kiểm tra nếu đã có dữ liệu chấm công từ bảng chấm công tháng / di động (monthlyAttendance)
   const monthlyDays = worker.monthlyAttendance?.[monthKey]?.days;
+  const hasMonthlyAttendanceForMonth = monthlyDays !== undefined;
   let hasMonthlyDataForPeriod = false;
   let monthlyWorkDays = 0;
   let monthlyOtHours = 0;
 
   if (monthlyDays && period.dates && period.dates.length > 0) {
     period.dates.forEach((dateStr) => {
-      const dayNum = parseInt(dateStr.split('/')[0], 10);
-      if (monthlyDays[dayNum] !== undefined) {
+      const parts = dateStr.split('/');
+      const dayNum = parseInt(parts[0], 10);
+      const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
+      // CỰC KỲ QUAN TRỌNG: Chỉ lấy ngày thuộc đúng tháng pMonth (không lấy ngày của tháng trước/tháng sau ở tuần giáp hạt như Tuần 1 26/10-01/11 hoặc Tuần 6 30/11-06/12)
+      if (itemMonth === pMonth && monthlyDays[dayNum] !== undefined) {
         hasMonthlyDataForPeriod = true;
-        monthlyWorkDays += Number(monthlyDays[dayNum].workUnits || 0);
-        monthlyOtHours += Number(monthlyDays[dayNum].otHours || 0);
+        const dRec = monthlyDays[dayNum];
+        if (dRec.statusType !== 'ABSENT' && dRec.statusType !== 'LEAVE') {
+          monthlyWorkDays +=
+            dRec.statusType === 'LATE' && !(Number(dRec.workUnits || 0) > 0)
+              ? 1
+              : Number(dRec.workUnits || 0);
+        }
+        monthlyOtHours += Number(dRec.otHours || 0);
       }
     });
   }
 
-  // Ưu tiên dữ liệu từ monthlyAttendance nếu có dữ liệu chấm công từ điện thoại hoặc monthlyWorkDays > 0
-  const hasRecordedMonthlyDays = hasMonthlyDataForPeriod && monthlyDays && (monthlyWorkDays > 0 || monthlyOtHours > 0);
+  const hasRecordedMonthlyDays =
+    hasMonthlyDataForPeriod && monthlyDays && (monthlyWorkDays > 0 || monthlyOtHours > 0);
 
-  // 1. Nếu có dữ liệu từ link chấm công di động trên điện thoại (monthlyAttendance) với công > 0, hoặc chu kỳ chưa có công nhưng monthlyDays có công
-  if (hasRecordedMonthlyDays) {
+  // 1. Nếu có dữ liệu từ bảng chấm công tháng (monthlyAttendance) với công > 0 trong tuần/kỳ này
+  if (hasRecordedMonthlyDays && monthlyDays) {
     const timesheetFromMonthly: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
-      const dayNum = parseInt(dateStr.split('/')[0], 10);
+      const parts = dateStr.split('/');
+      const dayNum = parseInt(parts[0], 10);
+      const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
       const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
-      const dayDetail = monthlyDays[dayNum];
-      const match = existingRecord?.weeklyTimesheet?.find((d) => d.dateLabel === dateStr);
+      const dayDetail = itemMonth === pMonth ? monthlyDays[dayNum] : undefined;
 
-      const workUnits = dayDetail !== undefined ? Number(dayDetail.workUnits || 0) : (match ? match.workUnits : 0);
-      const otHours = dayDetail !== undefined ? Number(dayDetail.otHours || 0) : (match ? match.otHours : 0);
-      const shiftType = dayDetail?.shiftType || match?.shiftType || 'DAY';
-      const note = dayDetail?.note || match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+      const workUnits =
+        dayDetail && dayDetail.statusType !== 'ABSENT' && dayDetail.statusType !== 'LEAVE'
+          ? dayDetail.statusType === 'LATE' && !(Number(dayDetail.workUnits || 0) > 0)
+            ? 1
+            : Number(dayDetail.workUnits || 0)
+          : 0;
+      const otHours = dayDetail ? Number(dayDetail.otHours || 0) : 0;
+      const shiftType = dayDetail?.shiftType || 'DAY';
+      const note =
+        dayDetail?.note ||
+        (workUnits > 0
+          ? isSunday
+            ? 'Làm ca Chủ Nhật'
+            : 'Thi công bình thường'
+          : isSunday
+          ? 'Nghỉ Chủ Nhật'
+          : 'Nghỉ ca');
 
       return {
         dayOfWeek,
@@ -1291,9 +1426,9 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
       payrollCycleType: worker.payrollCycleType || '1_MONTH',
       actualWorkDays: roundedWorkDays,
       overtimeHours: totalOT,
-      mealAllowance: existingRecord?.mealAllowance ?? worker.mealAllowance ?? 0,
-      travelSafetyAllowance: existingRecord?.travelSafetyAllowance ?? worker.travelSafetyAllowance ?? 0,
-      otherBonus: existingRecord?.otherBonus ?? worker.otherBonus ?? 0,
+      mealAllowance: configuredMeal,
+      travelSafetyAllowance: configuredTravel,
+      otherBonus: configuredBonus,
       advancePayment:
         worker.advancePayment !== undefined && worker.advancePayment > 0
           ? worker.advancePayment
@@ -1304,21 +1439,30 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     });
   }
 
-  // 2. Nếu đã có bản ghi chu kỳ đã lưu trước đó và có công > 0 hoặc đã ghi nhận
-  if (existingRecord && (existingRecord.isRecorded || existingRecord.actualWorkDays > 0)) {
-    // Chuẩn hóa weeklyTimesheet đảm bảo thứ và ngày luôn khớp 100% với lịch thực tế
+  // 2. Chỉ dùng existingRecord khi tháng này CHƯA có monthlyAttendance (tránh việc tuần trống như Tuần 6 bị lấy nhầm công cũ)
+  if (!hasMonthlyAttendanceForMonth && existingRecord && (existingRecord.isRecorded || existingRecord.actualWorkDays > 0)) {
     let normalizedTimesheet: WeeklyDayAttendance[];
     if (existingRecord.weeklyTimesheet && existingRecord.weeklyTimesheet.length > 0) {
       normalizedTimesheet = period.dates.map((dateStr, idx) => {
+        const parts = dateStr.split('/');
+        const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
         const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
-        const dayNum = parseInt(dateStr.split('/')[0], 10);
-        const dayDetail = monthlyDays?.[dayNum];
-        const match = existingRecord.weeklyTimesheet?.find((d) => d.dateLabel === dateStr) || existingRecord.weeklyTimesheet?.[idx];
+        const match =
+          existingRecord.weeklyTimesheet?.find((d) => d.dateLabel === dateStr) ||
+          existingRecord.weeklyTimesheet?.[idx];
 
-        const workUnits = dayDetail !== undefined ? Number(dayDetail.workUnits || 0) : (match ? match.workUnits : 0);
-        const otHours = dayDetail !== undefined ? Number(dayDetail.otHours || 0) : (match ? match.otHours : 0);
-        const shiftType = dayDetail?.shiftType || match?.shiftType || 'DAY';
-        const note = dayDetail?.note || match?.note || (workUnits > 0 ? (isSunday ? 'Làm ca Chủ Nhật' : 'Thi công bình thường') : (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'));
+        const workUnits = itemMonth === pMonth && match ? Number(match.workUnits || 0) : 0;
+        const otHours = itemMonth === pMonth && match ? Number(match.otHours || 0) : 0;
+        const shiftType = match?.shiftType || 'DAY';
+        const note =
+          match?.note ||
+          (workUnits > 0
+            ? isSunday
+              ? 'Làm ca Chủ Nhật'
+              : 'Thi công bình thường'
+            : isSunday
+            ? 'Nghỉ Chủ Nhật'
+            : 'Nghỉ ca');
 
         return {
           dayOfWeek,
@@ -1336,32 +1480,34 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
 
     const totalDays = normalizedTimesheet.reduce((sum, d) => sum + (d.workUnits || 0), 0);
     const totalOT = normalizedTimesheet.reduce((sum, d) => sum + (d.otHours || 0), 0);
-    const effectiveDays = totalDays > 0 ? Math.round(totalDays * 10) / 10 : existingRecord.actualWorkDays;
-    const effectiveOT = totalOT > 0 ? totalOT : existingRecord.overtimeHours;
+    const effectiveDays = Math.round(totalDays * 10) / 10;
+    const effectiveOT = totalOT;
 
-    return recomputeSeasonalWorkerPayroll({
-      ...worker,
-      dailyRate: periodDailyRate,
-      currentPeriodKey: pKey,
-      currentWeekId: period.id,
-      currentWeekLabel: period.label,
-      payrollCycleType: worker.payrollCycleType || '1_MONTH',
-      actualWorkDays: effectiveDays,
-      overtimeHours: effectiveOT,
-      mealAllowance: existingRecord.mealAllowance,
-      travelSafetyAllowance: existingRecord.travelSafetyAllowance,
-      otherBonus: existingRecord.otherBonus,
-      hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
-      advancePayment:
-        worker.advancePayment !== undefined && worker.advancePayment > 0
-          ? worker.advancePayment
-          : existingRecord.advancePayment || 0,
-      weeklyTimesheet: normalizedTimesheet,
-      notes: existingRecord.notes ?? worker.notes,
-    });
+    if (effectiveDays > 0 || effectiveOT > 0) {
+      return recomputeSeasonalWorkerPayroll({
+        ...worker,
+        dailyRate: periodDailyRate,
+        currentPeriodKey: pKey,
+        currentWeekId: period.id,
+        currentWeekLabel: period.label,
+        payrollCycleType: worker.payrollCycleType || '1_MONTH',
+        actualWorkDays: effectiveDays,
+        overtimeHours: effectiveOT,
+        mealAllowance: configuredMeal,
+        travelSafetyAllowance: configuredTravel,
+        otherBonus: configuredBonus,
+        hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
+        advancePayment:
+          worker.advancePayment !== undefined && worker.advancePayment > 0
+            ? worker.advancePayment
+            : existingRecord.advancePayment || 0,
+        weeklyTimesheet: normalizedTimesheet,
+        notes: existingRecord.notes ?? worker.notes,
+      });
+    }
   }
 
-  // 3. Chu kỳ hoàn toàn chưa được chấm công -> Mặc định 0 công để người dùng chấm lại từ đầu
+  // 3. Chu kỳ hoàn toàn chưa được chấm công -> Mặc định 0 công để người dùng chấm lại từ đầu, nhưng vẫn giữ cấu hình Phụ cấp & Thưởng của hồ sơ
   const emptySheet = createEmptyTimesheetForPeriod(period);
   return recomputeSeasonalWorkerPayroll({
     ...worker,
@@ -1372,9 +1518,9 @@ export function getWorkerForPeriod(worker: SeasonalWorker, period: PayrollPeriod
     payrollCycleType: worker.payrollCycleType || '1_MONTH',
     actualWorkDays: 0, // Mặc định 0 công
     overtimeHours: 0,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
+    mealAllowance: configuredMeal,
+    travelSafetyAllowance: configuredTravel,
+    otherBonus: configuredBonus,
     advancePayment: 0,
     weeklyTimesheet: emptySheet,
   });
@@ -1494,6 +1640,16 @@ export function recordWorkerPeriod(
   };
   (periodRecord as any).updatedAt = Date.now();
 
+  const isAllowancePatched =
+    patch.mealAllowance !== undefined ||
+    patch.travelSafetyAllowance !== undefined ||
+    patch.otherBonus !== undefined;
+  const configuredAllowances = {
+    mealAllowance: Math.max(0, Number(patch.mealAllowance ?? worker.mealAllowance ?? 0)),
+    travelSafetyAllowance: Math.max(0, Number(patch.travelSafetyAllowance ?? worker.travelSafetyAllowance ?? 0)),
+    otherBonus: Math.max(0, Number(patch.otherBonus ?? worker.otherBonus ?? 0)),
+  };
+
   const periodRecords =
     declaredCycle === 'TEAM'
       ? {
@@ -1505,7 +1661,9 @@ export function recordWorkerPeriod(
             ...(worker.periodRecords || {}),
             [pKey]: periodRecord,
           },
-          effectivePeriodDailyRate
+          effectivePeriodDailyRate,
+          false,
+          configuredAllowances
         );
 
   // Nếu người dùng xóa trắng kỳ Cả Tháng về 0 công, đồng bộ xóa luôn các kỳ tuần/đợt của tháng đó để không bị phục hồi lại công cũ
@@ -1640,7 +1798,11 @@ export function recordWorkerPeriod(
 
   return {
     ...updated,
+    mealAllowance: configuredAllowances.mealAllowance,
+    travelSafetyAllowance: configuredAllowances.travelSafetyAllowance,
+    otherBonus: configuredAllowances.otherBonus,
     ...(patch.dailyRate !== undefined ? { dailyRateUpdatedAt: Date.now() } : {}),
+    ...(isAllowancePatched ? { allowanceUpdatedAt: Date.now() } : {}),
     selectedForAttendance: isPeriodParticipating,
     periodRecords,
     monthlyAttendance,
@@ -2036,24 +2198,28 @@ const rawSeasonalWorkers: SeasonalWorker[] = [
 
 // Khởi tạo các bản ghi chấm công mẫu theo từng kỳ (W1, W2, BI1)
 // CỰC KỲ QUAN TRỌNG: Các tuần W3, W4, W5 và BI2 CHƯA CHẤM CÔNG (mặc định = 0 công để người dùng chấm lại)
-export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((w, index) => {
+export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((rawW, index) => {
+  const w: SeasonalWorker = {
+    ...rawW,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
+  };
   const w1Days = index % 3 === 0 ? 5.5 : 6;
   const w1OT = (index % 4) * 2;
-  const w1Meal = w1Days * 30000;
-  const w1Advance = (index % 2 === 0 ? 1000000 : 500000);
+  const w1Advance = index % 2 === 0 ? 1000000 : 500000;
 
   const w2Days = index % 4 === 0 ? 5 : 6;
   const w2OT = (index % 3) * 2;
-  const w2Meal = w2Days * 30000;
-  const w2Advance = (index % 3 === 0 ? 800000 : 500000);
+  const w2Advance = index % 3 === 0 ? 800000 : 500000;
 
   // W1 (Tuần 1: 01/09 - 07/09)
   const w1Calc = recomputeSeasonalWorkerPayroll({
     ...w,
     actualWorkDays: w1Days,
     overtimeHours: w1OT,
-    mealAllowance: w1Meal,
-    travelSafetyAllowance: 100000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     advancePayment: w1Advance,
   });
@@ -2072,8 +2238,8 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     salaryByDays: w1Calc.salaryByDays,
     overtimeHours: w1OT,
     overtimePay: w1Calc.overtimePay,
-    mealAllowance: w1Meal,
-    travelSafetyAllowance: 100000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     totalIncome: w1Calc.totalIncome,
     hasTaxCommitment: w.hasTaxCommitment,
@@ -2090,8 +2256,8 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     ...w,
     actualWorkDays: w2Days,
     overtimeHours: w2OT,
-    mealAllowance: w2Meal,
-    travelSafetyAllowance: 100000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     advancePayment: w2Advance,
   });
@@ -2109,8 +2275,8 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     salaryByDays: w2Calc.salaryByDays,
     overtimeHours: w2OT,
     overtimePay: w2Calc.overtimePay,
-    mealAllowance: w2Meal,
-    travelSafetyAllowance: 100000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     totalIncome: w2Calc.totalIncome,
     hasTaxCommitment: w.hasTaxCommitment,
@@ -2125,14 +2291,13 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
   // Đợt 1 (01/09 - 15/09) của Lương 2 tuần
   const bi1Days = 12;
   const bi1OT = 8;
-  const bi1Meal = bi1Days * 30000;
   const bi1Advance = 1500000;
   const bi1Calc = recomputeSeasonalWorkerPayroll({
     ...w,
     actualWorkDays: bi1Days,
     overtimeHours: bi1OT,
-    mealAllowance: bi1Meal,
-    travelSafetyAllowance: 200000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     advancePayment: bi1Advance,
   });
@@ -2151,8 +2316,8 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     salaryByDays: bi1Calc.salaryByDays,
     overtimeHours: bi1OT,
     overtimePay: bi1Calc.overtimePay,
-    mealAllowance: bi1Meal,
-    travelSafetyAllowance: 200000,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
     otherBonus: 0,
     totalIncome: bi1Calc.totalIncome,
     hasTaxCommitment: w.hasTaxCommitment,
@@ -2171,6 +2336,9 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     ...w,
     actualWorkDays: m9Days,
     overtimeHours: m9OT,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
   });
   const m9Period = getMonthlyPeriodForMonth(2026, 9)[0];
   const m9Timesheet = createTimesheetForPeriod(m9Period, m9Days, m9OT);
@@ -2184,9 +2352,9 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     salaryByDays: m9Calc.salaryByDays,
     overtimeHours: m9OT,
     overtimePay: m9Calc.overtimePay,
-    mealAllowance: m9Calc.mealAllowance,
-    travelSafetyAllowance: m9Calc.travelSafetyAllowance,
-    otherBonus: m9Calc.otherBonus,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
     totalIncome: m9Calc.totalIncome,
     hasTaxCommitment: w.hasTaxCommitment,
     personalIncomeTax: m9Calc.personalIncomeTax,
@@ -2204,6 +2372,9 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     ...w,
     actualWorkDays: m10Days,
     overtimeHours: m10OT,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
   });
   const m10Period = getMonthlyPeriodForMonth(2026, 10)[0];
   const m10Timesheet = createTimesheetForPeriod(m10Period, m10Days, m10OT);
@@ -2217,9 +2388,9 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
     salaryByDays: m10Calc.salaryByDays,
     overtimeHours: m10OT,
     overtimePay: m10Calc.overtimePay,
-    mealAllowance: m10Calc.mealAllowance,
-    travelSafetyAllowance: m10Calc.travelSafetyAllowance,
-    otherBonus: m10Calc.otherBonus,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: 0,
     totalIncome: m10Calc.totalIncome,
     hasTaxCommitment: w.hasTaxCommitment,
     personalIncomeTax: m10Calc.personalIncomeTax,
@@ -2262,7 +2433,8 @@ export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((
  * Đảm bảo mọi nhân sự thời vụ có sẵn lịch sử Tháng 9 và Tháng 10 năm 2026 nếu chưa có,
  * giúp người dùng bấm xem lại Tháng 9 / Tháng 10 luôn có đầy đủ công & lương.
  */
-export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): SeasonalWorker {
+export function ensureSeasonalHistoricalMonths(rawWorker: SeasonalWorker): SeasonalWorker {
+  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
   const isTeamWorker = worker.payrollCycleType === 'TEAM';
   const codeMatch = !isTeamWorker
     ? initialSeasonalWorkers.find(
@@ -2272,11 +2444,19 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
       )
     : undefined;
   const unifiedRate = getUnifiedWorkerDailyRate(worker);
+  const configuredAllowances = !isTeamWorker
+    ? {
+        mealAllowance: Math.max(0, Number(worker.mealAllowance || 0)),
+        travelSafetyAllowance: Math.max(0, Number(worker.travelSafetyAllowance || 0)),
+        otherBonus: Math.max(0, Number(worker.otherBonus || 0)),
+      }
+    : undefined;
   const nextMonthly = { ...(worker.monthlyAttendance || {}) };
   const nextPeriods = syncPeriodRecordsDailyRate(
     { ...(worker.periodRecords || {}) },
     unifiedRate,
-    isTeamWorker
+    isTeamWorker,
+    configuredAllowances
   );
 
   if (!nextMonthly['2026-09'] && codeMatch?.monthlyAttendance?.['2026-09']) {
@@ -2318,7 +2498,12 @@ export function ensureSeasonalHistoricalMonths(worker: SeasonalWorker): Seasonal
     ...worker,
     dailyRate: unifiedRate > 0 ? unifiedRate : worker.dailyRate,
     monthlyAttendance: nextMonthly,
-    periodRecords: syncPeriodRecordsDailyRate(nextPeriods, unifiedRate, isTeamWorker),
+    periodRecords: syncPeriodRecordsDailyRate(
+      nextPeriods,
+      unifiedRate,
+      isTeamWorker,
+      configuredAllowances
+    ),
   };
 }
 

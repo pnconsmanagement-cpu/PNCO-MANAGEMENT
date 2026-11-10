@@ -493,7 +493,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
       const activated = recordWorkerPeriod(original, currentPeriodOption, {
         status: 'ACTIVE',
         actualWorkDays: standardDays,
-        mealAllowance: original.mealAllowance > 0 ? original.mealAllowance : standardDays * 30000,
+        mealAllowance: original.mealAllowance || 0,
         selectedForAttendance: true,
       });
       onUpdateWorker(activated);
@@ -546,7 +546,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         const updated = recordWorkerPeriod(w, currentPeriodOption, {
           status: 'ACTIVE',
           actualWorkDays: standardDays,
-          mealAllowance: w.mealAllowance > 0 ? w.mealAllowance : standardDays * 30000,
+          mealAllowance: w.mealAllowance || 0,
           selectedForAttendance: true,
         });
         onUpdateWorker(updated);
@@ -1345,7 +1345,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            setEditingWorker(w);
+                            const fullWorker =
+                              workers.find((x) => x.id === w.id || x.code === w.code) || w;
+                            setEditingWorker(fullWorker);
                             setIsFormOpen(true);
                           }}
                           className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
