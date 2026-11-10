@@ -274,27 +274,46 @@ export function createTimesheetForPeriod(
   const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
   const pMonth = period.month || parseInt(period.periodKey?.split('-')[1]?.split('_')[0], 10) || 9;
 
-  let remainingDays = workDays;
-  let remainingOT = otHours;
-
-  return period.dates.map((dateStr) => {
+  // Đếm tổng số ngày T2 - T7 thuộc đúng tháng của kỳ
+  const dateMetaList = period.dates.map((dateStr) => {
     const parts = dateStr.split('/');
     const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : pMonth;
     const isSameMonth = itemMonth === pMonth;
-    const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, pYear, pMonth);
+    const info = getDayOfWeekInfo(dateStr, pYear, pMonth);
+    return {
+      dateStr,
+      isSameMonth,
+      ...info,
+    };
+  });
 
+  const nonSundayCount = dateMetaList.filter((d) => d.isSameMonth && !d.isSunday).length;
+  let remainingNonSunday = Math.min(Math.max(0, workDays), nonSundayCount);
+  let remainingSunday = Math.max(0, workDays - nonSundayCount);
+  let remainingOT = Math.max(0, otHours);
+
+  return dateMetaList.map((meta) => {
+    const { dateStr, isSameMonth, dayOfWeek, dayName, isSunday } = meta;
     let dayWork = 0;
-    // Chỉ điền công vào các ngày thuộc đúng tháng của kỳ (isSameMonth), ưu tiên T2 - T7 trước
+
+    // Ưu tiên tuyệt đối điền công vào các ngày Thứ Hai đến Thứ Bảy (!isSunday), chỉ điền Chủ Nhật nếu số công > số ngày T2-T7
     if (isSameMonth) {
-      if (!isSunday && remainingDays >= 1) {
-        dayWork = 1;
-        remainingDays -= 1;
-      } else if (remainingDays >= 1) {
-        dayWork = 1;
-        remainingDays -= 1;
-      } else if (remainingDays >= 0.5) {
-        dayWork = 0.5;
-        remainingDays -= 0.5;
+      if (!isSunday) {
+        if (remainingNonSunday >= 1) {
+          dayWork = 1;
+          remainingNonSunday -= 1;
+        } else if (remainingNonSunday >= 0.5) {
+          dayWork = 0.5;
+          remainingNonSunday -= 0.5;
+        }
+      } else {
+        if (remainingSunday >= 1) {
+          dayWork = 1;
+          remainingSunday -= 1;
+        } else if (remainingSunday >= 0.5) {
+          dayWork = 0.5;
+          remainingSunday -= 0.5;
+        }
       }
     }
 
@@ -677,16 +696,238 @@ function syncPeriodRecordsDailyRate(
   return result;
 }
 
+const CLEANED_PHANTOM_SEASONAL_TIMESTAMP = '2026-11-10T00:00:00.000Z';
+const CLEANED_PHANTOM_SEASONAL_EPOCH = 1794268800000;
+
+/**
+ * Nhận diện bản ghi chấm công tháng (monthlyAttendance[monthKey] hoặc attendance_records)
+ * bị tự động nhảy công (25-26 công liên tiếp từ ngày 1..26 kể cả Chủ Nhật hoặc mang dấu thời gian khởi tạo mẫu).
+ * Bảo toàn 100% các bản ghi chấm công thực tế của người dùng (như Lê Văn Cường 11 công + 10h OT, Trần Thanh Xuân 2 công, Huỳnh Trần Gia Hưng 4 công...).
+ */
+export function isPhantomAutoSeasonalRecord(rec: any): boolean {
+  if (!rec || typeof rec !== 'object') return false;
+
+  const ts = String(rec.lastSubmittedAt || rec.updated_at || '');
+  if (ts === '2026-09-01T00:00:00.000Z' || ts === '2026-10-01T00:00:00.000Z') {
+    return true;
+  }
+
+  const daysObj = rec.days || rec.attendance_data;
+  if (!daysObj || typeof daysObj !== 'object' || Array.isArray(daysObj)) {
+    return false;
+  }
+
+  const activeDayNums: number[] = [];
+  let allMissingUpdatedAt = true;
+  Object.entries(daysObj).forEach(([k, val]: [string, any]) => {
+    const dNum = Number(k);
+    if (!Number.isInteger(dNum) || dNum < 1 || dNum > 31 || !val || typeof val !== 'object') return;
+    const wUnits = Number(val.workUnits || 0);
+    const ot = Number(val.otHours || 0);
+    if (wUnits > 0 || ot > 0) {
+      activeDayNums.push(dNum);
+      if (val.updatedAt) {
+        allMissingUpdatedAt = false;
+      }
+    }
+  });
+
+  if (activeDayNums.length < 22) {
+    return false;
+  }
+
+  // Trường hợp 1: Mọi ngày từ 1..22 đều có công = 1 liên tiếp (bao gồm cả tất cả các ngày Chủ Nhật đầu tháng)
+  // trong khi các ngày cuối tháng (28, 29, 30) lại trống hoàn toàn -> dấu hiệu 100% do hàm tự sinh công tạo ra
+  let consecutiveFromDay1 = true;
+  for (let d = 1; d <= 22; d++) {
+    if (Number(daysObj[d]?.workUnits || 0) < 1) {
+      consecutiveFromDay1 = false;
+      break;
+    }
+  }
+  const tailEmpty =
+    Number(daysObj[28]?.workUnits || 0) === 0 &&
+    Number(daysObj[29]?.workUnits || 0) === 0 &&
+    Number(daysObj[30]?.workUnits || 0) === 0;
+
+  if (consecutiveFromDay1 && tailEmpty) {
+    return true;
+  }
+
+  // Trường hợp 2: Có >= 22 ngày công nhưng tất cả các ô ngày đều không có updatedAt (do buildSeasonalMonthlyAttendanceRecord tự sinh)
+  if (allMissingUpdatedAt) {
+    return true;
+  }
+
+  return false;
+}
+
+function isPhantomAutoSeasonalPeriodRecord(pRec: any): boolean {
+  if (!pRec || typeof pRec !== 'object' || pRec.cycleType === 'TEAM') return false;
+  const workDays = Number(pRec.actualWorkDays || 0);
+  if (workDays < 22) return false;
+
+  if (Array.isArray(pRec.weeklyTimesheet) && pRec.weeklyTimesheet.length >= 28) {
+    let consecutive22 = true;
+    for (let i = 0; i < 22; i++) {
+      if (Number(pRec.weeklyTimesheet[i]?.workUnits || 0) < 1) {
+        consecutive22 = false;
+        break;
+      }
+    }
+    const tailZero =
+      Number(pRec.weeklyTimesheet[27]?.workUnits || 0) === 0 &&
+      Number(pRec.weeklyTimesheet[28]?.workUnits || 0) === 0 &&
+      Number(pRec.weeklyTimesheet[29]?.workUnits || 0) === 0;
+    if (consecutive22 && tailZero) return true;
+  }
+
+  if (!pRec.updatedAt && workDays >= 24) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Làm sạch triệt để các bản ghi chấm công thời vụ bị nhảy công tự động (25-26 công) ở tất cả các tháng.
+ * Đặt tường minh về 0 công (Chưa chấm công) kèm dấu thời gian mới để ghi đè dữ liệu rác trên cả LocalStorage & Supabase.
+ */
+export function sanitizeSeasonalWorkerAttendance(rawWorker: SeasonalWorker): SeasonalWorker {
+  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
+  if (!worker || worker.payrollCycleType === 'TEAM') return worker;
+
+  const rawMonthly = worker.monthlyAttendance || {};
+  const rawPeriods = worker.periodRecords || {};
+  const cleanedMonthly: Record<string, any> = { ...rawMonthly };
+  const cleanedPeriods: Record<string, SeasonalPeriodRecord> = { ...rawPeriods };
+  const phantomMonths = new Set<string>();
+
+  Object.entries(rawMonthly).forEach(([mKey, mRec]) => {
+    if (!mRec) return;
+    if (isPhantomAutoSeasonalRecord(mRec)) {
+      phantomMonths.add(mKey);
+    } else if (!mRec.days || Object.keys(mRec.days).length === 0) {
+      if (Number(mRec.totalWorkDays || 0) > 0 || Number(mRec.totalOtHours || 0) > 0) {
+        phantomMonths.add(mKey);
+      }
+    }
+  });
+
+  Object.entries(rawPeriods).forEach(([pKey, pRec]) => {
+    if (!pRec || pRec.cycleType === 'TEAM') return;
+    const match = pKey.match(/^(\d{4}-\d{2})_(.+)$/);
+    if (!match) return;
+    const mKey = match[1];
+    const suffix = match[2];
+    if ((suffix === 'MONTH' || suffix === 'M1') && isPhantomAutoSeasonalPeriodRecord(pRec)) {
+      phantomMonths.add(mKey);
+    }
+  });
+
+  if (phantomMonths.size === 0) {
+    return worker;
+  }
+
+  phantomMonths.forEach((mKey) => {
+    const parts = mKey.split('-');
+    const yNum = Number(parts[0]) || 2026;
+    const mNum = Number(parts[1]) || 10;
+
+    // Kiểm tra xem tháng này có kỳ tuần/đợt (W1..W6, BI1..BI2) nào được người dùng chấm công thực tế hợp lệ không
+    // (Kỳ tuần bị nhiễm từ 26 công tự động sẽ có W1, W2, W3 đều 7 công tính cả Chủ Nhật hoặc không có updatedAt)
+    const subKeys = Object.keys(cleanedPeriods).filter(
+      (k) => k.startsWith(`${mKey}_W`) || k.startsWith(`${mKey}_BI`)
+    );
+    const allSubArePhantom =
+      subKeys.length === 0 ||
+      subKeys.every((sk) => {
+        const sr = cleanedPeriods[sk];
+        if (!sr || !sr.isRecorded || (Number(sr.actualWorkDays || 0) === 0 && Number(sr.overtimeHours || 0) === 0)) {
+          return true;
+        }
+        if (!(sr as any).updatedAt) return true;
+        if (sk.includes('_W') && Number(sr.actualWorkDays || 0) >= 7 && Number(sr.overtimeHours || 0) === 0) {
+          return true;
+        }
+        return false;
+      });
+
+    if (allSubArePhantom) {
+      cleanedMonthly[mKey] = {
+        monthKey: mKey,
+        month: mNum,
+        year: yNum,
+        totalWorkDays: 0,
+        totalOtHours: 0,
+        days: {},
+        lastSubmittedAt: CLEANED_PHANTOM_SEASONAL_TIMESTAMP,
+        submittedBy: 'ADMIN',
+      };
+
+      Object.keys(cleanedPeriods).forEach((pk) => {
+        if (pk.startsWith(`${mKey}_`) && cleanedPeriods[pk]?.cycleType !== 'TEAM') {
+          cleanedPeriods[pk] = {
+            ...cleanedPeriods[pk],
+            isRecorded: false,
+            actualWorkDays: 0,
+            salaryByDays: 0,
+            overtimeHours: 0,
+            overtimePay: 0,
+            mealAllowance: 0,
+            travelSafetyAllowance: 0,
+            otherBonus: 0,
+            totalIncome: 0,
+            personalIncomeTax: 0,
+            netSalary: 0,
+            weeklyTimesheet: (cleanedPeriods[pk].weeklyTimesheet || []).map((d) => ({
+              ...d,
+              workUnits: 0,
+              otHours: 0,
+              note: d.dayOfWeek === 'CN' ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca',
+            })),
+            updatedAt: CLEANED_PHANTOM_SEASONAL_EPOCH,
+          } as SeasonalPeriodRecord;
+        }
+      });
+    }
+  });
+
+  const curMKey = `${worker.attendanceYear || 2026}-${String(worker.attendanceMonth || 10).padStart(2, '0')}`;
+  const isCurMonthCleaned =
+    phantomMonths.has(curMKey) &&
+    cleanedMonthly[curMKey] &&
+    Number(cleanedMonthly[curMKey].totalWorkDays || 0) === 0;
+
+  return {
+    ...worker,
+    ...(isCurMonthCleaned
+      ? {
+          actualWorkDays: 0,
+          overtimeHours: 0,
+          salaryByDays: 0,
+          overtimePay: 0,
+          totalIncome: 0,
+          personalIncomeTax: 0,
+          netSalary: 0,
+          selectedForAttendance: false,
+        }
+      : {}),
+    monthlyAttendance: cleanedMonthly,
+    periodRecords: cleanedPeriods,
+  };
+}
+
 export function syncSeasonalWorkerForMonth(
   rawWorker: SeasonalWorker,
   month: number,
   year: number
 ): SeasonalWorker {
-  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
+  const worker = sanitizeSeasonalWorkerAttendance(rawWorker);
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
   const monthPeriodKey = `${monthKey}_MONTH`;
-  let monthRec = worker.monthlyAttendance?.[monthKey];
+  const monthRec = worker.monthlyAttendance?.[monthKey];
   const effectiveRate = getUnifiedWorkerDailyRate(worker);
 
   // Xử lý riêng cho nhân sự thuộc nhóm Tổ Đội (TEAM): Không lấy từ bảng chấm công 31 ngày mà lấy trực tiếp từ bản ghi lương tháng (periodRecords[monthPeriodKey])
@@ -764,21 +1005,6 @@ export function syncSeasonalWorkerForMonth(
     false,
     configuredAllowances
   );
-
-  if (
-    monthRec &&
-    (!monthRec.days || Object.keys(monthRec.days).length === 0) &&
-    (Number(monthRec.totalWorkDays || 0) > 0 || Number(monthRec.totalOtHours || 0) > 0)
-  ) {
-    monthRec = buildSeasonalMonthlyAttendanceRecord(
-      worker,
-      month,
-      year,
-      Number(monthRec.totalWorkDays || 0),
-      Number(monthRec.totalOtHours || 0),
-      monthRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
-    );
-  }
 
   // 1. Nếu đã có bản ghi tháng trong monthlyAttendance[monthKey] (kể cả khi đã xóa trắng về 0 ngày công / days rỗng)
   if (monthRec && monthRec.days) {
@@ -1044,68 +1270,67 @@ export function syncSeasonalWorkerForMonth(
     }
   }
 
-  // 2. Nếu chưa có monthlyAttendance[monthKey], kiểm tra xem có các bản ghi tuần/đợt trong periodRecords của tháng này không
+  // 2. Nếu chưa có monthlyAttendance[monthKey], chỉ tổng hợp từ các kỳ tuần/đợt (W1..W6, BI1..BI2) đã thực sự được người dùng chấm chi tiết ngày
   const prefix = `${monthKey}_`;
   const matchingPeriodKeys = Object.keys(syncedRecords).filter((k) => k.startsWith(prefix));
   const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
   if (matchingPeriodKeys.length > 0) {
-    // Nếu có bản ghi cả tháng _MONTH
-    const fullMonthRec = syncedRecords[monthPeriodKey];
-    if (fullMonthRec && fullMonthRec.isRecorded && (fullMonthRec.actualWorkDays > 0 || fullMonthRec.overtimeHours > 0)) {
-      const builtMonthly = buildSeasonalMonthlyAttendanceRecord(
-        worker,
-        month,
-        year,
-        fullMonthRec.actualWorkDays,
-        fullMonthRec.overtimeHours
-      );
-      const sheetFromFull =
-        fullMonthRec.weeklyTimesheet &&
-        fullMonthRec.weeklyTimesheet.length > 0 &&
-        fullMonthRec.weeklyTimesheet.some((d) => d.dateLabel?.endsWith(`/${mStr}`))
-          ? fullMonthRec.weeklyTimesheet
-          : createTimesheetForPeriod(mPeriodOption, fullMonthRec.actualWorkDays, fullMonthRec.overtimeHours);
-      return recomputeSeasonalWorkerPayroll({
-        ...worker,
-        dailyRate: effectiveRate,
-        attendanceMonth: month,
-        attendanceYear: year,
-        weeklyTimesheet: sheetFromFull,
-        actualWorkDays: fullMonthRec.actualWorkDays,
-        overtimeHours: fullMonthRec.overtimeHours,
-        mealAllowance: configuredAllowances.mealAllowance,
-        travelSafetyAllowance: configuredAllowances.travelSafetyAllowance,
-        otherBonus: configuredAllowances.otherBonus,
-        advancePayment: fullMonthRec.advancePayment,
-        selectedForAttendance: true,
-        periodRecords: syncedRecords,
-        monthlyAttendance: {
-          ...(worker.monthlyAttendance || {}),
-          [monthKey]: builtMonthly,
-        },
-      });
-    }
-
-    // Hoặc cộng gộp các tuần W1..W6 in tháng đó
     const weekKeys = matchingPeriodKeys.filter((k) => k.includes('_W'));
     const biKeys = matchingPeriodKeys.filter((k) => k.includes('_BI'));
     const subKeysToSum = weekKeys.length > 0 ? weekKeys : biKeys;
     if (subKeysToSum.length > 0) {
+      const reconstructedDays: { [dayNumber: number]: any } = {};
       let sumDays = 0;
       let sumOt = 0;
       let sumAdv = 0;
       subKeysToSum.forEach((wk) => {
         const r = syncedRecords[wk];
-        if (r && r.isRecorded) {
-          sumDays += Number(r.actualWorkDays || 0);
-          sumOt += Number(r.overtimeHours || 0);
+        if (r && r.isRecorded && Array.isArray(r.weeklyTimesheet)) {
           sumAdv += Number(r.advancePayment || 0);
+          r.weeklyTimesheet.forEach((dItem) => {
+            if (!dItem?.dateLabel) return;
+            const parts = dItem.dateLabel.split('/');
+            const dNum = parseInt(parts[0], 10);
+            const itemM = parts.length > 1 ? parseInt(parts[1], 10) : month;
+            const wUnits = Number(dItem.workUnits || 0);
+            const ot = Number(dItem.otHours || 0);
+            if (itemM === month && !isNaN(dNum) && (wUnits > 0 || ot > 0)) {
+              reconstructedDays[dNum] = {
+                day: dNum,
+                dateStr: `${String(dNum).padStart(2, '0')}/${mStr}/${year}`,
+                workUnits: wUnits,
+                otHours: ot,
+                statusType: wUnits === 1 ? 'FULL' : 'HALF',
+                location: worker.project || '',
+                shiftType: dItem.shiftType || 'DAY',
+                otMultiplier: 1.5,
+                note: dItem.note || 'Thi công bình thường',
+                updatedAt: new Date().toISOString(),
+              };
+            }
+          });
         }
+      });
+      Object.values(reconstructedDays).forEach((d: any) => {
+        sumDays += Number(d.workUnits || 0);
+        sumOt += Number(d.otHours || 0);
       });
       if (sumDays > 0 || sumOt > 0) {
         const roundedDays = Math.round(sumDays * 10) / 10;
-        const builtMonthly = buildSeasonalMonthlyAttendanceRecord(worker, month, year, roundedDays, sumOt);
-        const sheetFromSub = createTimesheetForPeriod(mPeriodOption, roundedDays, sumOt);
+        const sheetFromSub: WeeklyDayAttendance[] = mPeriodOption.dates.map((dateStr) => {
+          const dNum = parseInt(dateStr.split('/')[0], 10);
+          const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, year, month);
+          const detail = reconstructedDays[dNum];
+          return {
+            dayOfWeek,
+            dayName,
+            dateLabel: dateStr,
+            workUnits: detail ? Number(detail.workUnits || 0) : 0,
+            otHours: detail ? Number(detail.otHours || 0) : 0,
+            shiftType: detail?.shiftType || 'DAY',
+            note: detail?.note || (isSunday ? 'Nghỉ Chủ Nhật' : 'Nghỉ ca'),
+          };
+        });
         return recomputeSeasonalWorkerPayroll({
           ...worker,
           dailyRate: effectiveRate,
@@ -1122,7 +1347,16 @@ export function syncSeasonalWorkerForMonth(
           periodRecords: syncedRecords,
           monthlyAttendance: {
             ...(worker.monthlyAttendance || {}),
-            [monthKey]: builtMonthly,
+            [monthKey]: {
+              monthKey,
+              month,
+              year,
+              totalWorkDays: roundedDays,
+              totalOtHours: sumOt,
+              days: reconstructedDays,
+              lastSubmittedAt: new Date().toISOString(),
+              submittedBy: 'ADMIN',
+            },
           },
         });
       }
@@ -1266,7 +1500,7 @@ export function resolveWorkerTimesheetForReceipt(
  * - Nếu chu kỳ chưa chấm: MẶC ĐỊNH SỐ CÔNG = 0, OT = 0, TẠM ỨNG = 0 (bắt buộc người dùng chấm lại, không để sẵn)
  */
 export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPeriodOption): SeasonalWorker {
-  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
+  const worker = sanitizeSeasonalWorkerAttendance(rawWorker);
   const pKey = period.periodKey;
   const existingRecord = worker.periodRecords?.[pKey];
   const pYear = period.year || parseInt(period.periodKey?.split('-')[0], 10) || 2026;
@@ -1531,10 +1765,11 @@ export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPer
  * đồng thời đồng bộ thống nhất đơn giá ngày công trên toàn bộ các kỳ
  */
 export function recordWorkerPeriod(
-  worker: SeasonalWorker,
+  rawWorker: SeasonalWorker,
   period: PayrollPeriodOption,
   patch: Partial<SeasonalWorker>
 ): SeasonalWorker {
+  const worker = sanitizeSeasonalWorkerAttendance(rawWorker);
   const pKey = period.periodKey;
 
   const periodDailyRate =
@@ -1548,19 +1783,19 @@ export function recordWorkerPeriod(
   const monthKey = `${pYear}-${mStr}`;
   const existingPeriodRec = worker.periodRecords?.[pKey];
   const existingMonthRec = worker.monthlyAttendance?.[monthKey];
-  const isSameAttendanceMonth =
-    worker.attendanceMonth === pMonth && worker.attendanceYear === pYear;
+  const hasValidMonthDays =
+    existingMonthRec && existingMonthRec.days && Object.keys(existingMonthRec.days).length > 0;
 
-  const fallbackWorkDays =
-    existingPeriodRec?.actualWorkDays ??
-    (period.cycleType === '1_MONTH' ? existingMonthRec?.totalWorkDays : undefined) ??
-    (isSameAttendanceMonth ? worker.actualWorkDays : 0) ??
-    0;
-  const fallbackOtHours =
-    existingPeriodRec?.overtimeHours ??
-    (period.cycleType === '1_MONTH' ? existingMonthRec?.totalOtHours : undefined) ??
-    (isSameAttendanceMonth ? worker.overtimeHours : 0) ??
-    0;
+  const fallbackWorkDays = existingPeriodRec?.isRecorded
+    ? existingPeriodRec.actualWorkDays
+    : period.cycleType === '1_MONTH' && hasValidMonthDays
+    ? existingMonthRec?.totalWorkDays
+    : 0;
+  const fallbackOtHours = existingPeriodRec?.isRecorded
+    ? existingPeriodRec.overtimeHours
+    : period.cycleType === '1_MONTH' && hasValidMonthDays
+    ? existingMonthRec?.totalOtHours
+    : 0;
 
   // Xác định số ngày công và giờ OT mục tiêu (tuyệt đối không lấy công của tháng khác đắp sang kỳ đang sửa)
   const targetDays =
@@ -1575,8 +1810,7 @@ export function recordWorkerPeriod(
   // Tự động đồng bộ và sinh weeklyTimesheet tương ứng để số ngày công luôn được ghi nhận vào lịch tháng
   let effectiveTimesheet =
     patch.weeklyTimesheet ||
-    existingPeriodRec?.weeklyTimesheet ||
-    (isSameAttendanceMonth ? worker.weeklyTimesheet : undefined);
+    (existingPeriodRec?.isRecorded ? existingPeriodRec.weeklyTimesheet : undefined);
   const currentTimesheetWorkUnits = effectiveTimesheet?.reduce((sum, d) => sum + (d.workUnits || 0), 0) || 0;
   if (!effectiveTimesheet || effectiveTimesheet.length === 0 || Math.abs(currentTimesheetWorkUnits - targetDays) > 0.01) {
     effectiveTimesheet = createTimesheetForPeriod(period, targetDays, targetOT);
@@ -2197,252 +2431,43 @@ const rawSeasonalWorkers: SeasonalWorker[] = [
 ];
 
 // Khởi tạo các bản ghi chấm công mẫu theo từng kỳ (W1, W2, BI1)
-// CỰC KỲ QUAN TRỌNG: Các tuần W3, W4, W5 và BI2 CHƯA CHẤM CÔNG (mặc định = 0 công để người dùng chấm lại)
-export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((rawW, index) => {
-  const w: SeasonalWorker = {
-    ...rawW,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-  };
-  const w1Days = index % 3 === 0 ? 5.5 : 6;
-  const w1OT = (index % 4) * 2;
-  const w1Advance = index % 2 === 0 ? 1000000 : 500000;
-
-  const w2Days = index % 4 === 0 ? 5 : 6;
-  const w2OT = (index % 3) * 2;
-  const w2Advance = index % 3 === 0 ? 800000 : 500000;
-
-  // W1 (Tuần 1: 01/09 - 07/09)
-  const w1Calc = recomputeSeasonalWorkerPayroll({
-    ...w,
-    actualWorkDays: w1Days,
-    overtimeHours: w1OT,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    advancePayment: w1Advance,
-  });
-
-  const p1Periods = getPayrollPeriods(2026, 9, '1_WEEK');
-  const w1Period = p1Periods.find((p) => p.id === 'W1') || p1Periods[0];
-  const w1Timesheet = createTimesheetForPeriod(w1Period, w1Days, w1OT);
-
-  const w1Record: SeasonalPeriodRecord = {
-    periodKey: '2026-09_W1',
-    periodLabel: w1Period.label,
-    cycleType: '1_WEEK',
-    isRecorded: true,
-    dailyRate: w.dailyRate,
-    actualWorkDays: w1Days,
-    salaryByDays: w1Calc.salaryByDays,
-    overtimeHours: w1OT,
-    overtimePay: w1Calc.overtimePay,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    totalIncome: w1Calc.totalIncome,
-    hasTaxCommitment: w.hasTaxCommitment,
-    personalIncomeTax: w1Calc.personalIncomeTax,
-    advancePayment: w1Advance,
-    totalDeductions: w1Calc.totalDeductions,
-    netSalary: w1Calc.netSalary,
-    weeklyTimesheet: w1Timesheet,
-    notes: 'Đã hoàn thành thi công Tuần 1',
-  };
-
-  // W2 (Tuần 2)
-  const w2Calc = recomputeSeasonalWorkerPayroll({
-    ...w,
-    actualWorkDays: w2Days,
-    overtimeHours: w2OT,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    advancePayment: w2Advance,
-  });
-
-  const w2Period = p1Periods.find((p) => p.id === 'W2') || p1Periods[1];
-  const w2Timesheet = createTimesheetForPeriod(w2Period, w2Days, w2OT);
-
-  const w2Record: SeasonalPeriodRecord = {
-    periodKey: '2026-09_W2',
-    periodLabel: w2Period.label,
-    cycleType: '1_WEEK',
-    isRecorded: true,
-    dailyRate: w.dailyRate,
-    actualWorkDays: w2Days,
-    salaryByDays: w2Calc.salaryByDays,
-    overtimeHours: w2OT,
-    overtimePay: w2Calc.overtimePay,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    totalIncome: w2Calc.totalIncome,
-    hasTaxCommitment: w.hasTaxCommitment,
-    personalIncomeTax: w2Calc.personalIncomeTax,
-    advancePayment: w2Advance,
-    totalDeductions: w2Calc.totalDeductions,
-    netSalary: w2Calc.netSalary,
-    weeklyTimesheet: w2Timesheet,
-    notes: 'Đang thi công Tuần 2',
-  };
-
-  // Đợt 1 (01/09 - 15/09) của Lương 2 tuần
-  const bi1Days = 12;
-  const bi1OT = 8;
-  const bi1Advance = 1500000;
-  const bi1Calc = recomputeSeasonalWorkerPayroll({
-    ...w,
-    actualWorkDays: bi1Days,
-    overtimeHours: bi1OT,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    advancePayment: bi1Advance,
-  });
-
-  const bi1Periods = getPayrollPeriods(2026, 9, '2_WEEKS');
-  const bi1Period = bi1Periods[0];
-  const bi1Timesheet = createTimesheetForPeriod(bi1Period, bi1Days, bi1OT);
-
-  const bi1Record: SeasonalPeriodRecord = {
-    periodKey: '2026-09_BI1',
-    periodLabel: bi1Period.label,
-    cycleType: '2_WEEKS',
-    isRecorded: true,
-    dailyRate: w.dailyRate,
-    actualWorkDays: bi1Days,
-    salaryByDays: bi1Calc.salaryByDays,
-    overtimeHours: bi1OT,
-    overtimePay: bi1Calc.overtimePay,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    totalIncome: bi1Calc.totalIncome,
-    hasTaxCommitment: w.hasTaxCommitment,
-    personalIncomeTax: bi1Calc.personalIncomeTax,
-    advancePayment: bi1Advance,
-    totalDeductions: bi1Calc.totalDeductions,
-    netSalary: bi1Calc.netSalary,
-    weeklyTimesheet: bi1Timesheet,
-    notes: 'Kỳ lương đợt 1 nửa đầu tháng 9',
-  };
-
-  // Bản ghi Cả Tháng 09/2026
-  const m9Days = w.actualWorkDays || 25;
-  const m9OT = w.overtimeHours || 16;
-  const m9Calc = recomputeSeasonalWorkerPayroll({
-    ...w,
-    actualWorkDays: m9Days,
-    overtimeHours: m9OT,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-  });
-  const m9Period = getMonthlyPeriodForMonth(2026, 9)[0];
-  const m9Timesheet = createTimesheetForPeriod(m9Period, m9Days, m9OT);
-  const m9Record: SeasonalPeriodRecord = {
-    periodKey: '2026-09_MONTH',
-    periodLabel: m9Period.label,
-    cycleType: '1_MONTH',
-    isRecorded: true,
-    dailyRate: w.dailyRate,
-    actualWorkDays: m9Days,
-    salaryByDays: m9Calc.salaryByDays,
-    overtimeHours: m9OT,
-    overtimePay: m9Calc.overtimePay,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-    totalIncome: m9Calc.totalIncome,
-    hasTaxCommitment: w.hasTaxCommitment,
-    personalIncomeTax: m9Calc.personalIncomeTax,
-    advancePayment: m9Calc.advancePayment,
-    totalDeductions: m9Calc.totalDeductions,
-    netSalary: m9Calc.netSalary,
-    weeklyTimesheet: m9Timesheet,
-    notes: w.notes,
-  };
-
-  // Bản ghi Cả Tháng 10/2026
-  const m10Days = index % 2 === 0 ? 26 : 25;
-  const m10OT = (index % 5) * 4 + 8;
-  const m10Calc = recomputeSeasonalWorkerPayroll({
-    ...w,
-    actualWorkDays: m10Days,
-    overtimeHours: m10OT,
-    mealAllowance: 0,
-    travelSafetyAllowance: 0,
-    otherBonus: 0,
-  });
+// Mặc định khởi tạo toàn bộ công nhân thời vụ ở trạng thái 0 công (Chưa chấm công) để tuyệt đối không tự nhảy công
+export const initialSeasonalWorkers: SeasonalWorker[] = rawSeasonalWorkers.map((rawW) => {
   const m10Period = getMonthlyPeriodForMonth(2026, 10)[0];
-  const m10Timesheet = createTimesheetForPeriod(m10Period, m10Days, m10OT);
-  const m10Record: SeasonalPeriodRecord = {
-    periodKey: '2026-10_MONTH',
-    periodLabel: m10Period.label,
-    cycleType: '1_MONTH',
-    isRecorded: true,
-    dailyRate: w.dailyRate,
-    actualWorkDays: m10Days,
-    salaryByDays: m10Calc.salaryByDays,
-    overtimeHours: m10OT,
-    overtimePay: m10Calc.overtimePay,
+  const emptySheet = createEmptyTimesheetForPeriod(m10Period);
+  const zeroCalc = recomputeSeasonalWorkerPayroll({
+    ...rawW,
+    actualWorkDays: 0,
+    overtimeHours: 0,
     mealAllowance: 0,
     travelSafetyAllowance: 0,
     otherBonus: 0,
-    totalIncome: m10Calc.totalIncome,
-    hasTaxCommitment: w.hasTaxCommitment,
-    personalIncomeTax: m10Calc.personalIncomeTax,
-    advancePayment: m10Calc.advancePayment,
-    totalDeductions: m10Calc.totalDeductions,
-    netSalary: m10Calc.netSalary,
-    weeklyTimesheet: m10Timesheet,
-    notes: w.notes,
-  };
-
-  const periodRecords: { [key: string]: SeasonalPeriodRecord } = {
-    '2026-09_W1': w1Record,
-    '2026-09_W2': w2Record,
-    '2026-09_BI1': bi1Record,
-    '2026-09_MONTH': m9Record,
-    '2026-10_MONTH': m10Record,
-  };
-
-  const monthlyAttendance: { [monthKey: string]: any } = {
-    '2026-09': buildSeasonalMonthlyAttendanceRecord(w, 9, 2026, m9Days, m9OT),
-    '2026-10': buildSeasonalMonthlyAttendanceRecord(w, 10, 2026, m10Days, m10OT),
-  };
+    advancePayment: 0,
+    selectedForAttendance: false,
+  });
 
   return {
-    ...m10Calc,
-    selectedForAttendance: true,
+    ...zeroCalc,
+    selectedForAttendance: false,
     payrollCycleType: '1_MONTH',
     currentPeriodKey: '2026-10_MONTH',
     currentWeekId: 'M1',
     currentWeekLabel: m10Period.label,
     attendanceMonth: 10,
     attendanceYear: 2026,
-    weeklyTimesheet: m10Timesheet,
-    periodRecords,
-    monthlyAttendance,
+    weeklyTimesheet: emptySheet,
+    periodRecords: {},
+    monthlyAttendance: {},
   };
 });
 
 /**
- * Đảm bảo mọi nhân sự thời vụ có sẵn lịch sử Tháng 9 và Tháng 10 năm 2026 nếu chưa có,
- * giúp người dùng bấm xem lại Tháng 9 / Tháng 10 luôn có đầy đủ công & lương.
+ * Làm sạch dữ liệu công nhân thời vụ, loại bỏ các bản ghi chấm công tự động (25-26 công)
+ * và đồng bộ đơn giá ngày công thống nhất mà KHÔNG tự động gán công mẫu.
  */
 export function ensureSeasonalHistoricalMonths(rawWorker: SeasonalWorker): SeasonalWorker {
-  const worker = sanitizeLegacySeasonalAllowances(rawWorker);
+  const worker = sanitizeSeasonalWorkerAttendance(rawWorker);
   const isTeamWorker = worker.payrollCycleType === 'TEAM';
-  const codeMatch = !isTeamWorker
-    ? initialSeasonalWorkers.find(
-        (x) =>
-          x.code === worker.code &&
-          x.fullName.trim().toLowerCase() === (worker.fullName || '').trim().toLowerCase()
-      )
-    : undefined;
   const unifiedRate = getUnifiedWorkerDailyRate(worker);
   const configuredAllowances = !isTeamWorker
     ? {
@@ -2459,51 +2484,11 @@ export function ensureSeasonalHistoricalMonths(rawWorker: SeasonalWorker): Seaso
     configuredAllowances
   );
 
-  if (!nextMonthly['2026-09'] && codeMatch?.monthlyAttendance?.['2026-09']) {
-    nextMonthly['2026-09'] = codeMatch.monthlyAttendance['2026-09'];
-  }
-  if (!nextMonthly['2026-10'] && codeMatch?.monthlyAttendance?.['2026-10']) {
-    nextMonthly['2026-10'] = codeMatch.monthlyAttendance['2026-10'];
-  }
-  if (!nextPeriods['2026-09_MONTH'] && codeMatch?.periodRecords?.['2026-09_MONTH']) {
-    nextPeriods['2026-09_MONTH'] = {
-      ...codeMatch.periodRecords['2026-09_MONTH'],
-      dailyRate: unifiedRate > 0 ? unifiedRate : codeMatch.periodRecords['2026-09_MONTH'].dailyRate,
-    };
-  }
-  if (!nextPeriods['2026-10_MONTH'] && codeMatch?.periodRecords?.['2026-10_MONTH']) {
-    nextPeriods['2026-10_MONTH'] = {
-      ...codeMatch.periodRecords['2026-10_MONTH'],
-      dailyRate: unifiedRate > 0 ? unifiedRate : codeMatch.periodRecords['2026-10_MONTH'].dailyRate,
-    };
-  }
-
-  // Làm sạch bản ghi Tháng 11/2026 chỉ khi mang dấu thời gian khởi tạo mẫu mặc định (2026-09-01T00:00:00.000Z)
-  const novRec = nextMonthly['2026-11'];
-  if (novRec && novRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z') {
-    delete nextMonthly['2026-11'];
-    Object.keys(nextPeriods).forEach((k) => {
-      if (
-        k.startsWith('2026-11_') &&
-        nextPeriods[k]?.cycleType !== 'TEAM' &&
-        worker.payrollCycleType !== 'TEAM' &&
-        !nextPeriods[k]?.isRecorded
-      ) {
-        delete nextPeriods[k];
-      }
-    });
-  }
-
   return {
     ...worker,
     dailyRate: unifiedRate > 0 ? unifiedRate : worker.dailyRate,
     monthlyAttendance: nextMonthly,
-    periodRecords: syncPeriodRecordsDailyRate(
-      nextPeriods,
-      unifiedRate,
-      isTeamWorker,
-      configuredAllowances
-    ),
+    periodRecords: nextPeriods,
   };
 }
 

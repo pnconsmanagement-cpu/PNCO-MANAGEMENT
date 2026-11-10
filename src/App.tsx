@@ -990,10 +990,19 @@ export default function App() {
     });
 
     const cloudKeys = new Set<string>();
+    let hasCleanedPhantomRecord = false;
     cloudList.forEach((rawCw) => {
       if (!rawCw) return;
       if (deletedSeaSet.has(String(rawCw.id)) || (rawCw.code && deletedSeaSet.has(String(rawCw.code)))) return;
       const cw = materializeSeasonalMonthlyAttendance(rawCw, periodCodeStr);
+      if (
+        cw.monthlyAttendance &&
+        Object.values(cw.monthlyAttendance).some(
+          (r: any) => r?.lastSubmittedAt === '2026-11-10T00:00:00.000Z' && Number(r?.totalWorkDays || 0) === 0
+        )
+      ) {
+        hasCleanedPhantomRecord = true;
+      }
       const key = findMatchingKeyInMap(cw, localMap);
       cloudKeys.add(key);
       const existing = localMap.get(key);
@@ -1286,6 +1295,15 @@ export default function App() {
         needsPushToCloud = true;
       }
     });
+
+    if (hasCleanedPhantomRecord && typeof window !== 'undefined') {
+      try {
+        if (sessionStorage.getItem('pncons_seasonal_phantom_cleaned_v1') !== '1') {
+          sessionStorage.setItem('pncons_seasonal_phantom_cleaned_v1', '1');
+          needsPushToCloud = true;
+        }
+      } catch {}
+    }
 
     const mergedList = cleanSeasonalList(Array.from(resultMap.values()), activeMonth, activeYear);
     return { mergedList, needsPushToCloud };

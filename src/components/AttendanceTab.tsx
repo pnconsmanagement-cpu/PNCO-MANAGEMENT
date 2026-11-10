@@ -95,130 +95,18 @@ function getInitials(fullName: string): string {
  */
 function ensureMonthlyDaysForWorker(
   existingRecord: MonthlyAttendanceRecord | undefined,
-  month: number,
-  year: number,
-  daysMeta: DayMeta[],
+  _month: number,
+  _year: number,
+  _daysMeta: DayMeta[],
   _actualWorkDays: number,
   _overtimeHours: number,
-  paidLeaveDays: number = 0,
-  unpaidLeaveDays: number = 0
+  _paidLeaveDays: number = 0,
+  _unpaidLeaveDays: number = 0
 ): { [dayNumber: number]: DailyAttendanceDetail } {
-  if (!existingRecord) {
+  if (!existingRecord || !existingRecord.days || Object.keys(existingRecord.days).length === 0) {
     return {};
   }
-  if (existingRecord.days && Object.keys(existingRecord.days).length > 0) {
-    return existingRecord.days;
-  }
-
-  // Nếu bản ghi tháng là 11/2026 mà không có chi tiết days -> trả về trống để không tự tạo ngày công giả
-  if (month === 11 && year === 2026) {
-    return {};
-  }
-
-  const recWork = Number(existingRecord.totalWorkDays || 0);
-  const recOt = Number(existingRecord.totalOtHours || 0);
-
-  // Nếu bản ghi tháng có 0 công và 0 OT -> để trống toàn bộ (-)
-  if (recWork <= 0 && recOt <= 0) {
-    return {};
-  }
-
-  const generated: { [dayNumber: number]: DailyAttendanceDetail } = {};
-  let remWork = Math.max(0, recWork);
-  let remLeave = Math.max(0, Math.round(Number(paidLeaveDays) || 0));
-  let remAbsent = Math.max(0, Math.round(Number(unpaidLeaveDays) || 0));
-  let remOt = Math.max(0, Math.round(recOt));
-
-  for (const dm of daysMeta) {
-    if (dm.isSunday) {
-      if (remAbsent > 0) {
-        generated[dm.day] = {
-          day: dm.day,
-          dateStr: dm.dateStr,
-          workUnits: 0,
-          statusType: 'ABSENT',
-          otHours: 0,
-        };
-        remAbsent -= 1;
-      }
-      continue;
-    }
-
-    if (remWork >= 1) {
-      generated[dm.day] = {
-        day: dm.day,
-        dateStr: dm.dateStr,
-        workUnits: 1,
-        statusType: 'FULL',
-        otHours: 0,
-      };
-      remWork -= 1;
-    } else if (remWork >= 0.5) {
-      generated[dm.day] = {
-        day: dm.day,
-        dateStr: dm.dateStr,
-        workUnits: 0.5,
-        statusType: 'HALF',
-        otHours: 0,
-      };
-      remWork = 0;
-    } else if (remLeave > 0) {
-      generated[dm.day] = {
-        day: dm.day,
-        dateStr: dm.dateStr,
-        workUnits: 0,
-        statusType: 'LEAVE',
-        otHours: 0,
-      };
-      remLeave -= 1;
-    } else if (remAbsent > 0) {
-      generated[dm.day] = {
-        day: dm.day,
-        dateStr: dm.dateStr,
-        workUnits: 0,
-        statusType: 'ABSENT',
-        otHours: 0,
-      };
-      remAbsent -= 1;
-    }
-  }
-
-  if (remWork > 0) {
-    for (const dm of daysMeta) {
-      if (remWork <= 0) break;
-      if (!generated[dm.day] || generated[dm.day].workUnits === 0) {
-        const addUnit = remWork >= 1 ? 1 : 0.5;
-        generated[dm.day] = {
-          day: dm.day,
-          dateStr: dm.dateStr,
-          workUnits: addUnit,
-          statusType: addUnit === 1 ? 'FULL' : 'HALF',
-          otHours: generated[dm.day]?.otHours || 0,
-        };
-        remWork -= addUnit;
-      }
-    }
-  }
-
-  const workingDayNums = Object.keys(generated)
-    .map(Number)
-    .filter((d) => (generated[d]?.workUnits || 0) > 0);
-
-  let pass = 0;
-  while (remOt > 0 && workingDayNums.length > 0 && pass < 10) {
-    for (const dNum of workingDayNums) {
-      if (remOt <= 0) break;
-      const addOt = Math.min(remOt, pass === 0 ? 3 : 1);
-      generated[dNum] = {
-        ...generated[dNum],
-        otHours: (generated[dNum].otHours || 0) + addOt,
-      };
-      remOt -= addOt;
-    }
-    pass++;
-  }
-
-  return generated;
+  return existingRecord.days;
 }
 
 /**

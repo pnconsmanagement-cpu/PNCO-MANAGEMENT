@@ -204,7 +204,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       const activeWorkerState = getWorkerForPeriod(worker, activePeriod);
       return activeWorkerState.weeklyTimesheet || createEmptyTimesheetForPeriod(activePeriod);
     }
-    return createTimesheetForPeriod(activePeriod, 6, 0);
+    return createEmptyTimesheetForPeriod(activePeriod);
   });
 
   // Form state

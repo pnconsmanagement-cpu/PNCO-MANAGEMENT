@@ -9,7 +9,10 @@ import {
   PayrollRecord,
   AttendanceRecord,
 } from '../types';
-import { buildSeasonalMonthlyAttendanceRecord } from '../data/mockSeasonalWorkers';
+import {
+  sanitizeSeasonalWorkerAttendance,
+  isPhantomAutoSeasonalRecord,
+} from '../data/mockSeasonalWorkers';
 import {
   buildMonthlyAttendanceRecord,
   sanitizeEmployeeMonthlyAttendance,
@@ -41,99 +44,44 @@ export const isValidDailyAttendanceMap = (obj: any): boolean => {
  */
 export const isLeakedNov2026Record = (novRec: any, _octRec?: any): boolean => {
   if (!novRec) return false;
-  // Chỉ coi là bản ghi mẫu bị rò rỉ nếu mang dấu thời gian khởi tạo mẫu mặc định
-  if (novRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z') {
+  if (isPhantomAutoSeasonalRecord(novRec)) {
     return true;
   }
   return false;
 };
 
 /**
- * Đảm bảo dữ liệu ngày công & tăng ca của công nhân thời vụ trong từng tháng đã có
- * được cụ thể hóa đầy đủ vào monthlyAttendance[monthKey].days mà TUYỆT ĐỐI KHÔNG sao chép công từ tháng này sang tháng khác.
+ * Làm sạch dữ liệu ngày công & tăng ca của công nhân thời vụ trong từng tháng,
+ * loại bỏ hoàn toàn các bản ghi tự sinh 25-26 công và TUYỆT ĐỐI KHÔNG tự sinh lưới ngày công giả từ số tổng.
  */
 export const materializeSeasonalMonthlyAttendance = (
   worker: SeasonalWorker,
   _periodCode?: string
 ): SeasonalWorker => {
-  const nextMonthly: Record<string, any> = { ...(worker.monthlyAttendance || {}) };
-  const nextPeriodRecords: Record<string, any> = { ...(worker.periodRecords || {}) };
+  const sanitized = sanitizeSeasonalWorkerAttendance(worker);
+  const nextMonthly: Record<string, any> = { ...(sanitized.monthlyAttendance || {}) };
+  const nextPeriodRecords: Record<string, any> = { ...(sanitized.periodRecords || {}) };
 
-  // Loại bỏ bản ghi Tháng 11/2026 chỉ khi đó là bản ghi mẫu mặc định (2026-09-01T00:00:00.000Z)
-  if (
-    nextMonthly['2026-11'] &&
-    isLeakedNov2026Record(nextMonthly['2026-11'], nextMonthly['2026-10'])
-  ) {
-    delete nextMonthly['2026-11'];
-    Object.keys(nextPeriodRecords).forEach((k) => {
-      if (
-        k.startsWith('2026-11_') &&
-        worker.payrollCycleType !== 'TEAM' &&
-        nextPeriodRecords[k]?.cycleType !== 'TEAM' &&
-        !nextPeriodRecords[k]?.isRecorded
-      ) {
-        delete nextPeriodRecords[k];
+  // Nếu tháng nào trong monthlyAttendance không có chi tiết ngày hợp lệ -> đặt về 0 công (không tự sinh ngày công giả)
+  if (sanitized.payrollCycleType !== 'TEAM') {
+    Object.entries(nextMonthly).forEach(([mKey, mRec]) => {
+      if (!mRec) return;
+      if (!isValidDailyAttendanceMap(mRec.days)) {
+        nextMonthly[mKey] = {
+          ...mRec,
+          totalWorkDays: 0,
+          totalOtHours: 0,
+          days: {},
+        };
       }
     });
   }
 
-  const w: SeasonalWorker = {
-    ...worker,
+  return {
+    ...sanitized,
     monthlyAttendance: nextMonthly,
     periodRecords: nextPeriodRecords,
   };
-
-  // 1. Phục hồi các tháng trong monthlyAttendance có totalWorkDays > 0 hoặc totalOtHours > 0 nhưng bị mất chi tiết days
-  if (w.payrollCycleType !== 'TEAM') {
-    Object.entries(w.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
-      if (!mRec) return;
-      const mNum = Number(mRec.month || mKey.split('-')[1] || 0);
-      const yNum = Number(mRec.year || mKey.split('-')[0] || 0);
-      if (!mNum || !yNum) return;
-      const workDays = Number(mRec.totalWorkDays || 0);
-      const otHours = Number(mRec.totalOtHours || 0);
-      if ((workDays > 0 || otHours > 0) && !isValidDailyAttendanceMap(mRec.days)) {
-        w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
-          w,
-          mNum,
-          yNum,
-          workDays,
-          otHours,
-          mRec.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
-        );
-      }
-    });
-  }
-
-  // 2. Đồng bộ từ periodRecords của các tháng sang monthlyAttendance nếu tháng đó chưa có chi tiết ngày (không áp dụng cho Tổ Đội)
-  if (w.payrollCycleType !== 'TEAM') {
-    Object.entries(w.periodRecords || {}).forEach(([pKey, pRec]) => {
-      if (!pRec || pRec.cycleType === 'TEAM') return;
-      const match = pKey.match(/^(\d{4})-(\d{2})_(.+)$/);
-      if (!match) return;
-      const yNum = Number(match[1]);
-      const mNum = Number(match[2]);
-      const suffix = match[3];
-      const mKey = `${yNum}-${String(mNum).padStart(2, '0')}`;
-      const workDays = Number(pRec.actualWorkDays || 0);
-      const otHours = Number(pRec.overtimeHours || 0);
-      if (suffix === 'MONTH' && (workDays > 0 || otHours > 0)) {
-        const existing = w.monthlyAttendance![mKey];
-        if (!existing || (!isValidDailyAttendanceMap(existing.days) && Number(existing.totalWorkDays || 0) === 0)) {
-          w.monthlyAttendance![mKey] = buildSeasonalMonthlyAttendanceRecord(
-            w,
-            mNum,
-            yNum,
-            workDays,
-            otHours,
-            existing?.lastSubmittedAt || '2026-10-01T00:00:00.000Z'
-          );
-        }
-      }
-    });
-  }
-
-  return w;
 };
 
 
@@ -1343,11 +1291,12 @@ export const loadSeasonalWorkersFromSupabase = async (
           const monthKey = `${yNum}-${mStr}`;
           if (!w.monthlyAttendance) w.monthlyAttendance = {};
 
-          // Nếu là bản ghi Tháng 11/2026 mẫu mặc định bị rò rỉ -> bỏ qua
+          // Nếu là bản ghi tự động nhảy công (25-26 công từ ngày 1..26 kể cả Chủ Nhật hoặc dấu thời gian mẫu) -> xóa khỏi attendance_records và bỏ qua
           if (
-            mNum === 11 &&
-            yNum === 2026 &&
-            isLeakedNov2026Record(att, w.monthlyAttendance['2026-10'] || octAtt)
+            isPhantomAutoSeasonalRecord(att) ||
+            (mNum === 11 &&
+              yNum === 2026 &&
+              isLeakedNov2026Record(att, w.monthlyAttendance['2026-10'] || octAtt))
           ) {
             if (att.id) leakedAttIdsToDelete.push(String(att.id));
             return;
@@ -1382,16 +1331,6 @@ export const loadSeasonalWorkersFromSupabase = async (
                 submittedBy: 'WORKER',
               };
             }
-          } else if (!existingRec && (attWorkDays > 0 || attOtHours > 0) && w.payrollCycleType !== 'TEAM') {
-            // Nếu bảng attendance_records có lưu tổng ngày công / tăng ca nhưng thiếu chi tiết từng ngày -> tái tạo chi tiết ngày
-            w.monthlyAttendance[monthKey] = buildSeasonalMonthlyAttendanceRecord(
-              w,
-              mNum,
-              yNum,
-              attWorkDays,
-              attOtHours,
-              att.updated_at || '2026-10-01T00:00:00.000Z'
-            );
           }
         });
       });
