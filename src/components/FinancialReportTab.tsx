@@ -38,7 +38,7 @@ interface FinancialReportTabProps {
 
 interface PeriodBreakdownRow {
   id: string;
-  systemType: '1_WEEK' | '2_WEEKS' | '1_MONTH';
+  systemType: '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT';
   systemLabel: string;
   periodLabel: string;
   dateRangeLabel: string;
@@ -76,9 +76,29 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
   // Lựa chọn dự án: Tất cả hoặc từng dự án cụ thể
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('ALL');
   // Bộ lọc hệ lương trong bảng thống kê chi tiết
-  const [cycleSystemFilter, setCycleSystemFilter] = useState<'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH'>('ALL');
+  const [cycleSystemFilter, setCycleSystemFilter] = useState<
+    'ALL' | '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT'
+  >('ALL');
   // Chỉ hiện các kỳ có phát sinh lương (> 0đ) hoặc hiện tất cả các tuần/đợt trong tháng
   const [onlyActivePeriods, setOnlyActivePeriods] = useState<boolean>(false);
+
+  // Trạng thái điều khiển Biểu đồ cột thống kê lương (Mục 3 cuối trang)
+  const [chartViewMode, setChartViewMode] = useState<'OVERVIEW' | 'PERIOD_DETAIL' | 'PROJECTS'>('OVERVIEW');
+  const [chartMetric, setChartMetric] = useState<'NET' | 'GROSS'>('NET');
+  const [yearlyBarStyle, setYearlyBarStyle] = useState<'GROUPED' | 'STACKED'>('GROUPED');
+  const [enabledChartSystems, setEnabledChartSystems] = useState<
+    Record<'1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT', boolean>
+  >({
+    '1_WEEK': true,
+    '2_WEEKS': true,
+    '1_MONTH': true,
+    TEAM: true,
+    PERMANENT: true,
+  });
+  const [hoveredMonth, setHoveredMonth] = useState<number | null>(null);
+  const [hoveredSystemId, setHoveredSystemId] = useState<
+    '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT' | null
+  >(null);
 
   const handleSelectMonthYear = (nextMonth: number, nextYear: number) => {
     setSelectedMonth(nextMonth);
@@ -231,7 +251,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       };
     });
 
-    // 3. HỆ LƯƠNG THÁNG (Công nhân Thời vụ Lương Tháng + Nhân sự Tổ Đội + Nhân viên Chính thức)
+    // 3. HỆ LƯƠNG THÁNG (Công nhân Thời vụ Lương Tháng)
     const monthlyPeriod = getPayrollPeriods(selectedYear, selectedMonth, '1_MONTH')[0];
     const monthRangeStr = monthlyPeriod
       ? `${monthlyPeriod.dates[0]} - ${monthlyPeriod.dates[monthlyPeriod.dates.length - 1]}`
@@ -245,7 +265,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     const seasonalMonthRow: PeriodBreakdownRow = {
       id: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}_SEA_MONTH`,
       systemType: '1_MONTH',
-      systemLabel: 'Lương Tháng',
+      systemLabel: '3. Lương Tháng (Thời Vụ)',
       periodLabel: `Thời vụ Lương Tháng (T${selectedMonth}/${selectedYear})`,
       dateRangeLabel: monthRangeStr,
       workerCount: monthlySeasonalWorkers.length,
@@ -272,6 +292,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       netSalary: monthlySeasonalWorkers.reduce((s, w) => s + Number(w.netSalary || 0), 0),
     };
 
+    // 4. HỆ LƯƠNG TỔ ĐỘI (Bản Lương Tổ Đội)
     const activeSeasonalTeams = activeSeasonal.filter(
       (w) =>
         w.payrollCycleType === 'TEAM' &&
@@ -281,8 +302,8 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     );
     const teamMonthRow: PeriodBreakdownRow = {
       id: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}_TEAM_MONTH`,
-      systemType: '1_MONTH',
-      systemLabel: 'Lương Tháng',
+      systemType: 'TEAM',
+      systemLabel: '4. Hệ Lương Tổ Đội',
       periodLabel: `Bản Lương Tổ Đội (T${selectedMonth}/${selectedYear})`,
       dateRangeLabel: monthRangeStr,
       workerCount: activeSeasonalTeams.length,
@@ -306,6 +327,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       netSalary: activeSeasonalTeams.reduce((s, w) => s + Number(w.netSalary || 0), 0),
     };
 
+    // 5. HỆ LƯƠNG NHÂN VIÊN CHÍNH THỨC (Bản Lương NV Chính Thức)
     const activePermanent = syncedEmployeesForSelectedMonth.filter(
       (e) =>
         e.status !== 'RESIGNED' &&
@@ -317,9 +339,9 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     );
     const permanentMonthRow: PeriodBreakdownRow = {
       id: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}_PERM_MONTH`,
-      systemType: '1_MONTH',
-      systemLabel: 'Lương Tháng',
-      periodLabel: `NV Chính Thức (T${selectedMonth}/${selectedYear})`,
+      systemType: 'PERMANENT',
+      systemLabel: '5. Hệ Lương Nhân Viên Chính Thức',
+      periodLabel: `Bản Lương NV Chính Thức (T${selectedMonth}/${selectedYear})`,
       dateRangeLabel: monthRangeStr,
       workerCount: activePermanent.length,
       totalWorkDays:
@@ -350,11 +372,9 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       netSalary: activePermanent.reduce((s, e) => s + Number(e.netSalary || 0), 0),
     };
 
-    const monthlyRows: PeriodBreakdownRow[] = [
-      seasonalMonthRow,
-      ...(teamMonthRow.totalIncome > 0 || !onlyActivePeriods ? [teamMonthRow] : []),
-      ...(permanentMonthRow.totalIncome > 0 || !onlyActivePeriods ? [permanentMonthRow] : []),
-    ];
+    const monthlyRows: PeriodBreakdownRow[] = [seasonalMonthRow];
+    const teamRows: PeriodBreakdownRow[] = [teamMonthRow];
+    const permanentRows: PeriodBreakdownRow[] = [permanentMonthRow];
 
     const sumRows = (rows: PeriodBreakdownRow[], maxWorkerCount: number) => ({
       workerCount: maxWorkerCount,
@@ -374,53 +394,87 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     const biWeeklyParticipatingCount = biWeeklyWorkers.filter(
       (w) => Number(w.actualWorkDays || 0) > 0 || Number(w.overtimeHours || 0) > 0
     ).length;
-    const monthlyParticipatingCount =
-      monthlySeasonalWorkers.length + activeSeasonalTeams.length + activePermanent.length;
 
     const weeklySummary = sumRows(weeklyRows, weeklyParticipatingCount);
     const biWeeklySummary = sumRows(biWeeklyRows, biWeeklyParticipatingCount);
-    const monthlySummary = sumRows(monthlyRows, monthlyParticipatingCount);
+    const monthlySummary = sumRows(monthlyRows, monthlySeasonalWorkers.length);
+    const teamSummary = sumRows(teamRows, activeSeasonalTeams.length);
+    const permanentSummary = sumRows(permanentRows, activePermanent.length);
 
     const grandTotal = {
       workerCount:
-        weeklySummary.workerCount + biWeeklySummary.workerCount + monthlySummary.workerCount,
+        weeklySummary.workerCount +
+        biWeeklySummary.workerCount +
+        monthlySummary.workerCount +
+        teamSummary.workerCount +
+        permanentSummary.workerCount,
       totalWorkDays:
         Math.round(
           (weeklySummary.totalWorkDays +
             biWeeklySummary.totalWorkDays +
-            monthlySummary.totalWorkDays) *
+            monthlySummary.totalWorkDays +
+            teamSummary.totalWorkDays +
+            permanentSummary.totalWorkDays) *
             10
         ) / 10,
       totalOtHours:
         Math.round(
           (weeklySummary.totalOtHours +
             biWeeklySummary.totalOtHours +
-            monthlySummary.totalOtHours) *
+            monthlySummary.totalOtHours +
+            teamSummary.totalOtHours +
+            permanentSummary.totalOtHours) *
             10
         ) / 10,
       salaryByDays:
-        weeklySummary.salaryByDays + biWeeklySummary.salaryByDays + monthlySummary.salaryByDays,
+        weeklySummary.salaryByDays +
+        biWeeklySummary.salaryByDays +
+        monthlySummary.salaryByDays +
+        teamSummary.salaryByDays +
+        permanentSummary.salaryByDays,
       overtimePay:
-        weeklySummary.overtimePay + biWeeklySummary.overtimePay + monthlySummary.overtimePay,
+        weeklySummary.overtimePay +
+        biWeeklySummary.overtimePay +
+        monthlySummary.overtimePay +
+        teamSummary.overtimePay +
+        permanentSummary.overtimePay,
       allowancesAndBonus:
         weeklySummary.allowancesAndBonus +
         biWeeklySummary.allowancesAndBonus +
-        monthlySummary.allowancesAndBonus,
+        monthlySummary.allowancesAndBonus +
+        teamSummary.allowancesAndBonus +
+        permanentSummary.allowancesAndBonus,
       totalIncome:
-        weeklySummary.totalIncome + biWeeklySummary.totalIncome + monthlySummary.totalIncome,
+        weeklySummary.totalIncome +
+        biWeeklySummary.totalIncome +
+        monthlySummary.totalIncome +
+        teamSummary.totalIncome +
+        permanentSummary.totalIncome,
       deductions:
-        weeklySummary.deductions + biWeeklySummary.deductions + monthlySummary.deductions,
+        weeklySummary.deductions +
+        biWeeklySummary.deductions +
+        monthlySummary.deductions +
+        teamSummary.deductions +
+        permanentSummary.deductions,
       netSalary:
-        weeklySummary.netSalary + biWeeklySummary.netSalary + monthlySummary.netSalary,
+        weeklySummary.netSalary +
+        biWeeklySummary.netSalary +
+        monthlySummary.netSalary +
+        teamSummary.netSalary +
+        permanentSummary.netSalary,
     };
 
     return {
       weeklyRows,
       biWeeklyRows,
       monthlyRows,
+      teamRows,
+      permanentRows,
       weeklySummary,
       biWeeklySummary,
       monthlySummary,
+      teamSummary,
+      permanentSummary,
       grandTotal,
     };
   }, [
@@ -429,7 +483,6 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     selectedYear,
     selectedMonth,
     selectedProjectFilter,
-    onlyActivePeriods,
   ]);
 
   // Tính toán nhân công chính thức
@@ -649,11 +702,13 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
         ? `Ca_Nam_${selectedYear}`
         : `Quy_${timeViewMode}_${selectedYear}`;
 
-    // Sheet 1: Thống kê Lương 1 Tuần, Lương 2 Tuần, Lương Tháng
+    // Sheet 1: Thống kê Lương 1 Tuần, Lương 2 Tuần, Lương Tháng, Hệ Lương Tổ Đội, Hệ Lương NV Chính Thức
     const allCycleRows = [
       ...cycleBreakdownStats.weeklyRows,
       ...cycleBreakdownStats.biWeeklyRows,
       ...cycleBreakdownStats.monthlyRows,
+      ...cycleBreakdownStats.teamRows,
+      ...cycleBreakdownStats.permanentRows,
     ];
     const cycleSheetData = [
       ...allCycleRows.map((r, idx) => ({
@@ -740,7 +795,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
     const wsSummary = XLSX.utils.json_to_sheet(summaryData);
     const wsProjects = XLSX.utils.json_to_sheet(projectData);
 
-    XLSX.utils.book_append_sheet(wb, wsCycles, 'ThongKe_Tuan_2Tuan_Thang');
+    XLSX.utils.book_append_sheet(wb, wsCycles, 'ThongKe_5_He_Luong');
     XLSX.utils.book_append_sheet(wb, wsSummary, 'TongHopChiPhiNhanSu');
     XLSX.utils.book_append_sheet(wb, wsProjects, 'ChiPhiTheoDuAn');
     XLSX.writeFile(wb, `Bao_Cao_Tai_Chinh_Nhan_Cong_Phuc_Nguyen_${timeLabel}.xlsx`);
@@ -774,6 +829,169 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
         : cycleBreakdownStats.monthlyRows,
     [cycleBreakdownStats.monthlyRows, onlyActivePeriods]
   );
+
+  const visibleTeamRows = useMemo(
+    () =>
+      onlyActivePeriods
+        ? cycleBreakdownStats.teamRows.filter((r) => r.totalIncome > 0 || r.totalWorkDays > 0)
+        : cycleBreakdownStats.teamRows,
+    [cycleBreakdownStats.teamRows, onlyActivePeriods]
+  );
+
+  const visiblePermanentRows = useMemo(
+    () =>
+      onlyActivePeriods
+        ? cycleBreakdownStats.permanentRows.filter((r) => r.totalIncome > 0 || r.totalWorkDays > 0)
+        : cycleBreakdownStats.permanentRows,
+    [cycleBreakdownStats.permanentRows, onlyActivePeriods]
+  );
+
+  // Định dạng số tiền rút gọn trên đầu cột & trục tung (VD: 82.5 tr, 1.25 tỷ)
+  const formatCompactVND = (amount: number): string => {
+    const val = Math.round(Number(amount) || 0);
+    if (val <= 0) return '0 đ';
+    if (val >= 1_000_000_000) {
+      const ty = val / 1_000_000_000;
+      return `${ty >= 10 ? ty.toFixed(1) : ty.toFixed(2).replace(/\.?0+$/, '')} tỷ`;
+    }
+    if (val >= 1_000_000) {
+      const tr = val / 1_000_000;
+      return `${tr >= 100 ? Math.round(tr) : Number(tr.toFixed(1))} tr`;
+    }
+    if (val >= 1_000) {
+      return `${Math.round(val / 1_000)}k`;
+    }
+    return `${val} đ`;
+  };
+
+  // Tính mức trần trục tung (Y-axis) tròn đẹp để chia 4 vạch lưới ngang
+  const computeNiceScaleMax = (rawMax: number): number => {
+    if (rawMax <= 0) return 10_000_000;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawMax)));
+    const normalized = rawMax / magnitude;
+    let niceFactor = 10;
+    if (normalized <= 1.2) niceFactor = 1.2;
+    else if (normalized <= 1.5) niceFactor = 1.5;
+    else if (normalized <= 2) niceFactor = 2;
+    else if (normalized <= 2.5) niceFactor = 2.5;
+    else if (normalized <= 3) niceFactor = 3;
+    else if (normalized <= 4) niceFactor = 4;
+    else if (normalized <= 5) niceFactor = 5;
+    else if (normalized <= 6) niceFactor = 6;
+    else if (normalized <= 8) niceFactor = 8;
+    return niceFactor * magnitude;
+  };
+
+  const toggleChartSystem = (sysKey: '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT') => {
+    setEnabledChartSystems((prev) => {
+      const next = { ...prev, [sysKey]: !prev[sysKey] };
+      const anyActive = Object.values(next).some(Boolean);
+      return anyActive ? next : prev;
+    });
+  };
+
+  // Tổng hợp dữ liệu biểu đồ cột cho cả 12 tháng trong năm đang chọn (5 Hệ Lương)
+  const yearlyMonthlyChartData = useMemo(() => {
+    const stdDays = config.standardWorkDays || 26;
+
+    return Array.from({ length: 12 }, (_, idx) => {
+      const m = idx + 1;
+      const mSeasonal = seasonalWorkers
+        .map((w) => syncSeasonalWorkerForMonth(w, m, selectedYear))
+        .filter(
+          (w) =>
+            (w.status || 'ACTIVE') === 'ACTIVE' &&
+            (selectedProjectFilter === 'ALL' ||
+              (w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase())))
+        );
+
+      // 1. Hệ Lương 1 Tuần
+      const mWeeklyWorkers = mSeasonal.filter((w) => (w.payrollCycleType || '1_MONTH') === '1_WEEK');
+      const mWeeklyPeriods = getPayrollPeriods(selectedYear, m, '1_WEEK');
+      let weeklyGross = 0;
+      let weeklyNet = 0;
+      mWeeklyPeriods.forEach((period) => {
+        mWeeklyWorkers.forEach((w) => {
+          const wp = getWorkerForPeriod(w, period);
+          const d = Number(wp.actualWorkDays || 0);
+          const ot = Number(wp.overtimeHours || 0);
+          if (d > 0 || ot > 0) {
+            weeklyGross += Number(wp.totalIncome || 0);
+            weeklyNet += Number(wp.netSalary || 0);
+          }
+        });
+      });
+
+      // 2. Hệ Lương 2 Tuần
+      const mBiWeeklyWorkers = mSeasonal.filter((w) => (w.payrollCycleType || '1_MONTH') === '2_WEEKS');
+      const mBiWeeklyPeriods = getPayrollPeriods(selectedYear, m, '2_WEEKS');
+      let biWeeklyGross = 0;
+      let biWeeklyNet = 0;
+      mBiWeeklyPeriods.forEach((period) => {
+        mBiWeeklyWorkers.forEach((w) => {
+          const wp = getWorkerForPeriod(w, period);
+          const d = Number(wp.actualWorkDays || 0);
+          const ot = Number(wp.overtimeHours || 0);
+          if (d > 0 || ot > 0) {
+            biWeeklyGross += Number(wp.totalIncome || 0);
+            biWeeklyNet += Number(wp.netSalary || 0);
+          }
+        });
+      });
+
+      // 3. Hệ Lương Tháng (Thời vụ)
+      const mMonthlyWorkers = mSeasonal.filter(
+        (w) =>
+          (w.payrollCycleType || '1_MONTH') === '1_MONTH' &&
+          (Number(w.actualWorkDays || 0) > 0 || Number(w.overtimeHours || 0) > 0)
+      );
+      const monthlyGross = mMonthlyWorkers.reduce((s, w) => s + Number(w.totalIncome || 0), 0);
+      const monthlyNet = mMonthlyWorkers.reduce((s, w) => s + Number(w.netSalary || 0), 0);
+
+      // 4. Hệ Lương Tổ Đội
+      const mTeamWorkers = mSeasonal.filter(
+        (w) =>
+          w.payrollCycleType === 'TEAM' &&
+          (Boolean(w.selectedForAttendance) ||
+            Number(w.actualWorkDays || 0) > 0 ||
+            Number(w.totalIncome || 0) > 0)
+      );
+      const teamGross = mTeamWorkers.reduce((s, w) => s + Number(w.totalIncome || 0), 0);
+      const teamNet = mTeamWorkers.reduce((s, w) => s + Number(w.netSalary || 0), 0);
+
+      // 5. Hệ Lương Nhân Viên Chính Thức
+      const mPermanent = employees
+        .map((e) => syncEmployeeForMonth(e, m, selectedYear, stdDays))
+        .filter(
+          (e) =>
+            e.status !== 'RESIGNED' &&
+            e.selectedForAttendance !== false &&
+            (Number(e.actualWorkDays || 0) > 0 ||
+              Number(e.overtimeHours || 0) > 0 ||
+              Number(e.paidLeaveDays || 0) > 0) &&
+            (selectedProjectFilter === 'ALL' ||
+              (e.department &&
+                e.department.toLowerCase().includes(selectedProjectFilter.toLowerCase())))
+        );
+      const permanentGross = mPermanent.reduce((s, e) => s + Number(e.totalIncome || 0), 0);
+      const permanentNet = mPermanent.reduce((s, e) => s + Number(e.netSalary || 0), 0);
+
+      return {
+        month: m,
+        label: `T${m}`,
+        fullLabel: `Tháng ${m}/${selectedYear}`,
+        values: {
+          '1_WEEK': { net: weeklyNet, gross: weeklyGross },
+          '2_WEEKS': { net: biWeeklyNet, gross: biWeeklyGross },
+          '1_MONTH': { net: monthlyNet, gross: monthlyGross },
+          TEAM: { net: teamNet, gross: teamGross },
+          PERMANENT: { net: permanentNet, gross: permanentGross },
+        },
+        totalNet: weeklyNet + biWeeklyNet + monthlyNet + teamNet + permanentNet,
+        totalGross: weeklyGross + biWeeklyGross + monthlyGross + teamGross + permanentGross,
+      };
+    });
+  }, [seasonalWorkers, employees, selectedYear, selectedProjectFilter, config.standardWorkDays]);
 
   return (
     <div className="space-y-4">
@@ -973,10 +1191,10 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
             </div>
             <div>
               <h3 className="font-black text-xs sm:text-sm text-slate-900 uppercase tracking-tight">
-                Bảng Thống Kê Lương Tuần, Lương 2 Tuần & Lương Tháng (T{selectedMonth}/{selectedYear})
+                Bảng Thống Kê Lương Tuần, Lương 2 Tuần, Lương Tháng, Tổ Đội & NV Chính Thức (T{selectedMonth}/{selectedYear})
               </h3>
               <p className="text-[11px] text-slate-500">
-                Tổng hợp chi tiết từng tuần thi công, từng đợt 2 tuần và kỳ lương tháng sau khi tính lương
+                Tổng hợp chi tiết từng tuần thi công, từng đợt 2 tuần, lương tháng thời vụ, hệ lương tổ đội và hệ lương nhân viên chính thức
               </p>
             </div>
           </div>
@@ -1049,7 +1267,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
             </div>
 
             {/* Lọc theo Hệ Lương */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-[11px]">
+            <div className="flex flex-wrap items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-[11px] gap-0.5">
               <button
                 type="button"
                 onClick={() => setCycleSystemFilter('ALL')}
@@ -1059,7 +1277,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                     : 'text-slate-600 hover:bg-white'
                 }`}
               >
-                Tất cả (3 hệ)
+                Tất cả (5 hệ)
               </button>
               <button
                 type="button"
@@ -1094,6 +1312,28 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
               >
                 Lương Tháng
               </button>
+              <button
+                type="button"
+                onClick={() => setCycleSystemFilter('TEAM')}
+                className={`px-2.5 py-1 rounded font-bold transition cursor-pointer ${
+                  cycleSystemFilter === 'TEAM'
+                    ? 'bg-purple-700 text-white shadow-2xs'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
+              >
+                Hệ Lương Tổ Đội
+              </button>
+              <button
+                type="button"
+                onClick={() => setCycleSystemFilter('PERMANENT')}
+                className={`px-2.5 py-1 rounded font-bold transition cursor-pointer ${
+                  cycleSystemFilter === 'PERMANENT'
+                    ? 'bg-indigo-700 text-white shadow-2xs'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
+              >
+                Hệ Lương NV Chính Thức
+              </button>
             </div>
 
             {/* Lọc chỉ hiện kỳ có phát sinh lương */}
@@ -1113,15 +1353,15 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
           </div>
         </div>
 
-        {/* 3 Thẻ Tóm Tắt Nhanh 3 Hệ Lương trong Tháng đang chọn */}
-        <div className="p-3.5 bg-slate-50/60 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+        {/* 5 Thẻ Tóm Tắt Nhanh 5 Hệ Lương trong Tháng đang chọn */}
+        <div className="p-3.5 bg-slate-50/60 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
           {/* Card 1: Hệ Lương 1 Tuần */}
           <div className="bg-white border border-sky-200 rounded-xl p-3 shadow-2xs flex items-center justify-between">
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-sky-600" />
                 <span className="font-bold text-sky-950 uppercase text-[11px]">
-                  1. Tổng Hệ Lương 1 Tuần (T{selectedMonth}/{selectedYear})
+                  1. Hệ Lương 1 Tuần (T{selectedMonth}/{selectedYear})
                 </span>
               </div>
               <div className="text-base font-black text-sky-900 font-mono mt-1">
@@ -1133,7 +1373,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                 {cycleBreakdownStats.weeklySummary.totalOtHours}h OT
               </div>
             </div>
-            <span className="px-2 py-1 bg-sky-50 text-sky-800 border border-sky-200 rounded-lg font-mono font-bold text-[11px]">
+            <span className="px-2 py-1 bg-sky-50 text-sky-800 border border-sky-200 rounded-lg font-mono font-bold text-[10px]">
               {cycleBreakdownStats.weeklyRows.filter((r) => r.totalIncome > 0).length}/
               {cycleBreakdownStats.weeklyRows.length} tuần
             </span>
@@ -1145,7 +1385,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-amber-500" />
                 <span className="font-bold text-amber-950 uppercase text-[11px]">
-                  2. Tổng Hệ Lương 2 Tuần (T{selectedMonth}/{selectedYear})
+                  2. Hệ Lương 2 Tuần (T{selectedMonth}/{selectedYear})
                 </span>
               </div>
               <div className="text-base font-black text-amber-800 font-mono mt-1">
@@ -1157,42 +1397,88 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                 {cycleBreakdownStats.biWeeklySummary.totalOtHours}h OT
               </div>
             </div>
-            <span className="px-2 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-lg font-mono font-bold text-[11px]">
+            <span className="px-2 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-lg font-mono font-bold text-[10px]">
               {cycleBreakdownStats.biWeeklyRows.filter((r) => r.totalIncome > 0).length}/2 đợt
             </span>
           </div>
 
-          {/* Card 3: Hệ Lương Tháng */}
+          {/* Card 3: Hệ Lương Tháng (Thời vụ) */}
           <div className="bg-white border border-emerald-200 rounded-xl p-3 shadow-2xs flex items-center justify-between">
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-600" />
                 <span className="font-bold text-emerald-950 uppercase text-[11px]">
-                  3. Tổng Hệ Lương Tháng (T{selectedMonth}/{selectedYear})
+                  3. Hệ Lương Tháng (T{selectedMonth}/{selectedYear})
                 </span>
               </div>
               <div className="text-base font-black text-emerald-800 font-mono mt-1">
                 {formatVND(cycleBreakdownStats.monthlySummary.netSalary)}
               </div>
               <div className="text-[11px] text-slate-500 mt-0.5">
-                {cycleBreakdownStats.monthlySummary.workerCount} nhân sự •{' '}
+                {cycleBreakdownStats.monthlySummary.workerCount} thợ •{' '}
                 {cycleBreakdownStats.monthlySummary.totalWorkDays} công •{' '}
                 {cycleBreakdownStats.monthlySummary.totalOtHours}h OT
               </div>
             </div>
-            <span className="px-2 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg font-mono font-bold text-[11px]">
-              Cả tháng {selectedMonth}
+            <span className="px-2 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg font-mono font-bold text-[10px]">
+              Thời vụ
+            </span>
+          </div>
+
+          {/* Card 4: Hệ Lương Tổ Đội */}
+          <div className="bg-white border border-purple-200 rounded-xl p-3 shadow-2xs flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-600" />
+                <span className="font-bold text-purple-950 uppercase text-[11px]">
+                  4. Hệ Lương Tổ Đội (T{selectedMonth}/{selectedYear})
+                </span>
+              </div>
+              <div className="text-base font-black text-purple-800 font-mono mt-1">
+                {formatVND(cycleBreakdownStats.teamSummary.netSalary)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {cycleBreakdownStats.teamSummary.workerCount} người •{' '}
+                {cycleBreakdownStats.teamSummary.totalWorkDays} đợt •{' '}
+                {cycleBreakdownStats.teamSummary.totalOtHours}h OT
+              </div>
+            </div>
+            <span className="px-2 py-1 bg-purple-50 text-purple-800 border border-purple-200 rounded-lg font-mono font-bold text-[10px]">
+              Tổ đội
+            </span>
+          </div>
+
+          {/* Card 5: Hệ Lương Nhân Viên Chính Thức */}
+          <div className="bg-white border border-indigo-200 rounded-xl p-3 shadow-2xs flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                <span className="font-bold text-indigo-950 uppercase text-[11px]">
+                  5. Hệ Lương NV Chính Thức (T{selectedMonth}/{selectedYear})
+                </span>
+              </div>
+              <div className="text-base font-black text-indigo-800 font-mono mt-1">
+                {formatVND(cycleBreakdownStats.permanentSummary.netSalary)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {cycleBreakdownStats.permanentSummary.workerCount} NV •{' '}
+                {cycleBreakdownStats.permanentSummary.totalWorkDays} công •{' '}
+                {cycleBreakdownStats.permanentSummary.totalOtHours}h OT
+              </div>
+            </div>
+            <span className="px-2 py-1 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-lg font-mono font-bold text-[10px]">
+              Chính thức
             </span>
           </div>
         </div>
 
-        {/* Bảng Chi Tiết Từng Tuần, Từng Đợt 2 Tuần và Từng Tháng */}
+        {/* Bảng Chi Tiết Từng Tuần, Từng Đợt 2 Tuần, Lương Tháng, Hệ Lương Tổ Đội & Hệ Lương NV Chính Thức */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase">
-                <th className="p-2.5 border-r border-slate-200 w-36">Hệ Lương</th>
-                <th className="p-2.5 border-r border-slate-200 min-w-[170px]">Kỳ Tính Lương</th>
+                <th className="p-2.5 border-r border-slate-200 w-44">Hệ Lương</th>
+                <th className="p-2.5 border-r border-slate-200 min-w-[180px]">Kỳ Tính Lương</th>
                 <th className="p-2.5 border-r border-slate-200 text-center w-28">Khoảng Ngày</th>
                 <th className="p-2.5 border-r border-slate-200 text-center w-24">Nhân Sự</th>
                 <th className="p-2.5 border-r border-slate-200 text-center w-20">Tổng Công</th>
@@ -1394,10 +1680,10 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                 </>
               )}
 
-              {/* PHẦN 3: HỆ LƯƠNG THÁNG */}
+              {/* PHẦN 3: HỆ LƯƠNG THÁNG (CÔNG NHÂN THỜI VỤ LƯƠNG THÁNG) */}
               {(cycleSystemFilter === 'ALL' || cycleSystemFilter === '1_MONTH') && (
                 <>
-                  {visibleMonthlyRows.map((row, idx) => {
+                  {visibleMonthlyRows.map((row) => {
                     const hasData = row.totalIncome > 0 || row.totalWorkDays > 0;
                     return (
                       <tr
@@ -1407,14 +1693,10 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                         }`}
                       >
                         <td className="p-2.5 border-r border-slate-200 font-bold text-emerald-900">
-                          {idx === 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 text-[11px] font-extrabold">
-                              <Calendar className="w-3 h-3 text-emerald-700" />
-                              3. Lương Tháng
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 pl-2">↳ Lương Tháng</span>
-                          )}
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 text-[11px] font-extrabold">
+                            <Calendar className="w-3 h-3 text-emerald-700" />
+                            3. Lương Tháng
+                          </span>
                         </td>
                         <td className="p-2.5 border-r border-slate-200 font-bold text-slate-800">
                           {row.periodLabel}
@@ -1423,7 +1705,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                           {row.dateRangeLabel}
                         </td>
                         <td className="p-2.5 border-r border-slate-200 text-center font-semibold">
-                          {row.workerCount > 0 ? `${row.workerCount} người` : '-'}
+                          {row.workerCount > 0 ? `${row.workerCount} thợ` : '-'}
                         </td>
                         <td className="p-2.5 border-r border-slate-200 text-center font-mono font-bold text-emerald-900">
                           {row.totalWorkDays > 0 ? `${row.totalWorkDays}` : '-'}
@@ -1458,7 +1740,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                       Cộng Hệ Lương Tháng (Tháng {selectedMonth}/{selectedYear})
                     </td>
                     <td className="p-2.5 border-r border-emerald-200 text-center">
-                      {cycleBreakdownStats.monthlySummary.workerCount} người
+                      {cycleBreakdownStats.monthlySummary.workerCount} thợ
                     </td>
                     <td className="p-2.5 border-r border-emerald-200 text-center font-mono">
                       {cycleBreakdownStats.monthlySummary.totalWorkDays}
@@ -1488,10 +1770,190 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                 </>
               )}
 
-              {/* DÒNG TỔNG CỘNG CẢ 3 HỆ LƯƠNG TRONG THÁNG */}
+              {/* PHẦN 4: HỆ LƯƠNG TỔ ĐỘI */}
+              {(cycleSystemFilter === 'ALL' || cycleSystemFilter === 'TEAM') && (
+                <>
+                  {visibleTeamRows.map((row) => {
+                    const hasData = row.totalIncome > 0 || row.totalWorkDays > 0;
+                    return (
+                      <tr
+                        key={row.id}
+                        className={`transition-colors ${
+                          hasData ? 'bg-white hover:bg-purple-50/40' : 'bg-slate-50/40 text-slate-400'
+                        }`}
+                      >
+                        <td className="p-2.5 border-r border-slate-200 font-bold text-purple-900">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-100 text-purple-900 text-[11px] font-extrabold">
+                            <Building className="w-3 h-3 text-purple-700" />
+                            4. Hệ Lương Tổ Đội
+                          </span>
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 font-bold text-slate-800">
+                          {row.periodLabel}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono text-[11px] text-slate-600">
+                          {row.dateRangeLabel}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-semibold">
+                          {row.workerCount > 0 ? `${row.workerCount} người` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono font-bold text-purple-900">
+                          {row.totalWorkDays > 0 ? `${row.totalWorkDays}` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono text-amber-800">
+                          {row.totalOtHours > 0 ? `${row.totalOtHours}h` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.salaryByDays > 0 ? formatVND(row.salaryByDays) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.overtimePay > 0 ? formatVND(row.overtimePay) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.allowancesAndBonus > 0 ? formatVND(row.allowancesAndBonus) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
+                          {row.totalIncome > 0 ? formatVND(row.totalIncome) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono text-rose-700">
+                          {row.deductions > 0 ? formatVND(row.deductions) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-black text-emerald-800 bg-emerald-50/40">
+                          {row.netSalary > 0 ? formatVND(row.netSalary) : '0 đ'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {/* Dòng cộng Hệ Lương Tổ Đội */}
+                  <tr className="bg-purple-50/80 font-bold text-purple-950 border-t border-b border-purple-200">
+                    <td colSpan={3} className="p-2.5 border-r border-purple-200 uppercase text-[11px] font-black">
+                      Cộng Hệ Lương Tổ Đội (Tháng {selectedMonth}/{selectedYear})
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-center">
+                      {cycleBreakdownStats.teamSummary.workerCount} người
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-center font-mono">
+                      {cycleBreakdownStats.teamSummary.totalWorkDays}
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-center font-mono">
+                      {cycleBreakdownStats.teamSummary.totalOtHours}h
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.teamSummary.salaryByDays)}
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.teamSummary.overtimePay)}
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.teamSummary.allowancesAndBonus)}
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-right font-mono font-black">
+                      {formatVND(cycleBreakdownStats.teamSummary.totalIncome)}
+                    </td>
+                    <td className="p-2.5 border-r border-purple-200 text-right font-mono text-rose-700">
+                      {formatVND(cycleBreakdownStats.teamSummary.deductions)}
+                    </td>
+                    <td className="p-2.5 text-right font-mono font-black text-emerald-900 bg-emerald-100/80">
+                      {formatVND(cycleBreakdownStats.teamSummary.netSalary)}
+                    </td>
+                  </tr>
+                </>
+              )}
+
+              {/* PHẦN 5: HỆ LƯƠNG NHÂN VIÊN CHÍNH THỨC */}
+              {(cycleSystemFilter === 'ALL' || cycleSystemFilter === 'PERMANENT') && (
+                <>
+                  {visiblePermanentRows.map((row) => {
+                    const hasData = row.totalIncome > 0 || row.totalWorkDays > 0;
+                    return (
+                      <tr
+                        key={row.id}
+                        className={`transition-colors ${
+                          hasData ? 'bg-white hover:bg-indigo-50/40' : 'bg-slate-50/40 text-slate-400'
+                        }`}
+                      >
+                        <td className="p-2.5 border-r border-slate-200 font-bold text-indigo-900">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 text-[11px] font-extrabold">
+                            <Users className="w-3 h-3 text-indigo-700" />
+                            5. Hệ Lương NV Chính Thức
+                          </span>
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 font-bold text-slate-800">
+                          {row.periodLabel}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono text-[11px] text-slate-600">
+                          {row.dateRangeLabel}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-semibold">
+                          {row.workerCount > 0 ? `${row.workerCount} người` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono font-bold text-indigo-900">
+                          {row.totalWorkDays > 0 ? `${row.totalWorkDays}` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-center font-mono text-amber-800">
+                          {row.totalOtHours > 0 ? `${row.totalOtHours}h` : '-'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.salaryByDays > 0 ? formatVND(row.salaryByDays) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.overtimePay > 0 ? formatVND(row.overtimePay) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                          {row.allowancesAndBonus > 0 ? formatVND(row.allowancesAndBonus) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
+                          {row.totalIncome > 0 ? formatVND(row.totalIncome) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 border-r border-slate-200 text-right font-mono text-rose-700">
+                          {row.deductions > 0 ? formatVND(row.deductions) : '0 đ'}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-black text-emerald-800 bg-emerald-50/40">
+                          {row.netSalary > 0 ? formatVND(row.netSalary) : '0 đ'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {/* Dòng cộng Hệ Lương Nhân Viên Chính Thức */}
+                  <tr className="bg-indigo-50/80 font-bold text-indigo-950 border-t border-b border-indigo-200">
+                    <td colSpan={3} className="p-2.5 border-r border-indigo-200 uppercase text-[11px] font-black">
+                      Cộng Hệ Lương Nhân Viên Chính Thức (Tháng {selectedMonth}/{selectedYear})
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-center">
+                      {cycleBreakdownStats.permanentSummary.workerCount} người
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-center font-mono">
+                      {cycleBreakdownStats.permanentSummary.totalWorkDays}
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-center font-mono">
+                      {cycleBreakdownStats.permanentSummary.totalOtHours}h
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.permanentSummary.salaryByDays)}
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.permanentSummary.overtimePay)}
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-right font-mono">
+                      {formatVND(cycleBreakdownStats.permanentSummary.allowancesAndBonus)}
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-right font-mono font-black">
+                      {formatVND(cycleBreakdownStats.permanentSummary.totalIncome)}
+                    </td>
+                    <td className="p-2.5 border-r border-indigo-200 text-right font-mono text-rose-700">
+                      {formatVND(cycleBreakdownStats.permanentSummary.deductions)}
+                    </td>
+                    <td className="p-2.5 text-right font-mono font-black text-emerald-900 bg-emerald-100/80">
+                      {formatVND(cycleBreakdownStats.permanentSummary.netSalary)}
+                    </td>
+                  </tr>
+                </>
+              )}
+
+              {/* DÒNG TỔNG CỘNG CẢ 5 HỆ LƯƠNG TRONG THÁNG */}
               <tr className="bg-[#0f3d64] text-white font-black border-t-2 border-slate-400">
                 <td colSpan={3} className="p-3 border-r border-white/15 uppercase text-xs">
-                  TỔNG CỘNG THỐNG KÊ LƯƠNG THÁNG {selectedMonth}/{selectedYear} (3 HỆ LƯƠNG)
+                  TỔNG CỘNG THỐNG KÊ LƯƠNG THÁNG {selectedMonth}/{selectedYear} (5 HỆ LƯƠNG)
                 </td>
                 <td className="p-3 border-r border-white/15 text-center font-mono">
                   {cycleBreakdownStats.grandTotal.workerCount} NS
@@ -1760,6 +2222,1147 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* ===================================================================== */}
+      {/* BẢNG 3: BIỂU ĐỒ CỘT THỐNG KÊ TIỀN LƯƠNG TRỰC QUAN (CUỐI BÁO CÁO)      */}
+      {/* ===================================================================== */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        {/* Header & Thanh công cụ lọc biểu đồ */}
+        <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-[#0f3d64] text-white rounded-lg">
+              <BarChart3 className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-black text-xs sm:text-sm text-slate-900 uppercase tracking-tight">
+                3. Biểu Đồ Cột Thống Kê Tiền Lương ({chartMetric === 'NET' ? 'Thực Lĩnh Chi Trả' : 'Tổng Thu Nhập'})
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Đối chiếu trực quan 5 Hệ Lương theo từng tháng, từng tuần/đợt và theo ngân sách công trình
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 no-print">
+            {/* Chuyển đổi góc nhìn biểu đồ */}
+            <div className="flex items-center bg-slate-200/70 p-1 rounded-lg border border-slate-200 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setChartViewMode('OVERVIEW')}
+                className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                  chartViewMode === 'OVERVIEW'
+                    ? 'bg-[#0f3d64] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                5 Hệ Lương & 12 Tháng
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartViewMode('PERIOD_DETAIL')}
+                className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                  chartViewMode === 'PERIOD_DETAIL'
+                    ? 'bg-[#0f3d64] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Chi Tiết Tuần / Đợt (T{selectedMonth})
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartViewMode('PROJECTS')}
+                className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                  chartViewMode === 'PROJECTS'
+                    ? 'bg-[#0f3d64] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Theo Dự Án ({projects.length})
+              </button>
+            </div>
+
+            {/* Chuyển đổi chỉ tiêu Thực lĩnh (Net) / Tổng thu nhập (Gross) */}
+            {chartViewMode !== 'PROJECTS' && (
+              <div className="flex items-center bg-slate-200/70 p-1 rounded-lg border border-slate-200 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setChartMetric('NET')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    chartMetric === 'NET'
+                      ? 'bg-emerald-700 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Thực lĩnh (Net)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartMetric('GROSS')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    chartMetric === 'GROSS'
+                      ? 'bg-sky-700 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tổng thu nhập
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Thanh lọc chú giải (Interactive Legend) cho 5 Hệ Lương */}
+        {chartViewMode !== 'PROJECTS' && (
+          <div className="px-4 py-2.5 bg-slate-50/50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-slate-500 mr-1">Hiển thị hệ lương:</span>
+              {(
+                [
+                  {
+                    key: '1_WEEK' as const,
+                    label: '1. Lương 1 Tuần',
+                    swatch: 'bg-sky-600',
+                    activeCls: 'bg-sky-50 border-sky-300 text-sky-900',
+                  },
+                  {
+                    key: '2_WEEKS' as const,
+                    label: '2. Lương 2 Tuần',
+                    swatch: 'bg-amber-500',
+                    activeCls: 'bg-amber-50 border-amber-300 text-amber-900',
+                  },
+                  {
+                    key: '1_MONTH' as const,
+                    label: '3. Lương Tháng (TV)',
+                    swatch: 'bg-emerald-600',
+                    activeCls: 'bg-emerald-50 border-emerald-300 text-emerald-900',
+                  },
+                  {
+                    key: 'TEAM' as const,
+                    label: '4. Hệ Lương Tổ Đội',
+                    swatch: 'bg-purple-600',
+                    activeCls: 'bg-purple-50 border-purple-300 text-purple-900',
+                  },
+                  {
+                    key: 'PERMANENT' as const,
+                    label: '5. Hệ Lương NV Chính Thức',
+                    swatch: 'bg-indigo-600',
+                    activeCls: 'bg-indigo-50 border-indigo-300 text-indigo-900',
+                  },
+                ]
+              ).map((item) => {
+                const isOn = enabledChartSystems[item.key];
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => toggleChartSystem(item.key)}
+                    className={`px-2.5 py-1 rounded-md border text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shrink-0 ${
+                      isOn
+                        ? item.activeCls
+                        : 'bg-white border-slate-200 text-slate-400 line-through opacity-65'
+                    }`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-xs ${isOn ? item.swatch : 'bg-slate-300'}`} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {chartViewMode === 'OVERVIEW' && (
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md border border-slate-200 text-[11px] no-print">
+                <button
+                  type="button"
+                  onClick={() => setYearlyBarStyle('GROUPED')}
+                  className={`px-2 py-1 rounded font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    yearlyBarStyle === 'GROUPED'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Cột ghép từng hệ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setYearlyBarStyle('STACKED')}
+                  className={`px-2 py-1 rounded font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    yearlyBarStyle === 'STACKED'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Cột chồng tổng tháng
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* NỘI DUNG BIỂU ĐỒ THEO CHẾ ĐỘ ĐANG CHỌN */}
+        <div className="p-4">
+          {chartViewMode === 'OVERVIEW' && (() => {
+            const singleMonthBars = [
+              {
+                key: '1_WEEK' as const,
+                shortLabel: 'Lương 1 Tuần',
+                subInfo: `${cycleBreakdownStats.weeklySummary.workerCount} thợ · ${cycleBreakdownStats.weeklySummary.totalWorkDays} công`,
+                value:
+                  chartMetric === 'NET'
+                    ? cycleBreakdownStats.weeklySummary.netSalary
+                    : cycleBreakdownStats.weeklySummary.totalIncome,
+                summary: cycleBreakdownStats.weeklySummary,
+                fillClass: 'fill-sky-600 hover:fill-sky-500',
+                textClass: 'fill-sky-800',
+              },
+              {
+                key: '2_WEEKS' as const,
+                shortLabel: 'Lương 2 Tuần',
+                subInfo: `${cycleBreakdownStats.biWeeklySummary.workerCount} thợ · ${cycleBreakdownStats.biWeeklySummary.totalWorkDays} công`,
+                value:
+                  chartMetric === 'NET'
+                    ? cycleBreakdownStats.biWeeklySummary.netSalary
+                    : cycleBreakdownStats.biWeeklySummary.totalIncome,
+                summary: cycleBreakdownStats.biWeeklySummary,
+                fillClass: 'fill-amber-500 hover:fill-amber-400',
+                textClass: 'fill-amber-800',
+              },
+              {
+                key: '1_MONTH' as const,
+                shortLabel: 'Lương Tháng',
+                subInfo: `${cycleBreakdownStats.monthlySummary.workerCount} thợ · ${cycleBreakdownStats.monthlySummary.totalWorkDays} công`,
+                value:
+                  chartMetric === 'NET'
+                    ? cycleBreakdownStats.monthlySummary.netSalary
+                    : cycleBreakdownStats.monthlySummary.totalIncome,
+                summary: cycleBreakdownStats.monthlySummary,
+                fillClass: 'fill-emerald-600 hover:fill-emerald-500',
+                textClass: 'fill-emerald-800',
+              },
+              {
+                key: 'TEAM' as const,
+                shortLabel: 'Hệ Tổ Đội',
+                subInfo: `${cycleBreakdownStats.teamSummary.workerCount} người · ${cycleBreakdownStats.teamSummary.totalWorkDays} đợt`,
+                value:
+                  chartMetric === 'NET'
+                    ? cycleBreakdownStats.teamSummary.netSalary
+                    : cycleBreakdownStats.teamSummary.totalIncome,
+                summary: cycleBreakdownStats.teamSummary,
+                fillClass: 'fill-purple-600 hover:fill-purple-500',
+                textClass: 'fill-purple-800',
+              },
+              {
+                key: 'PERMANENT' as const,
+                shortLabel: 'NV Chính Thức',
+                subInfo: `${cycleBreakdownStats.permanentSummary.workerCount} NV · ${cycleBreakdownStats.permanentSummary.totalWorkDays} công`,
+                value:
+                  chartMetric === 'NET'
+                    ? cycleBreakdownStats.permanentSummary.netSalary
+                    : cycleBreakdownStats.permanentSummary.totalIncome,
+                summary: cycleBreakdownStats.permanentSummary,
+                fillClass: 'fill-indigo-600 hover:fill-indigo-500',
+                textClass: 'fill-indigo-800',
+              },
+            ].filter((b) => enabledChartSystems[b.key]);
+
+            const totalSelectedMonthVal = singleMonthBars.reduce((s, b) => s + b.value, 0);
+            const leftScaleMax = computeNiceScaleMax(
+              Math.max(...singleMonthBars.map((b) => b.value), 0)
+            );
+
+            // Tính cực đại trục tung cho biểu đồ 12 tháng
+            const enabledKeys = (
+              ['1_WEEK', '2_WEEKS', '1_MONTH', 'TEAM', 'PERMANENT'] as const
+            ).filter((k) => enabledChartSystems[k]);
+
+            const rawYearlyMax = yearlyMonthlyChartData.reduce((maxAcc, mItem) => {
+              const vals = enabledKeys.map((k) =>
+                chartMetric === 'NET' ? mItem.values[k].net : mItem.values[k].gross
+              );
+              const candidate =
+                yearlyBarStyle === 'STACKED'
+                  ? vals.reduce((a, b) => a + b, 0)
+                  : Math.max(...vals, 0);
+              return Math.max(maxAcc, candidate);
+            }, 0);
+            const rightScaleMax = computeNiceScaleMax(rawYearlyMax);
+
+            const inspectedMonthNum = hoveredMonth ?? selectedMonth;
+            const inspectedMonthData =
+              yearlyMonthlyChartData.find((d) => d.month === inspectedMonthNum) ||
+              yearlyMonthlyChartData[0];
+
+            const activeHoveredBar =
+              singleMonthBars.find((b) => b.key === hoveredSystemId) || null;
+
+            const systemColorMap: Record<
+              '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT',
+              string
+            > = {
+              '1_WEEK': 'fill-sky-600',
+              '2_WEEKS': 'fill-amber-500',
+              '1_MONTH': 'fill-emerald-600',
+              TEAM: 'fill-purple-600',
+              PERMANENT: 'fill-indigo-600',
+            };
+
+            return (
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
+                {/* CỘT TRÁI (5/12): BIỂU ĐỒ CỘT SO SÁNH 5 HỆ LƯƠNG TRONG THÁNG ĐANG CHỌN */}
+                <div className="xl:col-span-5 border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between bg-white">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                      <div>
+                        <div className="text-xs font-black text-slate-900 uppercase">
+                          So Sánh Hệ Lương — Tháng {selectedMonth}/{selectedYear}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          Tổng cộng:{' '}
+                          <span className="font-mono font-bold text-emerald-800 tabular-nums">
+                            {formatVND(totalSelectedMonthVal)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 no-print">
+                        <button
+                          type="button"
+                          onClick={() => handleStepMonth('PREV')}
+                          className="p-1 border border-slate-200 rounded hover:bg-slate-100 text-slate-600 cursor-pointer"
+                          title="Tháng trước"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-[11px] font-mono font-bold text-[#0f3d64] px-1.5 tabular-nums">
+                          T{selectedMonth}/{selectedYear}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleStepMonth('NEXT')}
+                          className="p-1 border border-slate-200 rounded hover:bg-slate-100 text-slate-600 cursor-pointer"
+                          title="Tháng sau"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* SVG Biểu đồ cột Tháng đang chọn */}
+                    <div className="mt-3">
+                      <svg
+                        viewBox="0 0 540 285"
+                        className="w-full h-auto select-none overflow-visible"
+                        role="img"
+                        aria-label={`Biểu đồ cột thống kê lương tháng ${selectedMonth}/${selectedYear}`}
+                      >
+                        {/* 5 đường lưới ngang (0%, 25%, 50%, 75%, 100%) */}
+                        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                          const yPos = 228 - ratio * 188;
+                          const tickVal = Math.round(leftScaleMax * ratio);
+                          return (
+                            <g key={ratio}>
+                              <line
+                                x1={62}
+                                y1={yPos}
+                                x2={528}
+                                y2={yPos}
+                                className={
+                                  ratio === 0
+                                    ? 'stroke-slate-300 stroke-1'
+                                    : 'stroke-slate-200/90 stroke-1'
+                                }
+                                strokeDasharray={ratio === 0 ? undefined : '3 3'}
+                              />
+                              <text
+                                x={56}
+                                y={yPos + 3.5}
+                                textAnchor="end"
+                                className="fill-slate-500 text-[10px] font-mono tabular-nums"
+                              >
+                                {formatCompactVND(tickVal)}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {/* Các cột Hệ Lương */}
+                        {singleMonthBars.map((bar, idx) => {
+                          const plotWidth = 466;
+                          const slotWidth = plotWidth / Math.max(singleMonthBars.length, 1);
+                          const barWidth = Math.min(48, Math.max(26, slotWidth * 0.52));
+                          const centerX = 62 + slotWidth * idx + slotWidth / 2;
+                          const barX = centerX - barWidth / 2;
+                          const rawHeight =
+                            leftScaleMax > 0 ? (bar.value / leftScaleMax) * 188 : 0;
+                          const barHeight = bar.value > 0 ? Math.max(4, rawHeight) : 2;
+                          const barY = 228 - barHeight;
+                          const sharePct =
+                            totalSelectedMonthVal > 0
+                              ? Math.round((bar.value / totalSelectedMonthVal) * 100)
+                              : 0;
+                          const isHovered = hoveredSystemId === bar.key;
+
+                          return (
+                            <g
+                              key={bar.key}
+                              onMouseEnter={() => setHoveredSystemId(bar.key)}
+                              onMouseLeave={() => setHoveredSystemId(null)}
+                              onClick={() =>
+                                setCycleSystemFilter((prev) =>
+                                  prev === bar.key ? 'ALL' : bar.key
+                                )
+                              }
+                              className="cursor-pointer"
+                            >
+                              {/* Nền hover nhẹ */}
+                              {isHovered && (
+                                <rect
+                                  x={62 + slotWidth * idx + 3}
+                                  y={32}
+                                  width={slotWidth - 6}
+                                  height={196}
+                                  rx={6}
+                                  className="fill-slate-100/80"
+                                />
+                              )}
+
+                              {/* Thân cột */}
+                              <rect
+                                x={barX}
+                                y={barY}
+                                width={barWidth}
+                                height={barHeight}
+                                rx={4}
+                                className={
+                                  bar.value > 0
+                                    ? `${bar.fillClass} transition-opacity`
+                                    : 'fill-slate-200'
+                                }
+                              />
+
+                              {/* Số tiền trên đỉnh cột */}
+                              <text
+                                x={centerX}
+                                y={barY - (bar.value > 0 && sharePct > 0 ? 14 : 6)}
+                                textAnchor="middle"
+                                className={`text-[10.5px] font-mono font-bold tabular-nums ${
+                                  bar.value > 0 ? bar.textClass : 'fill-slate-400'
+                                }`}
+                              >
+                                {formatCompactVND(bar.value)}
+                              </text>
+
+                              {/* Tỷ trọng % */}
+                              {bar.value > 0 && (
+                                <text
+                                  x={centerX}
+                                  y={barY - 4}
+                                  textAnchor="middle"
+                                  className="fill-slate-500 text-[9px] font-mono tabular-nums"
+                                >
+                                  ({sharePct}%)
+                                </text>
+                              )}
+
+                              {/* Nhãn trục hoành */}
+                              <text
+                                x={centerX}
+                                y={245}
+                                textAnchor="middle"
+                                className="fill-slate-800 text-[10px] font-bold"
+                              >
+                                {bar.shortLabel}
+                              </text>
+                              <text
+                                x={centerX}
+                                y={259}
+                                textAnchor="middle"
+                                className="fill-slate-500 text-[9px] font-mono tabular-nums"
+                              >
+                                {bar.subInfo}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Dải thông tin chi tiết khi rê chuột vào cột Hệ Lương */}
+                  <div className="mt-2 pt-2.5 border-t border-slate-100 text-[11px] flex flex-wrap items-center justify-between gap-2 text-slate-600">
+                    {activeHoveredBar ? (
+                      <>
+                        <span className="font-bold text-slate-900">
+                          {activeHoveredBar.shortLabel}:
+                        </span>
+                        <span className="font-mono tabular-nums">
+                          Công: <strong>{formatVND(activeHoveredBar.summary.salaryByDays)}</strong>
+                          {' · '}OT: <strong>{formatVND(activeHoveredBar.summary.overtimePay)}</strong>
+                          {' · '}Thực lĩnh:{' '}
+                          <strong className="text-emerald-700">
+                            {formatVND(activeHoveredBar.summary.netSalary)}
+                          </strong>
+                        </span>
+                      </>
+                    ) : (
+                      <span>
+                        Rê chuột vào cột để xem chi tiết Công / OT • Bấm vào cột để lọc bảng trên
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* CỘT PHẢI (7/12): BIỂU ĐỒ CỘT THỐNG KÊ 12 THÁNG TRONG NĂM */}
+                <div className="xl:col-span-7 border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between bg-white">
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                      <div>
+                        <div className="text-xs font-black text-slate-900 uppercase">
+                          Biến Động Lương Theo 12 Tháng — Năm {selectedYear}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          Bấm vào cột tháng bất kỳ (T1 – T12) để chuyển nhanh sang kiểm tra kỳ lương tháng đó
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold text-slate-700 tabular-nums">
+                        Cả năm {selectedYear}:{' '}
+                        <span className="text-[#0f3d64]">
+                          {formatVND(
+                            yearlyMonthlyChartData.reduce(
+                              (sum, mItem) =>
+                                sum +
+                                enabledKeys.reduce(
+                                  (s, k) =>
+                                    s +
+                                    (chartMetric === 'NET'
+                                      ? mItem.values[k].net
+                                      : mItem.values[k].gross),
+                                  0
+                                ),
+                              0
+                            )
+                          )}
+                        </span>
+                      </span>
+                    </div>
+
+                    {/* SVG Biểu đồ cột 12 tháng */}
+                    <div className="mt-3">
+                      <svg
+                        viewBox="0 0 740 285"
+                        className="w-full h-auto select-none overflow-visible"
+                        role="img"
+                        aria-label={`Biểu đồ cột lương 12 tháng năm ${selectedYear}`}
+                      >
+                        {/* 5 đường lưới ngang */}
+                        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                          const yPos = 228 - ratio * 188;
+                          const tickVal = Math.round(rightScaleMax * ratio);
+                          return (
+                            <g key={ratio}>
+                              <line
+                                x1={62}
+                                y1={yPos}
+                                x2={730}
+                                y2={yPos}
+                                className={
+                                  ratio === 0
+                                    ? 'stroke-slate-300 stroke-1'
+                                    : 'stroke-slate-200/90 stroke-1'
+                                }
+                                strokeDasharray={ratio === 0 ? undefined : '3 3'}
+                              />
+                              <text
+                                x={56}
+                                y={yPos + 3.5}
+                                textAnchor="end"
+                                className="fill-slate-500 text-[10px] font-mono tabular-nums"
+                              >
+                                {formatCompactVND(tickVal)}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {/* 12 Cột Tháng T1..T12 */}
+                        {yearlyMonthlyChartData.map((mItem, idx) => {
+                          const plotWidth = 668;
+                          const slotWidth = plotWidth / 12;
+                          const slotX = 62 + slotWidth * idx;
+                          const centerX = slotX + slotWidth / 2;
+                          const isSelected = mItem.month === selectedMonth;
+                          const isHovered = mItem.month === hoveredMonth;
+
+                          const monthEnabledSum = enabledKeys.reduce(
+                            (s, k) =>
+                              s +
+                              (chartMetric === 'NET'
+                                ? mItem.values[k].net
+                                : mItem.values[k].gross),
+                            0
+                          );
+
+                          // Chiều cao đỉnh cao nhất trong slot để đặt nhãn tổng tháng
+                          let topPeakY = 228;
+
+                          return (
+                            <g
+                              key={mItem.month}
+                              onMouseEnter={() => setHoveredMonth(mItem.month)}
+                              onMouseLeave={() => setHoveredMonth(null)}
+                              onClick={() => handleSelectMonthYear(mItem.month, selectedYear)}
+                              className="cursor-pointer"
+                            >
+                              {/* Vùng highlight tháng đang chọn / đang hover */}
+                              <rect
+                                x={slotX + 2}
+                                y={30}
+                                width={slotWidth - 4}
+                                height={232}
+                                rx={6}
+                                className={
+                                  isSelected
+                                    ? 'fill-sky-50/90 stroke-sky-300 stroke-1'
+                                    : isHovered
+                                    ? 'fill-slate-100/80'
+                                    : 'fill-transparent'
+                                }
+                              />
+
+                              {yearlyBarStyle === 'STACKED' ? (
+                                (() => {
+                                  const barW = 24;
+                                  let currentBottomY = 228;
+                                  const rects = enabledKeys.map((sysKey) => {
+                                    const val =
+                                      chartMetric === 'NET'
+                                        ? mItem.values[sysKey].net
+                                        : mItem.values[sysKey].gross;
+                                    if (val <= 0) return null;
+                                    const h = Math.max(2, (val / rightScaleMax) * 188);
+                                    currentBottomY -= h;
+                                    topPeakY = Math.min(topPeakY, currentBottomY);
+                                    return (
+                                      <rect
+                                        key={sysKey}
+                                        x={centerX - barW / 2}
+                                        y={currentBottomY}
+                                        width={barW}
+                                        height={h}
+                                        rx={1.5}
+                                        className={systemColorMap[sysKey]}
+                                      />
+                                    );
+                                  });
+                                  return (
+                                    <>
+                                      {monthEnabledSum <= 0 && (
+                                        <rect
+                                          x={centerX - barW / 2}
+                                          y={226}
+                                          width={barW}
+                                          height={2}
+                                          rx={1}
+                                          className="fill-slate-200"
+                                        />
+                                      )}
+                                      {rects}
+                                      {monthEnabledSum > 0 && (
+                                        <text
+                                          x={centerX}
+                                          y={topPeakY - 5}
+                                          textAnchor="middle"
+                                          className="fill-slate-800 text-[9.5px] font-mono font-bold tabular-nums"
+                                        >
+                                          {formatCompactVND(monthEnabledSum)}
+                                        </text>
+                                      )}
+                                    </>
+                                  );
+                                })()
+                              ) : (
+                                (() => {
+                                  const count = Math.max(enabledKeys.length, 1);
+                                  const gap = 1.5;
+                                  const maxClusterW = slotWidth - 10;
+                                  const barW = Math.min(
+                                    12,
+                                    Math.max(5.5, (maxClusterW - gap * (count - 1)) / count)
+                                  );
+                                  const totalClusterW = barW * count + gap * (count - 1);
+                                  const startX = centerX - totalClusterW / 2;
+
+                                  return (
+                                    <>
+                                      {enabledKeys.map((sysKey, kIdx) => {
+                                        const val =
+                                          chartMetric === 'NET'
+                                            ? mItem.values[sysKey].net
+                                            : mItem.values[sysKey].gross;
+                                        const h =
+                                          val > 0
+                                            ? Math.max(3, (val / rightScaleMax) * 188)
+                                            : 2;
+                                        const y = 228 - h;
+                                        if (val > 0) topPeakY = Math.min(topPeakY, y);
+                                        return (
+                                          <rect
+                                            key={sysKey}
+                                            x={startX + kIdx * (barW + gap)}
+                                            y={y}
+                                            width={barW}
+                                            height={h}
+                                            rx={1.5}
+                                            className={
+                                              val > 0
+                                                ? systemColorMap[sysKey]
+                                                : 'fill-slate-200'
+                                            }
+                                          />
+                                        );
+                                      })}
+                                      {monthEnabledSum > 0 && (
+                                        <text
+                                          x={centerX}
+                                          y={topPeakY - 5}
+                                          textAnchor="middle"
+                                          className="fill-slate-800 text-[9px] font-mono font-bold tabular-nums"
+                                        >
+                                          {formatCompactVND(monthEnabledSum)}
+                                        </text>
+                                      )}
+                                    </>
+                                  );
+                                })()
+                              )}
+
+                              {/* Nhãn tháng T1..T12 */}
+                              <text
+                                x={centerX}
+                                y={246}
+                                textAnchor="middle"
+                                className={
+                                  isSelected
+                                    ? 'fill-[#0f3d64] text-[10.5px] font-black'
+                                    : 'fill-slate-600 text-[10px] font-semibold'
+                                }
+                              >
+                                {mItem.label}
+                              </text>
+                              {isSelected && (
+                                <text
+                                  x={centerX}
+                                  y={258}
+                                  textAnchor="middle"
+                                  className="fill-sky-700 text-[8.5px] font-bold"
+                                >
+                                  Đang xem
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Thanh đọc số liệu chi tiết của Tháng đang trỏ chuột / Tháng đang chọn */}
+                  <div className="mt-2 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="font-black text-[#0f3d64]">
+                      Chi tiết {inspectedMonthData.fullLabel}:
+                    </span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono tabular-nums text-slate-700">
+                      <span>
+                        1 Tuần:{' '}
+                        <strong className="text-sky-800">
+                          {formatVND(
+                            chartMetric === 'NET'
+                              ? inspectedMonthData.values['1_WEEK'].net
+                              : inspectedMonthData.values['1_WEEK'].gross
+                          )}
+                        </strong>
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span>
+                        2 Tuần:{' '}
+                        <strong className="text-amber-800">
+                          {formatVND(
+                            chartMetric === 'NET'
+                              ? inspectedMonthData.values['2_WEEKS'].net
+                              : inspectedMonthData.values['2_WEEKS'].gross
+                          )}
+                        </strong>
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span>
+                        Tháng:{' '}
+                        <strong className="text-emerald-800">
+                          {formatVND(
+                            chartMetric === 'NET'
+                              ? inspectedMonthData.values['1_MONTH'].net
+                              : inspectedMonthData.values['1_MONTH'].gross
+                          )}
+                        </strong>
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span>
+                        Tổ Đội:{' '}
+                        <strong className="text-purple-800">
+                          {formatVND(
+                            chartMetric === 'NET'
+                              ? inspectedMonthData.values.TEAM.net
+                              : inspectedMonthData.values.TEAM.gross
+                          )}
+                        </strong>
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span>
+                        NV Chính Thức:{' '}
+                        <strong className="text-indigo-800">
+                          {formatVND(
+                            chartMetric === 'NET'
+                              ? inspectedMonthData.values.PERMANENT.net
+                              : inspectedMonthData.values.PERMANENT.gross
+                          )}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* CHẾ ĐỘ 2: BIỂU ĐỒ CỘT CHI TIẾT TỪNG TUẦN / TỪNG ĐỢT TRONG THÁNG ĐANG CHỌN */}
+          {chartViewMode === 'PERIOD_DETAIL' && (() => {
+            const periodBars = [
+              ...(enabledChartSystems['1_WEEK'] ? cycleBreakdownStats.weeklyRows : []),
+              ...(enabledChartSystems['2_WEEKS'] ? cycleBreakdownStats.biWeeklyRows : []),
+              ...(enabledChartSystems['1_MONTH'] ? cycleBreakdownStats.monthlyRows : []),
+              ...(enabledChartSystems.TEAM ? cycleBreakdownStats.teamRows : []),
+              ...(enabledChartSystems.PERMANENT ? cycleBreakdownStats.permanentRows : []),
+            ];
+
+            const maxPeriodVal = computeNiceScaleMax(
+              Math.max(
+                ...periodBars.map((r) => (chartMetric === 'NET' ? r.netSalary : r.totalIncome)),
+                0
+              )
+            );
+
+            const colorByType: Record<
+              '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM' | 'PERMANENT',
+              { rect: string; text: string }
+            > = {
+              '1_WEEK': { rect: 'fill-sky-600 hover:fill-sky-500', text: 'fill-sky-800' },
+              '2_WEEKS': { rect: 'fill-amber-500 hover:fill-amber-400', text: 'fill-amber-800' },
+              '1_MONTH': {
+                rect: 'fill-emerald-600 hover:fill-emerald-500',
+                text: 'fill-emerald-800',
+              },
+              TEAM: { rect: 'fill-purple-600 hover:fill-purple-500', text: 'fill-purple-800' },
+              PERMANENT: { rect: 'fill-indigo-600 hover:fill-indigo-500', text: 'fill-indigo-800' },
+            };
+
+            return (
+              <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="text-xs font-black text-slate-900 uppercase">
+                      Biểu Đồ Cột Chi Tiết Từng Tuần, Từng Đợt 2 Tuần, Tháng, Tổ Đội & NV Chính Thức — Tháng {selectedMonth}/{selectedYear}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Hiển thị đầy đủ {periodBars.length} kỳ tính lương trong Tháng {selectedMonth}/{selectedYear}
+                    </div>
+                  </div>
+                  <div className="text-xs font-mono font-black text-emerald-800 tabular-nums">
+                    Tổng cộng:{' '}
+                    {formatVND(
+                      periodBars.reduce(
+                        (s, r) => s + (chartMetric === 'NET' ? r.netSalary : r.totalIncome),
+                        0
+                      )
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 overflow-x-auto">
+                  <svg
+                    viewBox="0 0 960 295"
+                    className="w-full min-w-[680px] h-auto select-none"
+                    role="img"
+                    aria-label={`Biểu đồ chi tiết các kỳ lương tháng ${selectedMonth}/${selectedYear}`}
+                  >
+                    {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                      const yPos = 226 - ratio * 184;
+                      const tickVal = Math.round(maxPeriodVal * ratio);
+                      return (
+                        <g key={ratio}>
+                          <line
+                            x1={66}
+                            y1={yPos}
+                            x2={944}
+                            y2={yPos}
+                            className={
+                              ratio === 0
+                                ? 'stroke-slate-300 stroke-1'
+                                : 'stroke-slate-200 stroke-1'
+                            }
+                            strokeDasharray={ratio === 0 ? undefined : '3 3'}
+                          />
+                          <text
+                            x={60}
+                            y={yPos + 3.5}
+                            textAnchor="end"
+                            className="fill-slate-500 text-[10px] font-mono tabular-nums"
+                          >
+                            {formatCompactVND(tickVal)}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {periodBars.map((row, idx) => {
+                      const plotW = 878;
+                      const slotW = plotW / Math.max(periodBars.length, 1);
+                      const barW = Math.min(44, Math.max(22, slotW * 0.52));
+                      const cx = 66 + slotW * idx + slotW / 2;
+                      const val = chartMetric === 'NET' ? row.netSalary : row.totalIncome;
+                      const h = val > 0 ? Math.max(4, (val / maxPeriodVal) * 184) : 2;
+                      const y = 226 - h;
+                      const palette = colorByType[row.systemType];
+
+                      const shortName = row.periodLabel
+                        .replace(` (T${selectedMonth}/${selectedYear})`, '')
+                        .replace('Thời vụ ', 'TV ')
+                        .replace('Bản Lương ', '');
+
+                      return (
+                        <g key={row.id}>
+                          <rect
+                            x={cx - barW / 2}
+                            y={y}
+                            width={barW}
+                            height={h}
+                            rx={4}
+                            className={val > 0 ? palette.rect : 'fill-slate-200'}
+                          />
+                          <text
+                            x={cx}
+                            y={y - 6}
+                            textAnchor="middle"
+                            className={`text-[10px] font-mono font-bold tabular-nums ${
+                              val > 0 ? palette.text : 'fill-slate-400'
+                            }`}
+                          >
+                            {formatCompactVND(val)}
+                          </text>
+                          <text
+                            x={cx}
+                            y={244}
+                            textAnchor="middle"
+                            className="fill-slate-800 text-[9.5px] font-bold"
+                          >
+                            {shortName}
+                          </text>
+                          <text
+                            x={cx}
+                            y={257}
+                            textAnchor="middle"
+                            className="fill-slate-500 text-[8.5px] font-mono tabular-nums"
+                          >
+                            {row.dateRangeLabel}
+                          </text>
+                          <text
+                            x={cx}
+                            y={270}
+                            textAnchor="middle"
+                            className="fill-slate-400 text-[8.5px] font-mono tabular-nums"
+                          >
+                            {row.workerCount > 0
+                              ? `${row.workerCount} NS · ${row.totalWorkDays}c`
+                              : '0 công'}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* CHẾ ĐỘ 3: BIỂU ĐỒ CỘT SO SÁNH DỰ TOÁN & CHI PHÍ LƯƠNG THỰC TẾ THEO DỰ ÁN */}
+          {chartViewMode === 'PROJECTS' && (() => {
+            const maxProjVal = computeNiceScaleMax(
+              Math.max(
+                ...projectExpenses.flatMap((p) => [p.laborBudget || 0, p.totalLaborCost || 0]),
+                0
+              )
+            );
+
+            return (
+              <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="text-xs font-black text-slate-900 uppercase">
+                      Biểu Đồ Cột So Sánh Dự Toán Nhân Công & Chi Phí Thực Tế Theo Dự Án
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Đối chiếu trực tiếp bảng 2 ({projectExpenses.length} công trình đang quản lý)
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 text-[11px] font-semibold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-xs bg-slate-300 inline-block" />
+                      <span>Dự toán nhân công</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block" />
+                      <span>Chi phí thực tế</span>
+                    </span>
+                  </div>
+                </div>
+
+                {projectExpenses.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-500">
+                    Chưa có dự án nào trong danh sách để hiển thị biểu đồ.
+                  </div>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <svg
+                      viewBox="0 0 960 295"
+                      className="w-full min-w-[640px] h-auto select-none"
+                      role="img"
+                      aria-label="Biểu đồ cột so sánh dự toán và chi phí nhân công theo dự án"
+                    >
+                      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                        const yPos = 226 - ratio * 184;
+                        const tickVal = Math.round(maxProjVal * ratio);
+                        return (
+                          <g key={ratio}>
+                            <line
+                              x1={68}
+                              y1={yPos}
+                              x2={944}
+                              y2={yPos}
+                              className={
+                                ratio === 0
+                                  ? 'stroke-slate-300 stroke-1'
+                                  : 'stroke-slate-200 stroke-1'
+                              }
+                              strokeDasharray={ratio === 0 ? undefined : '3 3'}
+                            />
+                            <text
+                              x={62}
+                              y={yPos + 3.5}
+                              textAnchor="end"
+                              className="fill-slate-500 text-[10px] font-mono tabular-nums"
+                            >
+                              {formatCompactVND(tickVal)}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                      {projectExpenses.map((proj, idx) => {
+                        const plotW = 876;
+                        const slotW = plotW / Math.max(projectExpenses.length, 1);
+                        const cx = 68 + slotW * idx + slotW / 2;
+                        const barW = Math.min(34, Math.max(18, slotW * 0.24));
+                        const gap = 6;
+
+                        const budgetH =
+                          proj.laborBudget > 0
+                            ? Math.max(4, (proj.laborBudget / maxProjVal) * 184)
+                            : 2;
+                        const actualH =
+                          proj.totalLaborCost > 0
+                            ? Math.max(4, (proj.totalLaborCost / maxProjVal) * 184)
+                            : 2;
+
+                        const budgetX = cx - barW - gap / 2;
+                        const actualX = cx + gap / 2;
+                        const budgetY = 226 - budgetH;
+                        const actualY = 226 - actualH;
+                        const isOver = proj.budgetPercent >= 95;
+
+                        const shortProjName =
+                          proj.name.length > 22 ? `${proj.name.slice(0, 20)}…` : proj.name;
+
+                        return (
+                          <g key={proj.id}>
+                            {/* Cột Dự toán */}
+                            <rect
+                              x={budgetX}
+                              y={budgetY}
+                              width={barW}
+                              height={budgetH}
+                              rx={3}
+                              className="fill-slate-300"
+                            />
+                            <text
+                              x={budgetX + barW / 2}
+                              y={budgetY - 5}
+                              textAnchor="middle"
+                              className="fill-slate-600 text-[9.5px] font-mono font-semibold tabular-nums"
+                            >
+                              {formatCompactVND(proj.laborBudget)}
+                            </text>
+
+                            {/* Cột Thực tế */}
+                            <rect
+                              x={actualX}
+                              y={actualY}
+                              width={barW}
+                              height={actualH}
+                              rx={3}
+                              className={
+                                isOver
+                                  ? 'fill-rose-600'
+                                  : proj.budgetPercent > 70
+                                  ? 'fill-amber-500'
+                                  : 'fill-emerald-600'
+                              }
+                            />
+                            <text
+                              x={actualX + barW / 2}
+                              y={actualY - 5}
+                              textAnchor="middle"
+                              className={`text-[9.5px] font-mono font-bold tabular-nums ${
+                                isOver ? 'fill-rose-700' : 'fill-emerald-800'
+                              }`}
+                            >
+                              {formatCompactVND(proj.totalLaborCost)}
+                            </text>
+
+                            {/* Nhãn Mã dự án & Tên */}
+                            <text
+                              x={cx}
+                              y={244}
+                              textAnchor="middle"
+                              className="fill-[#0f3d64] text-[10px] font-mono font-bold"
+                            >
+                              {proj.code} ({proj.budgetPercent}%)
+                            </text>
+                            <text
+                              x={cx}
+                              y={258}
+                              textAnchor="middle"
+                              className="fill-slate-600 text-[9.5px] font-medium"
+                            >
+                              {shortProjName}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
