@@ -2136,97 +2136,8 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
         </div>
       </div>
 
-      {/* Bảng 2: Phân Tích Chi Phí Nhân Công Theo Từng Dự Án / Công Trình */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xs text-slate-900 uppercase">
-            <Building className="w-4 h-4 text-sky-700" />
-            <span>2. Báo Cáo Chi Phí Nhân Công Chi Tiết Theo Từng Dự Án (So Sánh Ngân Sách Dự Toán)</span>
-          </div>
-          <span className="text-[11px] text-slate-500 font-semibold">{projects.length} công trình</span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase">
-                <th className="p-3 border-r border-slate-200 text-center w-12">STT</th>
-                <th className="p-3 border-r border-slate-200 w-24">Mã DA</th>
-                <th className="p-3 border-r border-slate-200 min-w-[200px]">Tên Công Trình</th>
-                <th className="p-3 border-r border-slate-200 min-w-[150px]">Chủ Đầu Tư / Địa Điểm</th>
-                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Dự Toán Nhân Công</th>
-                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Chi Phí Thực Tế</th>
-                <th className="p-3 border-r border-slate-200 text-center min-w-[120px]">Tiến Độ Giải Ngân</th>
-                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Ngân Sách Còn Lại</th>
-                <th className="p-3 text-center w-28">Trạng Thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {projectExpenses.map((p, idx) => {
-                const percent = p.budgetPercent;
-                const isOverBudget = percent >= 95;
-
-                return (
-                  <tr key={p.id} className="hover:bg-sky-50/40 transition-colors">
-                    <td className="p-3 border-r border-slate-200 text-center font-mono text-slate-500">
-                      {idx + 1}
-                    </td>
-                    <td className="p-3 border-r border-slate-200 font-mono font-bold text-[#0f3d64]">
-                      {p.code}
-                    </td>
-                    <td className="p-3 border-r border-slate-200 font-bold text-slate-900">
-                      {p.name}
-                      <div className="text-[10px] text-slate-500 font-normal">Chỉ huy trưởng: {p.managerName}</div>
-                    </td>
-                    <td className="p-3 border-r border-slate-200 text-slate-600">
-                      <div>{p.investor}</div>
-                      <div className="text-[10px] text-slate-400 line-clamp-1">{p.location}</div>
-                    </td>
-                    <td className="p-3 border-r border-slate-200 text-right font-mono font-bold text-slate-700">
-                      {formatVND(p.laborBudget)}
-                    </td>
-                    <td className="p-3 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/20">
-                      {formatVND(p.totalLaborCost)}
-                    </td>
-                    <td className="p-3 border-r border-slate-200 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <div className="w-14 bg-slate-200 rounded-full h-2 overflow-hidden">
-                          <div
-                            className={`h-2 rounded-full ${
-                              isOverBudget ? 'bg-rose-500' : percent > 70 ? 'bg-amber-500' : 'bg-emerald-500'
-                            }`}
-                            style={{ width: `${percent}%` }}
-                          />
-                        </div>
-                        <span className={`text-[11px] font-bold font-mono ${isOverBudget ? 'text-rose-600' : 'text-slate-700'}`}>
-                          {percent}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-3 border-r border-slate-200 text-right font-mono font-bold text-sky-900">
-                      {formatVND(p.remainingBudget)}
-                    </td>
-                    <td className="p-3 text-center">
-                      {p.status === 'IN_PROGRESS' ? (
-                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
-                          Đang thi công
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 bg-sky-100 text-sky-800 rounded-full text-[10px] font-bold">
-                          Hoàn thành
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       {/* ===================================================================== */}
-      {/* BẢNG 3: BIỂU ĐỒ CỘT THỐNG KÊ TIỀN LƯƠNG TRỰC QUAN (CUỐI BÁO CÁO)      */}
+      {/* BẢNG 2: BIỂU ĐỒ CỘT THỐNG KÊ TIỀN LƯƠNG TRỰC QUAN                      */}
       {/* ===================================================================== */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
         {/* Header & Thanh công cụ lọc biểu đồ */}
@@ -2237,7 +2148,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
             </div>
             <div>
               <h3 className="font-black text-xs sm:text-sm text-slate-900 uppercase tracking-tight">
-                3. Biểu Đồ Cột Thống Kê Tiền Lương ({chartMetric === 'NET' ? 'Thực Lĩnh Chi Trả' : 'Tổng Thu Nhập'})
+                2. Biểu Đồ Cột Thống Kê Tiền Lương ({chartMetric === 'NET' ? 'Thực Lĩnh Chi Trả' : 'Tổng Thu Nhập'})
               </h3>
               <p className="text-[11px] text-slate-500">
                 Đối chiếu trực quan 5 Hệ Lương theo từng tháng, từng tuần/đợt và theo ngân sách công trình
@@ -3210,7 +3121,7 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
                       Biểu Đồ Cột So Sánh Dự Toán Nhân Công & Chi Phí Thực Tế Theo Dự Án
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Đối chiếu trực tiếp bảng 2 ({projectExpenses.length} công trình đang quản lý)
+                      Đối chiếu trực tiếp bảng 3 bên dưới ({projectExpenses.length} công trình đang quản lý)
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-[11px] font-semibold text-slate-700">
@@ -3363,6 +3274,110 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
               </div>
             );
           })()}
+        </div>
+      </div>
+
+      {/* Bảng 3: Phân Tích Chi Phí Nhân Công Theo Từng Dự Án / Công Trình (Nằm dưới Biểu đồ) */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-bold text-xs text-slate-900 uppercase">
+            <Building className="w-4 h-4 text-sky-700" />
+            <span>3. Báo Cáo Chi Phí Nhân Công Chi Tiết Theo Từng Dự Án (So Sánh Ngân Sách Dự Toán)</span>
+          </div>
+          <span className="text-[11px] text-slate-500 font-semibold">{projects.length} công trình</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase">
+                <th className="p-3 border-r border-slate-200 text-center w-12">STT</th>
+                <th className="p-3 border-r border-slate-200 w-24">Mã DA</th>
+                <th className="p-3 border-r border-slate-200 min-w-[200px]">Tên Công Trình</th>
+                <th className="p-3 border-r border-slate-200 min-w-[150px]">Chủ Đầu Tư / Địa Điểm</th>
+                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Dự Toán Nhân Công</th>
+                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Chi Phí Thực Tế</th>
+                <th className="p-3 border-r border-slate-200 text-center min-w-[120px]">Tiến Độ Giải Ngân</th>
+                <th className="p-3 border-r border-slate-200 text-right min-w-[130px]">Ngân Sách Còn Lại</th>
+                <th className="p-3 text-center w-28">Trạng Thái</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {projectExpenses.map((p, idx) => {
+                const percent = p.budgetPercent;
+                const isOverBudget = percent >= 95;
+
+                return (
+                  <tr key={p.id} className="hover:bg-sky-50/40 transition-colors">
+                    <td className="p-3 border-r border-slate-200 text-center font-mono text-slate-500">
+                      {idx + 1}
+                    </td>
+                    <td className="p-3 border-r border-slate-200 font-mono font-bold text-[#0f3d64]">
+                      {p.code}
+                    </td>
+                    <td className="p-3 border-r border-slate-200 font-bold text-slate-900">
+                      {p.name}
+                      <div className="text-[10px] text-slate-500 font-normal">Chỉ huy trưởng: {p.managerName}</div>
+                    </td>
+                    <td className="p-3 border-r border-slate-200 text-slate-600">
+                      <div>{p.investor}</div>
+                      <div className="text-[10px] text-slate-400 line-clamp-1">{p.location}</div>
+                    </td>
+                    <td className="p-3 border-r border-slate-200 text-right font-mono font-bold text-slate-700">
+                      {formatVND(p.laborBudget)}
+                    </td>
+                    <td className="p-3 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/20">
+                      {formatVND(p.totalLaborCost)}
+                    </td>
+                    <td className="p-3 border-r border-slate-200 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <svg
+                          viewBox="0 0 56 8"
+                          className="w-14 h-2 shrink-0"
+                          aria-hidden="true"
+                        >
+                          <rect x={0} y={0} width={56} height={8} rx={4} className="fill-slate-200" />
+                          {percent > 0 && (
+                            <rect
+                              x={0}
+                              y={0}
+                              width={Math.max(4, (Math.min(percent, 100) / 100) * 56)}
+                              height={8}
+                              rx={4}
+                              className={
+                                isOverBudget
+                                  ? 'fill-rose-500'
+                                  : percent > 70
+                                  ? 'fill-amber-500'
+                                  : 'fill-emerald-500'
+                              }
+                            />
+                          )}
+                        </svg>
+                        <span className={`text-[11px] font-bold font-mono tabular-nums ${isOverBudget ? 'text-rose-600' : 'text-slate-700'}`}>
+                          {percent}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="p-3 border-r border-slate-200 text-right font-mono font-bold text-sky-900">
+                      {formatVND(p.remainingBudget)}
+                    </td>
+                    <td className="p-3 text-center">
+                      {p.status === 'IN_PROGRESS' ? (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                          Đang thi công
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-sky-100 text-sky-800 rounded-full text-[10px] font-bold">
+                          Hoàn thành
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
