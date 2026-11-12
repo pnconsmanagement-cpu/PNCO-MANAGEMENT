@@ -220,6 +220,7 @@ function mergeRemoteConfigPreservingPeriod(
 
 const DELETED_EMP_STORAGE_KEY = 'pncons_deleted_emp_keys';
 const DELETED_SEA_STORAGE_KEY = 'pncons_deleted_sea_keys';
+const DELETED_ADV_STORAGE_KEY = 'pncons_deleted_adv_keys';
 
 function getDeletedKeys(storageKey: string): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -693,10 +694,10 @@ export default function App() {
   // DANH SÁCH BẢN LƯƠNG ỨNG
   const [salaryAdvances, setSalaryAdvances] = useState<SalaryAdvance[]>(() => {
     const saved = localStorage.getItem('payroll_salary_advances');
-    if (saved) {
+    if (saved !== null) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error('Error parsing salary advances', e);
       }
@@ -998,13 +999,41 @@ export default function App() {
     }
   };
 
-  // Hàm tạo chuỗi snapshot đại diện cho TOÀN BỘ thông tin nhân viên (bỏ qua dấu thời gian biến động & tháng đang xem trên UI)
-  const serializeDataSnapshot = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]): string => {
+  const serializeAdvancesSnapshot = (advs: SalaryAdvance[]): string => {
+    try {
+      return JSON.stringify(
+        (advs || []).map((a) => [
+          a.id,
+          a.advanceCode,
+          a.targetType,
+          a.workerId,
+          a.workerCode,
+          Number(a.amount || 0),
+          a.requestDate || '',
+          a.status || 'APPROVED',
+          a.periodKey || '',
+          a.reason || '',
+          a.paymentMethod || 'BANK',
+        ])
+      );
+    } catch {
+      return '';
+    }
+  };
+
+  // Hàm tạo chuỗi snapshot đại diện cho TOÀN BỘ thông tin nhân viên & tạm ứng (bỏ qua dấu thời gian biến động & tháng đang xem trên UI)
+  const serializeDataSnapshot = (
+    cfg: CompanyConfig,
+    emps: Employee[],
+    seas: SeasonalWorker[],
+    advs: SalaryAdvance[] = salaryAdvancesRef.current
+  ): string => {
     try {
       return JSON.stringify({
         c: serializeConfigSnapshot(cfg),
         e: serializeEmployeesSnapshot(emps),
         s: serializeSeasonalSnapshot(seas),
+        a: serializeAdvancesSnapshot(advs),
       });
     } catch {
       return '';
@@ -1014,10 +1043,11 @@ export default function App() {
   // Snapshot & state refs theo dõi trạng thái mới nhất (chống stale closure, chống loop và không ghi đè khi đang nhập liệu)
   const lastSavedSnapshotRef = useRef<string>('');
   const lastServerSnapshotRef = useRef<string>('');
-  const lastSavedPartsRef = useRef<{ cfg: string; emp: string; sea: string }>({
+  const lastSavedPartsRef = useRef<{ cfg: string; emp: string; sea: string; adv: string }>({
     cfg: '',
     emp: '',
     sea: '',
+    adv: '',
   });
   const isSyncingRef = useRef(false);
   const activeSyncCountRef = useRef<number>(0);
@@ -1027,12 +1057,18 @@ export default function App() {
   const singleWorkerSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const realtimeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const markSnapshotAsSaved = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]) => {
+  const markSnapshotAsSaved = (
+    cfg: CompanyConfig,
+    emps: Employee[],
+    seas: SeasonalWorker[],
+    advs: SalaryAdvance[] = salaryAdvancesRef.current
+  ) => {
     const cfgSnap = serializeConfigSnapshot(cfg);
     const empSnap = serializeEmployeesSnapshot(emps);
     const seaSnap = serializeSeasonalSnapshot(seas);
-    const fullSnap = JSON.stringify({ c: cfgSnap, e: empSnap, s: seaSnap });
-    lastSavedPartsRef.current = { cfg: cfgSnap, emp: empSnap, sea: seaSnap };
+    const advSnap = serializeAdvancesSnapshot(advs);
+    const fullSnap = JSON.stringify({ c: cfgSnap, e: empSnap, s: seaSnap, a: advSnap });
+    lastSavedPartsRef.current = { cfg: cfgSnap, emp: empSnap, sea: seaSnap, adv: advSnap };
     lastSavedSnapshotRef.current = fullSnap;
     lastServerSnapshotRef.current = fullSnap;
     return fullSnap;
@@ -1621,15 +1657,31 @@ export default function App() {
             ).mergedList
           : latestSeasonal;
 
-      const currentMemorySnapshot = serializeDataSnapshot(latestConfig, latestEmployees, latestSeasonal);
-      const newSnapshot = serializeDataSnapshot(appliedCfg, appliedEmp, appliedSea);
+      const effectiveAdvs =
+        cloudAdvs !== null
+          ? reconcileWorkerAdvancesIntoList(cloudAdvs, appliedEmp, appliedSea)
+          : salaryAdvancesRef.current;
+
+      if (cloudAdvs !== null) {
+        salaryAdvancesRef.current = effectiveAdvs;
+        setSalaryAdvances(effectiveAdvs);
+        localStorage.setItem('payroll_salary_advances', JSON.stringify(effectiveAdvs));
+      }
+
+      const currentMemorySnapshot = serializeDataSnapshot(
+        latestConfig,
+        latestEmployees,
+        latestSeasonal,
+        salaryAdvancesRef.current
+      );
+      const newSnapshot = serializeDataSnapshot(appliedCfg, appliedEmp, appliedSea, effectiveAdvs);
       if (options?.silent && newSnapshot && newSnapshot === currentMemorySnapshot) {
-        markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
+        markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea, effectiveAdvs);
         setCloudSyncStatus((prev) => (prev === 'syncing' ? prev : 'synced'));
         return;
       }
 
-      markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
+      markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea, effectiveAdvs);
 
       if (cloudCfg) {
         configRef.current = appliedCfg;
@@ -1903,7 +1955,18 @@ export default function App() {
               ).mergedList
             : seasonalWorkersRef.current;
 
-        markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
+        const effectiveAdvs =
+          cloudAdvs !== null
+            ? reconcileWorkerAdvancesIntoList(cloudAdvs, appliedEmps, appliedSeas)
+            : salaryAdvancesRef.current;
+
+        if (cloudAdvs !== null) {
+          salaryAdvancesRef.current = effectiveAdvs;
+          setSalaryAdvances(effectiveAdvs);
+          localStorage.setItem('payroll_salary_advances', JSON.stringify(effectiveAdvs));
+        }
+
+        markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas, effectiveAdvs);
 
         if (cloudCfg) {
           configRef.current = appliedCfg;
@@ -2090,6 +2153,29 @@ export default function App() {
 
     seasonalWorkersRef.current = next;
     setSeasonalWorkers(next);
+
+    // Đồng bộ 2 chiều: nếu người dùng nhập/sửa trực tiếp tiền Tạm ứng của thợ (tại 2.1 Sửa thợ hoặc 2.3 Bản Lương Tổ Đội), tự động tạo/cập nhật phiếu trong salaryAdvances để ghi lên bảng salary_advances khi nhấn Lưu Data
+    const curM = configRef.current.month || realDateInfo.realMonth;
+    const curY = configRef.current.year || realDateInfo.realYear;
+    const mStr = String(curM).padStart(2, '0');
+    const monthPeriodKey = `${curY}-${mStr}_MONTH`;
+    const targetAdv = Number(
+      finalWorker.periodRecords?.[monthPeriodKey]?.advancePayment ??
+        updated.advancePayment ??
+        finalWorker.advancePayment ??
+        0
+    );
+    syncDirectWorkerAdvanceIntoList(
+      'SEASONAL',
+      finalWorker.id,
+      finalWorker.code,
+      finalWorker.fullName,
+      finalWorker.project || finalWorker.trade || 'Công trình',
+      finalWorker.paymentMethod || 'BANK',
+      targetAdv,
+      curM,
+      curY
+    );
   };
 
   // Thêm mới công nhân thời vụ (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
@@ -2255,6 +2341,23 @@ export default function App() {
 
     employeesRef.current = nextList;
     setEmployees(nextList);
+
+    // Đồng bộ 2 chiều: nếu người dùng nhập/sửa trực tiếp tiền Tạm ứng trong hồ sơ NV chính thức, tự động tạo/cập nhật phiếu trong salaryAdvances
+    if (updated.advancePayment !== undefined) {
+      const curM = configRef.current.month || realDateInfo.realMonth;
+      const curY = configRef.current.year || realDateInfo.realYear;
+      syncDirectWorkerAdvanceIntoList(
+        'PERMANENT',
+        updated.id,
+        updated.code,
+        updated.fullName,
+        updated.department || 'Công ty Phúc Nguyên',
+        'BANK',
+        Number(updated.advancePayment || 0),
+        curM,
+        curY
+      );
+    }
   };
 
   // Thêm nhân viên chính thức (cập nhật đồng bộ vào employeesRef.current, chờ nhấn "Lưu Data")
@@ -2415,7 +2518,7 @@ export default function App() {
         );
       }
 
-      markSnapshotAsSaved(cfgToSync, latestEmps, latestSeas);
+      markSnapshotAsSaved(cfgToSync, latestEmps, latestSeas, latestAdvances);
 
       // 3. Lưu lên Máy chủ Backend
       await saveAllToServer(
@@ -2451,6 +2554,7 @@ export default function App() {
         );
         if (!cloudReport.success) {
           cloudSyncErrorMsg =
+            cloudReport.salaryAdvances?.error ||
             cloudReport.employees.error ||
             cloudReport.seasonalWorkers.error ||
             cloudReport.companyConfig.error ||
@@ -2729,6 +2833,193 @@ export default function App() {
     return true;
   };
 
+  function generateNextUniqueAdvanceCode(existingList: SalaryAdvance[], yearNum: number): string {
+    const used = new Set(existingList.map((a) => String(a.advanceCode || '').trim()));
+    let maxSeq = existingList.reduce((maxN, a) => {
+      const m = String(a.advanceCode || '').match(/(\d+)\s*$/);
+      if (!m) return maxN;
+      const num = parseInt(m[1], 10);
+      return !isNaN(num) && num < 100000 ? Math.max(maxN, num) : maxN;
+    }, 0);
+    let seq = Math.max(existingList.length + 1, maxSeq + 1);
+    let candidate = `TU-${yearNum}-${seq < 100 ? String(seq).padStart(3, '0') : seq}`;
+    while (used.has(candidate)) {
+      seq += 1;
+      candidate = `TU-${yearNum}-${seq < 100 ? String(seq).padStart(3, '0') : seq}`;
+    }
+    return candidate;
+  }
+
+  // Khôi phục tự động các khoản tạm ứng thực tế đã ghi trong periodRecords của công nhân / nhân viên nếu bảng salary_advances bị thiếu
+  function reconcileWorkerAdvancesIntoList(
+    baseAdvances: SalaryAdvance[],
+    empList: Employee[],
+    seaList: SeasonalWorker[]
+  ): SalaryAdvance[] {
+    const deletedAdvKeys = getDeletedKeys(DELETED_ADV_STORAGE_KEY);
+    const nextList = [...baseAdvances];
+
+    seaList.forEach((w) => {
+      if (!w || isUnmodifiedMockSeasonalWorker(w)) return;
+      const pRecs = w.periodRecords || {};
+      Object.entries(pRecs).forEach(([pKey, rec]) => {
+        if (!rec || !pKey.endsWith('_MONTH')) return;
+        const amt = Number(rec.advancePayment || 0);
+        if (amt <= 0) return;
+        const mMatch = pKey.match(/^(\d{4})-(\d{2})_MONTH$/);
+        if (!mMatch) return;
+        const yr = Number(mMatch[1]);
+        const mo = Number(mMatch[2]);
+        if (yr === 2026 && mo === 9 && INITIAL_SEASONAL_CODES.has(w.code)) return;
+
+        const periodKeyStr = `${String(mo).padStart(2, '0')}/${yr}`;
+        const delSig = `SEASONAL:${w.code || w.id}:${periodKeyStr}`;
+        if (deletedAdvKeys.has(delSig)) return;
+
+        const alreadyHas = nextList.some(
+          (a) =>
+            (a.targetType === 'SEASONAL' || a.targetType === 'TEAM') &&
+            (a.workerId === w.id || a.workerCode === w.code) &&
+            doesAdvanceMatchMonthYear(a, mo, yr)
+        );
+        if (!alreadyHas) {
+          nextList.push({
+            id: `adv-sea-${yr}${String(mo).padStart(2, '0')}-${w.code || w.id}`,
+            advanceCode: generateNextUniqueAdvanceCode(nextList, yr),
+            targetType: 'SEASONAL',
+            workerId: w.id,
+            workerCode: w.code,
+            workerName: w.fullName,
+            departmentOrProject: w.project || w.trade || 'Công trình',
+            amount: amt,
+            requestDate: `10/${String(mo).padStart(2, '0')}/${yr}`,
+            paymentDate: `10/${String(mo).padStart(2, '0')}/${yr}`,
+            reason: w.payrollCycleType === 'TEAM' ? 'Tạm ứng lương Tổ đội' : 'Tạm ứng lương công trường',
+            paymentMethod: w.paymentMethod || 'BANK',
+            status: 'APPROVED',
+            approvedBy: 'Admin (Giám đốc)',
+            periodKey: periodKeyStr,
+          });
+        }
+      });
+    });
+
+    empList.forEach((e) => {
+      if (!e) return;
+      const pRecs = e.periodRecords || {};
+      Object.entries(pRecs).forEach(([pKey, rec]: [string, any]) => {
+        const amt = Number(rec?.advancePayment || 0);
+        if (amt <= 0) return;
+        const mMatch = pKey.match(/^(\d{4})-(\d{2})/);
+        if (!mMatch) return;
+        const yr = Number(mMatch[1]);
+        const mo = Number(mMatch[2]);
+        const periodKeyStr = `${String(mo).padStart(2, '0')}/${yr}`;
+        const delSig = `PERMANENT:${e.code || e.id}:${periodKeyStr}`;
+        if (deletedAdvKeys.has(delSig)) return;
+
+        const alreadyHas = nextList.some(
+          (a) =>
+            a.targetType === 'PERMANENT' &&
+            (a.workerId === e.id || a.workerCode === e.code) &&
+            doesAdvanceMatchMonthYear(a, mo, yr)
+        );
+        if (!alreadyHas) {
+          nextList.push({
+            id: `adv-emp-${yr}${String(mo).padStart(2, '0')}-${e.code || e.id}`,
+            advanceCode: generateNextUniqueAdvanceCode(nextList, yr),
+            targetType: 'PERMANENT',
+            workerId: e.id,
+            workerCode: e.code,
+            workerName: e.fullName,
+            departmentOrProject: e.department || 'Công ty Phúc Nguyên',
+            amount: amt,
+            requestDate: `10/${String(mo).padStart(2, '0')}/${yr}`,
+            paymentDate: `10/${String(mo).padStart(2, '0')}/${yr}`,
+            reason: 'Tạm ứng tiền lương giữa kỳ',
+            paymentMethod: 'BANK',
+            status: 'APPROVED',
+            approvedBy: 'Admin (Giám đốc)',
+            periodKey: periodKeyStr,
+          });
+        }
+      });
+    });
+
+    return nextList;
+  }
+
+  // Đồng bộ khi người dùng sửa trực tiếp ô Tạm ứng trong modal nhân sự hoặc bảng lương Tổ đội
+  function syncDirectWorkerAdvanceIntoList(
+    targetType: 'PERMANENT' | 'SEASONAL',
+    workerId: string,
+    workerCode: string,
+    workerName: string,
+    deptOrProj: string,
+    paymentMethod: 'BANK' | 'CASH',
+    newAmount: number,
+    mo: number,
+    yr: number
+  ) {
+    const curList = salaryAdvancesRef.current;
+    const matching = curList.filter(
+      (a) =>
+        (targetType === 'PERMANENT'
+          ? a.targetType === 'PERMANENT'
+          : a.targetType === 'SEASONAL' || a.targetType === 'TEAM') &&
+        (a.workerId === workerId || a.workerCode === workerCode) &&
+        doesAdvanceMatchMonthYear(a, mo, yr)
+    );
+    const currentSum = matching.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const cleanTarget = Math.max(0, Math.round(Number(newAmount || 0)));
+    if (cleanTarget === currentSum) return;
+
+    const mStr = String(mo).padStart(2, '0');
+    const periodKeyStr = `${mStr}/${yr}`;
+    const dayStr = String(Math.min(new Date().getDate(), 28)).padStart(2, '0');
+    let nextAdvances: SalaryAdvance[];
+
+    if (cleanTarget === 0) {
+      const matchIds = new Set(matching.map((x) => x.id));
+      nextAdvances = curList.filter((a) => !matchIds.has(a.id));
+      addDeletedKeys(DELETED_ADV_STORAGE_KEY, [`${targetType}:${workerCode || workerId}:${periodKeyStr}`]);
+    } else if (matching.length === 1) {
+      const targetId = matching[0].id;
+      nextAdvances = curList.map((a) => (a.id === targetId ? { ...a, amount: cleanTarget } : a));
+      removeDeletedKeys(DELETED_ADV_STORAGE_KEY, [`${targetType}:${workerCode || workerId}:${periodKeyStr}`]);
+    } else if (matching.length > 1) {
+      const firstId = matching[0].id;
+      const otherIds = new Set(matching.slice(1).map((x) => x.id));
+      nextAdvances = curList
+        .filter((a) => !otherIds.has(a.id))
+        .map((a) => (a.id === firstId ? { ...a, amount: cleanTarget } : a));
+      removeDeletedKeys(DELETED_ADV_STORAGE_KEY, [`${targetType}:${workerCode || workerId}:${periodKeyStr}`]);
+    } else {
+      const created: SalaryAdvance = {
+        id: `adv-${targetType === 'PERMANENT' ? 'emp' : 'sea'}-${yr}${mStr}-${workerCode || workerId}`,
+        advanceCode: generateNextUniqueAdvanceCode(curList, yr),
+        targetType,
+        workerId,
+        workerCode,
+        workerName,
+        departmentOrProject: deptOrProj,
+        amount: cleanTarget,
+        requestDate: `${dayStr}/${mStr}/${yr}`,
+        paymentDate: `${dayStr}/${mStr}/${yr}`,
+        reason: targetType === 'PERMANENT' ? 'Tạm ứng tiền lương giữa kỳ' : 'Tạm ứng tiền công trường',
+        paymentMethod,
+        status: 'APPROVED',
+        approvedBy: 'Admin (Giám đốc)',
+        periodKey: periodKeyStr,
+      };
+      nextAdvances = [created, ...curList];
+      removeDeletedKeys(DELETED_ADV_STORAGE_KEY, [`${targetType}:${workerCode || workerId}:${periodKeyStr}`]);
+    }
+
+    salaryAdvancesRef.current = nextAdvances;
+    setSalaryAdvances(nextAdvances);
+  }
+
   // Đồng bộ danh sách phiếu tạm ứng vào Nhân viên chính thức & Nhân viên thời vụ trong bộ nhớ (chờ nhấn "Lưu Data")
   const syncAdvancesIntoWorkers = (nextAdvances: SalaryAdvance[]) => {
     const curM = configRef.current.month || realDateInfo.realMonth;
@@ -2750,7 +3041,7 @@ export default function App() {
     const nextSeasonal = seasonalWorkersRef.current.map((w) => {
       const workerAdvances = nextAdvances.filter(
         (a) =>
-          a.targetType === 'SEASONAL' &&
+          (a.targetType === 'SEASONAL' || a.targetType === 'TEAM') &&
           (a.workerId === w.id || a.workerCode === w.code) &&
           doesAdvanceMatchMonthYear(a, curM, curY)
       );
@@ -2786,6 +3077,10 @@ export default function App() {
   // Handlers for Salary Advances (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleAddSalaryAdvance = (adv: SalaryAdvance) => {
     markUnsaved();
+    const grp = adv.targetType === 'PERMANENT' ? 'PERMANENT' : 'SEASONAL';
+    removeDeletedKeys(DELETED_ADV_STORAGE_KEY, [
+      `${grp}:${adv.workerCode || adv.workerId}:${adv.periodKey}`,
+    ]);
     const updated = [adv, ...salaryAdvancesRef.current];
     salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
@@ -2793,6 +3088,10 @@ export default function App() {
   };
   const handleUpdateSalaryAdvance = (adv: SalaryAdvance) => {
     markUnsaved();
+    const grp = adv.targetType === 'PERMANENT' ? 'PERMANENT' : 'SEASONAL';
+    removeDeletedKeys(DELETED_ADV_STORAGE_KEY, [
+      `${grp}:${adv.workerCode || adv.workerId}:${adv.periodKey}`,
+    ]);
     const updated = salaryAdvancesRef.current.map((item) => (item.id === adv.id ? adv : item));
     salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
@@ -2800,6 +3099,13 @@ export default function App() {
   };
   const handleDeleteSalaryAdvance = (id: string) => {
     markUnsaved();
+    const target = salaryAdvancesRef.current.find((item) => item.id === id);
+    if (target) {
+      const grp = target.targetType === 'PERMANENT' ? 'PERMANENT' : 'SEASONAL';
+      addDeletedKeys(DELETED_ADV_STORAGE_KEY, [
+        `${grp}:${target.workerCode || target.workerId}:${target.periodKey}`,
+      ]);
+    }
     const updated = salaryAdvancesRef.current.filter((item) => item.id !== id);
     salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
@@ -2848,14 +3154,18 @@ export default function App() {
       const synced = syncSeasonalWorkerForMonth(w, m, y);
       const matchingAdvances = salaryAdvances.filter(
         (a) =>
-          a.targetType === 'SEASONAL' &&
+          (a.targetType === 'SEASONAL' || a.targetType === 'TEAM') &&
           (a.workerId === synced.id || a.workerCode === synced.code) &&
           doesAdvanceMatchMonthYear(a, m, y)
       );
+      const fallbackAdv =
+        isUnmodifiedMockSeasonalWorker(w) && !(y === 2026 && m === 9)
+          ? 0
+          : Number(synced.advancePayment || 0);
       const sumAdv =
         matchingAdvances.length > 0
           ? matchingAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
-          : 0;
+          : fallbackAdv;
       const totalDeductions = (synced.personalIncomeTax || 0) + sumAdv;
       const netSalary = Math.max(0, (synced.totalIncome || 0) - totalDeductions);
       return {
@@ -3404,7 +3714,7 @@ export default function App() {
                           <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
                             seasonalSubTab === 'ADVANCES' ? 'bg-slate-900 text-amber-300' : 'bg-slate-200 text-slate-700'
                           }`}>
-                            {salaryAdvances.filter((a) => a.targetType === 'SEASONAL').length}
+                            {salaryAdvances.filter((a) => a.targetType === 'SEASONAL' || a.targetType === 'TEAM').length}
                           </span>
                         </button>
                       </div>
@@ -3839,9 +4149,10 @@ export default function App() {
           const appliedTeams = newTeams !== undefined ? newTeams : teamWorkersRef.current;
           const appliedProjs =
             newProjs && newProjs.length > 0 ? newProjs : projectsRef.current;
-          const appliedAdvs = newAdvs !== undefined ? newAdvs : salaryAdvancesRef.current;
+          const rawAdvs = newAdvs !== undefined ? newAdvs : salaryAdvancesRef.current;
+          const appliedAdvs = reconcileWorkerAdvancesIntoList(rawAdvs, appliedEmps, appliedSeas);
 
-          markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
+          markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas, appliedAdvs);
 
           configRef.current = appliedCfg;
           setConfig(appliedCfg);
@@ -3868,7 +4179,7 @@ export default function App() {
             setProjects(appliedProjs);
             localStorage.setItem('payroll_projects', JSON.stringify(appliedProjs));
           }
-          if (newAdvs !== undefined) {
+          if (newAdvs !== undefined || appliedAdvs.length !== rawAdvs.length) {
             salaryAdvancesRef.current = appliedAdvs;
             setSalaryAdvances(appliedAdvs);
             localStorage.setItem('payroll_salary_advances', JSON.stringify(appliedAdvs));

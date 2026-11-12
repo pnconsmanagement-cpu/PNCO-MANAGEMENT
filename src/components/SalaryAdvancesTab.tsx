@@ -136,6 +136,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           code: e.code,
           name: e.fullName,
           sub: e.department,
+          resolvedTargetType: 'PERMANENT' as const,
         }));
     } else if (formTargetType === 'SEASONAL') {
       return seasonalWorkers
@@ -144,17 +145,29 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           id: w.id,
           code: w.code,
           name: w.fullName,
-          sub: w.project || w.trade,
+          sub: `${w.project || w.trade || ''}${w.payrollCycleType === 'TEAM' ? ' • Hệ Tổ đội' : ''}`,
+          resolvedTargetType: 'SEASONAL' as const,
         }));
     } else {
-      return teamWorkers
+      const seasonalTeams = seasonalWorkers
+        .filter((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM')
+        .map((w) => ({
+          id: w.id,
+          code: w.code,
+          name: w.fullName,
+          sub: `${w.project || w.trade || 'Tổ đội'} • Bản Lương Tổ Đội`,
+          resolvedTargetType: 'SEASONAL' as const,
+        }));
+      const legacyTeams = teamWorkers
         .filter((t) => (t.status || 'ACTIVE') === 'ACTIVE')
         .map((t) => ({
           id: t.id,
           code: t.code,
           name: t.teamName,
           sub: `${t.leaderName} (${t.project})`,
+          resolvedTargetType: 'TEAM' as const,
         }));
+      return [...seasonalTeams, ...legacyTeams];
     }
   }, [formTargetType, employees, seasonalWorkers, teamWorkers]);
 
@@ -223,7 +236,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     if (editingAdvance) {
       const updatedAdv: SalaryAdvance = {
         ...editingAdvance,
-        targetType: formTargetType,
+        targetType: (selectedWorker as any).resolvedTargetType || formTargetType,
         workerId: selectedWorker.id,
         workerCode: selectedWorker.code,
         workerName: selectedWorker.name,
@@ -238,18 +251,33 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       };
       onUpdateAdvance(updatedAdv);
       showToast(
-        `Đã cập nhật phiếu tạm ứng ${updatedAdv.advanceCode} (${formatVND(updatedAdv.amount)}) — Đã đồng bộ vào ô Tạm ứng trên Bản Lương!`
+        `Đã cập nhật phiếu ${updatedAdv.advanceCode} (${formatVND(updatedAdv.amount)}) — Nhấn nút "Lưu Data" để ghi lên bảng salary_advances!`
       );
       setEditingAdvance(null);
       setIsModalOpen(false);
       return;
     }
 
-    const nextIdx = advances.length + 1;
+    // Sinh mã phiếu TU-YYYY-NNN không bao giờ trùng lặp với các phiếu đã có (tránh lỗi UNIQUE constraint trên Supabase)
+    const existingCodes = new Set(advances.map((a) => String(a.advanceCode || '').trim()));
+    const yearPrefix = formRequestDate.slice(0, 4) || String(config.year || 2026);
+    let maxSeq = advances.reduce((maxN, a) => {
+      const m = String(a.advanceCode || '').match(/(\d+)\s*$/);
+      if (!m) return maxN;
+      const num = parseInt(m[1], 10);
+      return !isNaN(num) && num < 100000 ? Math.max(maxN, num) : maxN;
+    }, 0);
+    let nextSeq = Math.max(advances.length + 1, maxSeq + 1);
+    let candidateCode = `TU-${yearPrefix}-${nextSeq < 100 ? String(nextSeq).padStart(3, '0') : nextSeq}`;
+    while (existingCodes.has(candidateCode)) {
+      nextSeq += 1;
+      candidateCode = `TU-${yearPrefix}-${nextSeq < 100 ? String(nextSeq).padStart(3, '0') : nextSeq}`;
+    }
+
     const newAdv: SalaryAdvance = {
       id: `adv-${Date.now()}`,
-      advanceCode: `TU-2026-${nextIdx < 100 ? String(nextIdx).padStart(3, '0') : nextIdx}`,
-      targetType: formTargetType,
+      advanceCode: candidateCode,
+      targetType: (selectedWorker as any).resolvedTargetType || formTargetType,
       workerId: selectedWorker.id,
       workerCode: selectedWorker.code,
       workerName: selectedWorker.name,
@@ -267,7 +295,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
 
     onAddAdvance(newAdv);
     showToast(
-      `Đã tạo phiếu tạm ứng ${newAdv.advanceCode} (${formatVND(newAdv.amount)}) cho ${newAdv.workerName} — Đã tự động cập nhật vào ô Tạm ứng trên Bản Lương!`
+      `Đã tạo phiếu ${newAdv.advanceCode} (${formatVND(newAdv.amount)}) — Nhấn nút "Lưu Data" màu vàng để ghi vào Supabase!`
     );
     setIsModalOpen(false);
   };
@@ -283,15 +311,14 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     onUpdateAdvance(updated);
     showToast(
       nextStatus === 'DEDUCTED'
-        ? `Đã xác nhận khấu trừ phiếu ${adv.advanceCode} vào bảng lương!`
-        : `Đã cập nhật trạng thái phiếu ${adv.advanceCode}`
+        ? `Đã chuyển trạng thái phiếu ${adv.advanceCode} — Nhấn "Lưu Data" để lưu lên Supabase!`
+        : `Đã cập nhật trạng thái phiếu ${adv.advanceCode} — Nhấn "Lưu Data" để lưu!`
     );
   };
 
-  // Lọc danh sách - CHỈ HIỂN THỊ PHIẾU ỨNG CỦA NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
-  const filteredAdvances = useMemo(() => {
+  // Danh sách theo phân hệ đang xem (Chính thức hoặc Thời vụ/Tổ đội)
+  const scopedAdvancesByGroup = useMemo(() => {
     return advances.filter((adv) => {
-      // 1. Kiểm tra xem nhân sự có đang làm việc (ACTIVE) hay không
       let isWorkerActive = true;
       if (adv.targetType === 'PERMANENT') {
         const emp = employees.find((e) => e.id === adv.workerId || e.code === adv.workerCode);
@@ -300,29 +327,47 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         const worker = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
         if (worker && (worker.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
       } else if (adv.targetType === 'TEAM') {
+        const swTeam = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
         const team = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
-        if (team && (team.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
+        if (swTeam && (swTeam.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
+        if (!swTeam && team && (team.status || 'ACTIVE') !== 'ACTIVE') isWorkerActive = false;
       }
       if (!isWorkerActive) return false;
 
-      const matchSearch =
-        adv.workerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        adv.workerCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        adv.advanceCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        adv.departmentOrProject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        adv.reason.toLowerCase().includes(searchTerm.toLowerCase());
-
-      const matchTarget = targetTypeFilter === 'ALL' || adv.targetType === targetTypeFilter;
-      const matchStatus = statusFilter === 'ALL' || adv.status === statusFilter;
-
-      return matchSearch && matchTarget && matchStatus;
+      if (targetTypeFilter === 'ALL') return true;
+      if (targetTypeFilter === 'SEASONAL') {
+        return adv.targetType === 'SEASONAL' || adv.targetType === 'TEAM';
+      }
+      return adv.targetType === targetTypeFilter;
     });
-  }, [advances, employees, seasonalWorkers, teamWorkers, searchTerm, targetTypeFilter, statusFilter]);
+  }, [advances, employees, seasonalWorkers, teamWorkers, targetTypeFilter]);
 
-  // Thống kê
-  const totalAmount = advances.reduce((sum, a) => sum + (a.amount || 0), 0);
-  const deductedAmount = advances.filter((a) => a.status === 'DEDUCTED').reduce((sum, a) => sum + (a.amount || 0), 0);
-  const approvedAmount = advances.filter((a) => a.status === 'APPROVED').reduce((sum, a) => sum + (a.amount || 0), 0);
+  // Lọc danh sách hiển thị trên bảng theo từ khóa & trạng thái
+  const filteredAdvances = useMemo(() => {
+    return scopedAdvancesByGroup.filter((adv) => {
+      const q = searchTerm.toLowerCase();
+      const matchSearch =
+        !q ||
+        (adv.workerName || '').toLowerCase().includes(q) ||
+        (adv.workerCode || '').toLowerCase().includes(q) ||
+        (adv.advanceCode || '').toLowerCase().includes(q) ||
+        (adv.departmentOrProject || '').toLowerCase().includes(q) ||
+        (adv.reason || '').toLowerCase().includes(q) ||
+        (adv.periodKey || '').toLowerCase().includes(q);
+
+      const matchStatus = statusFilter === 'ALL' || adv.status === statusFilter;
+      return matchSearch && matchStatus;
+    });
+  }, [scopedAdvancesByGroup, searchTerm, statusFilter]);
+
+  // Thống kê đúng theo phân hệ đang mở (không cộng lẫn phiếu của khối khác)
+  const totalAmount = scopedAdvancesByGroup.reduce((sum, a) => sum + (a.amount || 0), 0);
+  const deductedAmount = scopedAdvancesByGroup
+    .filter((a) => a.status === 'DEDUCTED')
+    .reduce((sum, a) => sum + (a.amount || 0), 0);
+  const approvedAmount = scopedAdvancesByGroup
+    .filter((a) => a.status === 'APPROVED')
+    .reduce((sum, a) => sum + (a.amount || 0), 0);
 
   // Xuất file Excel
   const handleExportExcel = () => {
@@ -359,14 +404,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     showToast('Đã xuất danh sách tạm ứng lương ra Excel thành công!');
   };
 
-  // In phiếu chi tạm ứng
+  // In phiếu chi tạm ứng an toàn qua iframe ẩn (không cần pop-up window.open)
   const handlePrintAdvanceReceipt = (adv: SalaryAdvance) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Vui lòng mở pop-up trên trình duyệt để in phiếu tạm ứng!');
-      return;
-    }
-
     const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -444,16 +483,31 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
             <div>Phúc Nguyên PNCONS</div>
           </div>
         </div>
-
-        <script>
-          window.onload = function() { window.print(); }
-        </script>
       </body>
       </html>
     `;
 
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+    const iframe = document.createElement('iframe');
+    iframe.className = 'fixed right-0 bottom-0 w-0 h-0 border-0';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      showToast('Không thể khởi tạo khung in phiếu tạm ứng.');
+      return;
+    }
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 1500);
+    }, 300);
   };
 
   return (
@@ -538,13 +592,37 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
       </div>
 
+      {hasUnsavedChanges && onSaveData && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 px-4 py-2.5 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Có thay đổi phiếu tạm ứng chưa ghi lên Supabase Cloud!</strong> Vui lòng nhấn nút{' '}
+              <strong>Lưu Data</strong> để ghi chính thức vào bảng <code className="font-mono font-bold">salary_advances</code>.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              await onSaveData();
+              showToast('Đã ghi toàn bộ phiếu tạm ứng vào bảng salary_advances trên Supabase!');
+            }}
+            disabled={isSavingData}
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-lg text-xs cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{isSavingData ? 'Đang ghi Supabase...' : 'Lưu lên Supabase ngay'}</span>
+          </button>
+        </div>
+      )}
+
       {/* 4 Thẻ Chỉ Số Tạm Ứng */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-2xs">
           <div>
             <div className="text-slate-500 font-medium">Tổng tiền đã tạm ứng</div>
             <div className="text-xl font-black text-rose-700 mt-0.5">{formatVND(totalAmount)}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5">{advances.length} lượt đề xuất ứng</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">{scopedAdvancesByGroup.length} phiếu tạm ứng</div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-700 shrink-0">
             <DollarSign className="w-5 h-5" />
@@ -568,7 +646,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           <div>
             <div className="text-slate-500 font-medium">Đã duyệt chi (Chờ trừ lương)</div>
             <div className="text-xl font-black text-amber-700 mt-0.5">{formatVND(approvedAmount)}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Sẽ trừ vào kỳ lương {config.periodCode}</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">Kỳ đang xem: {config.periodCode}</div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
             <Clock className="w-5 h-5" />
@@ -580,7 +658,10 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
             <div className="text-slate-500 font-medium">Cơ cấu đối tượng ứng</div>
             <div className="text-xs font-bold text-slate-800 mt-1 space-y-0.5">
               <div>Chính thức: {advances.filter((a) => a.targetType === 'PERMANENT').length} phiếu</div>
-              <div className="text-amber-800">Thời vụ: {advances.filter((a) => a.targetType === 'SEASONAL').length} &bull; Tổ đội: {advances.filter((a) => a.targetType === 'TEAM').length}</div>
+              <div className="text-amber-800">
+                Thời vụ & Tổ đội:{' '}
+                {advances.filter((a) => a.targetType === 'SEASONAL' || a.targetType === 'TEAM').length} phiếu
+              </div>
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0f3d64] shrink-0">
@@ -704,7 +785,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                       </td>
 
                       <td className="p-3 border-r border-slate-200 text-center font-mono text-slate-600">
-                        {adv.requestDate}
+                        <div>{adv.requestDate}</div>
+                        <div className="text-[10px] font-bold text-sky-700">Kỳ {adv.periodKey}</div>
                       </td>
 
                       <td className="p-3 border-r border-slate-200 text-slate-600">
@@ -837,7 +919,11 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                     type="button"
                     onClick={() => {
                       setFormTargetType('TEAM');
-                      setFormWorkerId(teamWorkers[0]?.id || '');
+                      const firstTeamWorker =
+                        seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM')?.id ||
+                        teamWorkers[0]?.id ||
+                        '';
+                      setFormWorkerId(firstTeamWorker);
                     }}
                     className={`py-1.5 rounded-md font-bold text-center transition ${
                       formTargetType === 'TEAM' ? 'bg-indigo-700 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'

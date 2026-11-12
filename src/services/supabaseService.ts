@@ -1749,38 +1749,102 @@ export const syncSalaryAdvancesToSupabase = async (
       return { success: true, count: 0, message: 'Danh sách rỗng.' };
     }
 
-    const payload = advances.map((a) => ({
-      id: String(a.id || a.advanceCode),
-      advance_code: String(a.advanceCode),
-      target_type: String(a.targetType || 'PERMANENT'),
-      worker_id: String(a.workerId),
-      worker_code: String(a.workerCode),
-      worker_name: String(a.workerName),
-      department_or_project: String(a.departmentOrProject || ''),
-      amount: Number(a.amount || 0),
-      request_date: String(a.requestDate),
-      payment_date: a.paymentDate ? String(a.paymentDate) : null,
-      reason: String(a.reason || ''),
-      payment_method: String(a.paymentMethod || 'BANK'),
-      status: String(a.status || 'APPROVED'),
-      approved_by: String(a.approvedBy || ''),
-      period_key: String(a.periodKey || periodCode || '09/2026'),
-      notes: String(a.notes || ''),
-      updated_at: new Date().toISOString(),
-    }));
+    // Đảm bảo id & advance_code không bao giờ bị trùng lặp (tránh lỗi UNIQUE constraint trên bảng salary_advances)
+    const usedIds = new Set<string>();
+    const usedCodes = new Set<string>();
 
+    const payload = advances.map((a, idx) => {
+      let baseId = String(a.id || a.advanceCode || `adv-${Date.now()}-${idx}`).trim();
+      if (usedIds.has(baseId)) {
+        baseId = `${baseId}-${idx + 1}`;
+      }
+      usedIds.add(baseId);
+
+      let baseCode = String(a.advanceCode || `TU-2026-${String(idx + 1).padStart(3, '0')}`).trim();
+      if (usedCodes.has(baseCode)) {
+        let suffix = 2;
+        while (usedCodes.has(`${baseCode}-${suffix}`)) {
+          suffix += 1;
+        }
+        baseCode = `${baseCode}-${suffix}`;
+      }
+      usedCodes.add(baseCode);
+
+      return {
+        id: baseId,
+        advance_code: baseCode,
+        target_type: String(a.targetType || 'PERMANENT'),
+        worker_id: String(a.workerId || a.workerCode || ''),
+        worker_code: String(a.workerCode || a.workerId || ''),
+        worker_name: String(a.workerName || ''),
+        department_or_project: String(a.departmentOrProject || ''),
+        amount: Number(a.amount || 0),
+        request_date: String(a.requestDate || new Date().toLocaleDateString('vi-VN')),
+        payment_date: a.paymentDate ? String(a.paymentDate) : null,
+        reason: String(a.reason || ''),
+        payment_method: String(a.paymentMethod || 'BANK'),
+        status: String(a.status || 'APPROVED'),
+        approved_by: String(a.approvedBy || ''),
+        period_key: String(a.periodKey || periodCode || '11/2026'),
+        notes: String(a.notes || ''),
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    // Xóa các dòng cũ đã bị xóa trên giao diện HOẶC bị trùng advance_code nhưng khác id trước khi upsert
     try {
-      const { data: existingRows } = await client.from('salary_advances').select('id');
+      const { data: existingRows } = await client.from('salary_advances').select('id, advance_code');
       if (existingRows && Array.isArray(existingRows)) {
         const activeIds = new Set(payload.map((p) => p.id));
-        const staleIds = existingRows.map((r: any) => String(r.id)).filter((id) => !activeIds.has(id));
+        const idByCode = new Map(payload.map((p) => [p.advance_code, p.id]));
+        const staleIds = existingRows
+          .filter((r: any) => {
+            const rId = String(r.id);
+            const rCode = String(r.advance_code || '');
+            if (!activeIds.has(rId)) return true;
+            const targetIdForCode = idByCode.get(rCode);
+            if (targetIdForCode && targetIdForCode !== rId) return true;
+            return false;
+          })
+          .map((r: any) => String(r.id));
+
         if (staleIds.length > 0) {
           await client.from('salary_advances').delete().in('id', staleIds);
         }
       }
     } catch {}
 
-    const { error } = await client.from('salary_advances').upsert(payload, { onConflict: 'id' });
+    let { error } = await client.from('salary_advances').upsert(payload, { onConflict: 'id' });
+
+    if (error) {
+      // Thử lại theo onConflict: 'advance_code' nếu vướng khóa UNIQUE advance_code
+      const retryByCode = await client
+        .from('salary_advances')
+        .upsert(payload, { onConflict: 'advance_code' });
+      error = retryByCode.error;
+    }
+
+    if (error) {
+      // Dự phòng trường hợp bảng trên Supabase thiếu các cột tùy chọn (updated_at, notes, approved_by, payment_date)
+      const minimalPayload = payload.map((p) => ({
+        id: p.id,
+        advance_code: p.advance_code,
+        target_type: p.target_type,
+        worker_id: p.worker_id,
+        worker_code: p.worker_code,
+        worker_name: p.worker_name,
+        department_or_project: p.department_or_project,
+        amount: p.amount,
+        request_date: p.request_date,
+        reason: p.reason,
+        payment_method: p.payment_method,
+        status: p.status,
+        period_key: p.period_key,
+      }));
+      const minRes = await client.from('salary_advances').upsert(minimalPayload, { onConflict: 'id' });
+      error = minRes.error;
+    }
+
     if (error) {
       console.error('Sync salary_advances failed:', error);
       return { success: false, count: 0, message: error.message, error: error.message };
@@ -1793,44 +1857,46 @@ export const syncSalaryAdvancesToSupabase = async (
 
 /**
  * Tải danh sách Bản Lương Ứng từ Supabase (Sheet: salary_advances)
+ * Luôn tải TOÀN BỘ các kỳ (09/2026, 10/2026, 11/2026...) để không bao giờ làm mất phiếu ứng của tháng khác khi đồng bộ!
  */
 export const loadSalaryAdvancesFromSupabase = async (
-  periodCode?: string
+  _periodCode?: string
 ): Promise<SalaryAdvance[] | null> => {
   const client = getSupabaseClient();
   if (!client) return null;
 
   try {
-    let query = client.from('salary_advances').select('*');
-    if (periodCode) {
-      query = query.eq('period_key', periodCode);
+    let { data, error } = await client
+      .from('salary_advances')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      const fallbackRes = await client.from('salary_advances').select('*');
+      data = fallbackRes.data;
+      error = fallbackRes.error;
     }
-    let { data, error } = await query;
-    if (!error && (!data || data.length === 0)) {
-      const allRes = await client.from('salary_advances').select('*');
-      data = allRes.data;
-      error = allRes.error;
-    }
+
     if (error || !data) return null;
     if (data.length === 0) return [];
 
     return data.map((d: any) => ({
-      id: d.id,
-      advanceCode: d.advance_code,
-      targetType: d.target_type || 'PERMANENT',
-      workerId: d.worker_id,
-      workerCode: d.worker_code,
-      workerName: d.worker_name,
-      departmentOrProject: d.department_or_project || '',
+      id: String(d.id),
+      advanceCode: String(d.advance_code || d.id),
+      targetType: (d.target_type || 'PERMANENT') as 'PERMANENT' | 'SEASONAL' | 'TEAM',
+      workerId: String(d.worker_id || d.worker_code || ''),
+      workerCode: String(d.worker_code || d.worker_id || ''),
+      workerName: String(d.worker_name || ''),
+      departmentOrProject: String(d.department_or_project || ''),
       amount: Number(d.amount || 0),
-      requestDate: d.request_date,
-      paymentDate: d.payment_date || undefined,
-      reason: d.reason || '',
-      paymentMethod: d.payment_method || 'BANK',
-      status: d.status || 'APPROVED',
-      approvedBy: d.approved_by || undefined,
-      periodKey: d.period_key || '09/2026',
-      notes: d.notes || undefined,
+      requestDate: String(d.request_date || ''),
+      paymentDate: d.payment_date ? String(d.payment_date) : undefined,
+      reason: String(d.reason || ''),
+      paymentMethod: (d.payment_method === 'CASH' ? 'CASH' : 'BANK') as 'BANK' | 'CASH',
+      status: (d.status || 'APPROVED') as 'PENDING' | 'APPROVED' | 'DEDUCTED',
+      approvedBy: d.approved_by ? String(d.approved_by) : undefined,
+      periodKey: String(d.period_key || '11/2026'),
+      notes: d.notes ? String(d.notes) : undefined,
     }));
   } catch {
     return null;
@@ -2084,28 +2150,33 @@ export const syncAllDataToSupabase = async (
   payrollRecords?: PayrollRecord[],
   attendanceRecords?: AttendanceRecord[]
 ): Promise<FullSyncResult> => {
+  const emptySyncRes: { success: boolean; count: number; message: string; error?: string } = {
+    success: true,
+    count: 0,
+    message: '',
+  };
   const [cfgRes, empRes, seaRes, teamRes, projRes, advRes, payRes, attRes] = await Promise.all([
     syncCompanyConfigToSupabase(config),
     syncEmployeesToSupabase(employees, config.periodCode),
     syncSeasonalWorkersToSupabase(seasonalWorkers, config.periodCode),
     teamWorkers !== undefined
       ? syncTeamWorkersToSupabase(teamWorkers, config.periodCode)
-      : Promise.resolve({ success: true, count: 0, message: '' }),
+      : Promise.resolve(emptySyncRes),
     projects !== undefined
       ? syncProjectsToSupabase(projects)
-      : Promise.resolve({ success: true, count: 0, message: '' }),
+      : Promise.resolve(emptySyncRes),
     salaryAdvances !== undefined
       ? syncSalaryAdvancesToSupabase(salaryAdvances, config.periodCode)
-      : Promise.resolve({ success: true, count: 0, message: '' }),
+      : Promise.resolve(emptySyncRes),
     payrollRecords && payrollRecords.length > 0
       ? syncPayrollRecordsToSupabase(payrollRecords)
-      : Promise.resolve({ success: true, count: 0, message: '' }),
+      : Promise.resolve(emptySyncRes),
     attendanceRecords && attendanceRecords.length > 0
       ? syncAttendanceRecordsToSupabase(attendanceRecords)
-      : Promise.resolve({ success: true, count: 0, message: '' }),
+      : Promise.resolve(emptySyncRes),
   ]);
 
-  const allSuccess = cfgRes.success && empRes.success && seaRes.success;
+  const allSuccess = cfgRes.success && empRes.success && seaRes.success && advRes.success;
 
   if (allSuccess) {
     localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
@@ -2117,11 +2188,11 @@ export const syncAllDataToSupabase = async (
     companyConfig: { ok: cfgRes.success, message: cfgRes.message, error: cfgRes.error },
     employees: { ok: empRes.success, count: empRes.count, message: empRes.message, error: empRes.error },
     seasonalWorkers: { ok: seaRes.success, count: seaRes.count, message: seaRes.message, error: seaRes.error },
-    teamWorkers: { ok: teamRes.success, count: teamRes.count, message: teamRes.message },
-    projects: { ok: projRes.success, count: projRes.count, message: projRes.message },
-    payrollRecords: { ok: payRes.success, count: payRes.count, message: payRes.message },
-    salaryAdvances: { ok: advRes.success, count: advRes.count, message: advRes.message },
-    attendanceRecords: { ok: attRes.success, count: attRes.count, message: attRes.message },
+    teamWorkers: { ok: teamRes.success, count: teamRes.count, message: teamRes.message, error: teamRes.error },
+    projects: { ok: projRes.success, count: projRes.count, message: projRes.message, error: projRes.error },
+    payrollRecords: { ok: payRes.success, count: payRes.count, message: payRes.message, error: payRes.error },
+    salaryAdvances: { ok: advRes.success, count: advRes.count, message: advRes.message, error: advRes.error },
+    attendanceRecords: { ok: attRes.success, count: attRes.count, message: attRes.message, error: attRes.error },
   };
 };
 
@@ -2863,6 +2934,20 @@ export const subscribeToSupabaseRealtime = (
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'company_config' },
+        (payload) => {
+          onTableChange('company_config', payload.eventType, payload);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'salary_advances' },
+        (payload) => {
+          onTableChange('seasonal_workers', payload.eventType, payload);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'projects' },
         (payload) => {
           onTableChange('company_config', payload.eventType, payload);
         }
