@@ -238,7 +238,8 @@ export function buildMonthlyAttendanceRecord(
   actualWorkDays: number,
   overtimeHours: number,
   paidLeaveDays: number = 0,
-  unpaidLeaveDays: number = 0
+  unpaidLeaveDays: number = 0,
+  isManualUser: boolean = false
 ): MonthlyAttendanceRecord {
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
   const days = synthesizeDaysMapFromTotals(
@@ -249,6 +250,15 @@ export function buildMonthlyAttendanceRecord(
     paidLeaveDays,
     unpaidLeaveDays
   );
+  if (isManualUser) {
+    const stamp = new Date().toISOString();
+    Object.keys(days).forEach((k) => {
+      const dNum = Number(k);
+      if (days[dNum]) {
+        days[dNum] = { ...days[dNum], updatedAt: stamp };
+      }
+    });
+  }
   const summary = calculateDaysSummary(days);
   return {
     monthKey,
@@ -257,9 +267,27 @@ export function buildMonthlyAttendanceRecord(
     totalWorkDays: summary.totalCong,
     totalOtHours: summary.totalOT,
     days,
-    lastSubmittedAt: '2026-09-01T00:00:00.000Z',
-    submittedBy: 'ADMIN',
+    lastSubmittedAt: isManualUser ? new Date().toISOString() : '2026-09-01T00:00:00.000Z',
+    submittedBy: isManualUser ? 'MANUAL_USER' : 'ADMIN',
   };
+}
+
+/**
+ * Nhận diện bản ghi chấm công do người dùng thực sự chấm/nhập (từ Bản Chấm Công, Danh Sách NV, Bản Lương, hoặc Mobile App).
+ * Bản ghi thực tế luôn được bảo toàn 100%, tuyệt đối không bị bộ lọc dữ liệu mẫu ghi đè về 0.
+ */
+export function isGenuineUserEmployeeAttendance(rec?: MonthlyAttendanceRecord | null): boolean {
+  if (!rec) return false;
+  if (rec.submittedBy === 'MANUAL_USER' || rec.submittedBy === 'WORKER') {
+    return true;
+  }
+  if (rec.days && typeof rec.days === 'object') {
+    const hasDayTimestamp = Object.values(rec.days).some((d) => Boolean(d && d.updatedAt));
+    if (hasDayTimestamp) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Chuẩn hóa họ tên để đối chiếu chính xác nhân sự ngay cả khi Mã NV (PNC0001...) bị đánh lại số thứ tự
@@ -315,10 +343,11 @@ export function isLegacy19MockEmployeeList(list?: Employee[] | null): boolean {
 }
 
 /**
- * Làm sạch dữ liệu chấm công tự nhảy của nhân viên chính thức:
- * 1. Xóa bỏ công Tháng 09/2026 tự nhảy từ dữ liệu mẫu cũ (nhóm Nhân Viên Chính Thức không chấm công Tháng 9).
- * 2. Xóa bỏ công Tháng 11/2026 bị tự sao chép từ Tháng 10 hoặc tự điền 24-27 công khi chưa chấm.
- * 3. Xóa bỏ công Tháng 10/2026 bị tự nhảy 26-27 công (0 OT) của các nhân viên chưa tham gia chấm công.
+ * Làm sạch dữ liệu chấm công tự nhảy từ dữ liệu mẫu cũ của nhân viên chính thức.
+ * QUAN TRỌNG:
+ * - Nếu bản ghi là do người dùng thực sự chấm/nhập (isGenuineUserEmployeeAttendance === true) -> GIỮ NGUYÊN 100%!
+ * - Khi dọn bản ghi mẫu tự sinh cũ, luôn dùng mốc thời gian mặc định '2026-09-01T00:00:00.000Z' (TUYỆT ĐỐI KHÔNG dùng new Date().toISOString())
+ *   để bản ghi mẫu rỗng không bao giờ có timestamp mới hơn dữ liệu người dùng vừa nhấn "Lưu Data".
  */
 export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
   const normName = normalizeEmpName(emp.fullName);
@@ -326,14 +355,13 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
     ...(emp.monthlyAttendance || {}),
   };
 
-  // 1. Làm sạch Tháng 09/2026: Nhóm Nhân Viên Chính Thức không chấm công Tháng 9
+  // 1. Làm sạch Tháng 09/2026 nếu là dữ liệu mẫu tự nhảy (không phải người dùng chấm)
   const rec09 = existingMonthly['2026-09'];
-  if (rec09) {
+  if (rec09 && !isGenuineUserEmployeeAttendance(rec09)) {
     const w09 = Number(rec09.totalWorkDays || 0);
     const ot09 = Number(rec09.totalOtHours || 0);
     const hasDays09 = rec09.days && Object.keys(rec09.days).length > 0;
-    const isManual09 = rec09.submittedBy === 'MANUAL_USER';
-    if (!isManual09 && (w09 > 0 || ot09 > 0 || hasDays09)) {
+    if (w09 > 0 || ot09 > 0 || hasDays09) {
       existingMonthly['2026-09'] = {
         monthKey: '2026-09',
         month: 9,
@@ -341,26 +369,24 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
         totalWorkDays: 0,
         totalOtHours: 0,
         days: {},
-        lastSubmittedAt: new Date().toISOString(),
+        lastSubmittedAt: '2026-09-01T00:00:00.000Z',
         submittedBy: 'ADMIN',
       };
     }
   }
 
-  // 2. Làm sạch Tháng 11/2026 nếu bị tự sao chép từ Tháng 10 hoặc tự sinh đủ tháng
+  // 2. Làm sạch Tháng 11/2026 chỉ khi là dữ liệu mẫu tự sao chép (chưa từng được người dùng chấm)
   const rec11 = existingMonthly['2026-11'];
-  if (rec11) {
+  if (rec11 && !isGenuineUserEmployeeAttendance(rec11)) {
     const rec10 = existingMonthly['2026-10'];
     const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
     const w11 = Number(rec11.totalWorkDays || 0);
     const ot11 = Number(rec11.totalOtHours || 0);
     const isDefault11 = rec11.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
-    const isManual11 = rec11.submittedBy === 'MANUAL_USER';
     const matchesOct =
       (rec10 && w11 > 0 && w11 === Number(rec10.totalWorkDays || 0) && ot11 === Number(rec10.totalOtHours || 0)) ||
       (h10 && w11 > 0 && w11 === h10.work && ot11 === h10.ot);
-    // Hôm nay mới đầu tháng 11/2026 nên bất kỳ bản ghi nào tự có >= 20 công đều là dữ liệu tự nhảy
-    if (!isManual11 && (isDefault11 || matchesOct || w11 >= 20)) {
+    if (isDefault11 || matchesOct || w11 >= 20) {
       existingMonthly['2026-11'] = {
         monthKey: '2026-11',
         month: 11,
@@ -368,19 +394,18 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
         totalWorkDays: 0,
         totalOtHours: 0,
         days: {},
-        lastSubmittedAt: new Date().toISOString(),
+        lastSubmittedAt: '2026-09-01T00:00:00.000Z',
         submittedBy: 'ADMIN',
       };
     }
   }
 
-  // 3. Làm sạch Tháng 10/2026 cho những nhân sự chưa chấm công nhưng bị tự nhảy công do lỗi đồng bộ mã cũ
+  // 3. Làm sạch Tháng 10/2026 chỉ cho dữ liệu mẫu cũ (không đụng tới bản ghi người dùng đã chấm/sửa)
   const rec10 = existingMonthly['2026-10'];
-  if (rec10) {
+  if (rec10 && !isGenuineUserEmployeeAttendance(rec10)) {
     const w10 = Number(rec10.totalWorkDays || 0);
     const ot10 = Number(rec10.totalOtHours || 0);
-    const isManualUser = rec10.submittedBy === 'MANUAL_USER';
-    if (UNCLOCKED_OCT_2026_NAMES.has(normName) && !isManualUser && (w10 > 0 || ot10 > 0)) {
+    if (UNCLOCKED_OCT_2026_NAMES.has(normName) && (w10 > 0 || ot10 > 0)) {
       existingMonthly['2026-10'] = {
         monthKey: '2026-10',
         month: 10,
@@ -388,11 +413,10 @@ export function sanitizeEmployeeMonthlyAttendance(emp: Employee): Employee {
         totalWorkDays: 0,
         totalOtHours: 0,
         days: {},
-        lastSubmittedAt: new Date().toISOString(),
+        lastSubmittedAt: '2026-09-01T00:00:00.000Z',
         submittedBy: 'ADMIN',
       };
-    } else if (HISTORICAL_MONTH_10_BY_NAME[normName] && !isManualUser) {
-      // Nếu bản ghi lịch sử Tháng 10 bị phép gộp cũ làm sai lệch số công (VD: Lê Đình Ngọc 26->27, Hoàng Huy 24.5->26.5)
+    } else if (HISTORICAL_MONTH_10_BY_NAME[normName]) {
       const h10 = HISTORICAL_MONTH_10_BY_NAME[normName];
       if (w10 !== h10.work || ot10 !== h10.ot) {
         existingMonthly['2026-10'] = buildMonthlyAttendanceRecord(

@@ -258,18 +258,15 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
         ? overrides.selectedForAttendance
         : hasAttendance;
 
-    const updatedMonthRecord = {
-      ...buildMonthlyAttendanceRecord(
-        activeMonth,
-        activeYear,
-        nextWorkDays,
-        nextOt,
-        nextPaidLeave,
-        nextUnpaidLeave
-      ),
-      lastSubmittedAt: new Date().toISOString(),
-      submittedBy: 'MANUAL_USER' as const,
-    };
+    const updatedMonthRecord = buildMonthlyAttendanceRecord(
+      activeMonth,
+      activeYear,
+      nextWorkDays,
+      nextOt,
+      nextPaidLeave,
+      nextUnpaidLeave,
+      true
+    );
 
     return recomputeEmployeePayroll({
       ...emp,

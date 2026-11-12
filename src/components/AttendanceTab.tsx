@@ -433,6 +433,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     explicitReplacement: boolean = false
   ) => {
     if (attendanceGroup === 'PERMANENT') {
+      let updatedSingleEmp: Employee | null = null;
       const updatedList = modifiedEmployees.map((emp) => {
         if (emp.code === workerCode) {
           const syncedEmp = syncEmployeeForMonth(
@@ -453,12 +454,18 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                 syncedEmp.paidLeaveDays || 0,
                 syncedEmp.unpaidLeaveDays || 0
               );
-          const finalMap = { ...currentBaseMap, ...nextDaysMap };
+          const stampIso = new Date().toISOString();
+          const finalMap: { [dayNumber: number]: DailyAttendanceDetail } = {
+            ...currentBaseMap,
+            ...nextDaysMap,
+          };
           Object.keys(finalMap).forEach((k) => {
             const dNum = Number(k);
             const item = finalMap[dNum];
             if (!item || (item.workUnits === 0 && !item.statusType && (item.otHours || 0) === 0)) {
               delete finalMap[dNum];
+            } else if (!item.updatedAt) {
+              finalMap[dNum] = { ...item, updatedAt: stampIso };
             }
           });
           const recalcTotals = calculateRowTotalsFromDays(finalMap);
@@ -474,8 +481,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             totalWorkDays: recalcTotals.totalCong,
             totalOtHours: recalcTotals.totalOT,
             days: finalMap,
-            lastSubmittedAt: new Date().toISOString(),
-            submittedBy: 'MANUAL_USER' as any,
+            lastSubmittedAt: stampIso,
+            submittedBy: 'MANUAL_USER',
           };
 
           const nextEmp: Employee = recomputeEmployeePayroll({
@@ -490,15 +497,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               [monthKey]: updatedMonthRecord,
             },
           });
-          if (onUpdateEmployee) {
-            onUpdateEmployee(nextEmp);
-          }
+          updatedSingleEmp = nextEmp;
           return nextEmp;
         }
         return emp;
       });
       setModifiedEmployees(updatedList);
-      if (!onUpdateEmployee) {
+      if (updatedSingleEmp && onUpdateEmployee) {
+        onUpdateEmployee(updatedSingleEmp);
+      } else {
         onBatchUpdate(updatedList);
       }
     } else {
@@ -717,6 +724,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             };
           }
         });
+        const stampIso = new Date().toISOString();
         const totals = calculateRowTotalsFromDays(nextMap);
         return recomputeEmployeePayroll({
           ...emp,
@@ -734,6 +742,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
               totalWorkDays: totals.totalCong,
               totalOtHours: totals.totalOT,
               days: nextMap,
+              lastSubmittedAt: stampIso,
+              submittedBy: 'MANUAL_USER',
             },
           },
         });
@@ -741,7 +751,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       setModifiedEmployees(updatedList);
       onBatchUpdate(updatedList);
       setToastMessage(
-        `Đã chấm đủ công tháng ${currentMonth}/${currentYear} cho toàn bộ ${activeEmployees.length} nhân viên — Bản Lương đã tự động nhảy lương!`
+        `Đã chấm đủ công tháng ${currentMonth}/${currentYear} cho toàn bộ ${activeEmployees.length} nhân viên — Nhấn "Lưu Data" để lưu!`
       );
     }
   };

@@ -15,7 +15,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Employee } from '../types';
-import { recomputeEmployeePayroll } from '../utils/payrollCalculator';
+import {
+  recomputeEmployeePayroll,
+  buildMonthlyAttendanceRecord,
+  getRealCurrentDateInfo,
+} from '../utils/payrollCalculator';
 import {
   STANDARD_CONTRACT_TYPES,
   CONTRACT_DURATIONS,
@@ -138,7 +142,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         selectedForAttendance: false,
       });
     }
-  }, [initialData, isOpen]);
+  }, [initialData, employee, isOpen]);
 
   const handleContractTypeChange = (type: string) => {
     const details = getDefaultContractDetails(type, formData.contractStartDate || formData.joinDate || '01/01/2026');
@@ -162,6 +166,36 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     const actDays = Math.max(0, Number(formData.actualWorkDays) || 0);
     const otHours = Math.max(0, Number(formData.overtimeHours) || 0);
     const pLeave = Math.max(0, Number(formData.paidLeaveDays) || 0);
+
+    const realInfo = getRealCurrentDateInfo();
+    const curMonth = Number(config?.month || realInfo.realMonth);
+    const curYear = Number(config?.year || realInfo.realYear);
+    const curMonthKey = `${curYear}-${String(curMonth).padStart(2, '0')}`;
+    const unpaidLeave = Math.max(0, Number(formData.unpaidLeaveDays) || 0);
+
+    const prevWorkDays = Number(currentEmp?.actualWorkDays || 0);
+    const prevOt = Number(currentEmp?.overtimeHours || 0);
+    const prevPaidLeave = Number(currentEmp?.paidLeaveDays || 0);
+    const prevUnpaid = Number(currentEmp?.unpaidLeaveDays || 0);
+    const attendanceChanged =
+      !currentEmp ||
+      actDays !== prevWorkDays ||
+      otHours !== prevOt ||
+      pLeave !== prevPaidLeave ||
+      unpaidLeave !== prevUnpaid;
+
+    const nextMonthlyAttendance = { ...(currentEmp?.monthlyAttendance || {}) };
+    if (attendanceChanged && (actDays > 0 || otHours > 0 || pLeave > 0 || unpaidLeave > 0 || currentEmp)) {
+      nextMonthlyAttendance[curMonthKey] = buildMonthlyAttendanceRecord(
+        curMonth,
+        curYear,
+        actDays,
+        otHours,
+        pLeave,
+        unpaidLeave,
+        true
+      );
+    }
 
     const employeeToSave: Employee = {
       ...(currentEmp || {}),
@@ -189,7 +223,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       standardWorkDays: Number(formData.standardWorkDays) || 26,
       actualWorkDays: actDays,
       paidLeaveDays: pLeave,
-      unpaidLeaveDays: Math.max(0, Number(formData.unpaidLeaveDays) || 0),
+      unpaidLeaveDays: unpaidLeave,
       overtimeHours: otHours,
       salaryType: formData.salaryType || 'MONTHLY',
       dailyRate: formData.salaryType === 'DAILY' ? Number(formData.baseSalary) : (Number(formData.dailyRate) || 0),
@@ -217,7 +251,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       netSalary: 0,
       status: formData.status || 'ACTIVE',
       selectedForAttendance: actDays > 0 || otHours > 0 || pLeave > 0,
-      monthlyAttendance: currentEmp?.monthlyAttendance || {},
+      monthlyAttendance: nextMonthlyAttendance,
       periodRecords: currentEmp?.periodRecords || {},
       updatedAt: Date.now(),
     };

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, Download, Building2, Calendar, Zap, Settings, Menu, Database, Save } from 'lucide-react';
+import { Upload, Download, Building2, Calendar, Zap, Settings, Menu, Database, Save, RefreshCw } from 'lucide-react';
 import { CompanyConfig } from '../types';
 import { isSupabaseConfigured } from '../services/supabaseService';
 
@@ -12,6 +12,7 @@ interface HeaderProps {
   onOpenBatchZalo?: () => void;
   onToggleSidebar?: () => void;
   onOpenSupabaseModal?: () => void;
+  onReloadCloud?: () => void;
   onManualSync?: () => void;
   onSaveData?: () => void;
   hasUnsavedChanges?: boolean;
@@ -28,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBatchZalo,
   onToggleSidebar,
   onOpenSupabaseModal,
+  onReloadCloud,
   onManualSync,
   onSaveData,
   hasUnsavedChanges = false,
@@ -188,6 +190,23 @@ export const Header: React.FC<HeaderProps> = ({
                     : 'bg-amber-300'
                 }`}
               />
+            </button>
+          )}
+
+          {onReloadCloud && isSupabaseConfigured() && (
+            <button
+              id="btn-header-reload-cloud"
+              type="button"
+              onClick={onReloadCloud}
+              disabled={cloudSyncStatus === 'syncing' || hasUnsavedChanges}
+              className="px-2 py-1.5 rounded text-xs font-bold flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-sky-200 border border-sky-500/40 transition shadow-sm cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+              title={
+                hasUnsavedChanges
+                  ? 'Hãy nhấn "Lưu Data" trước khi tải dữ liệu mới từ Cloud'
+                  : 'Tải dữ liệu mới nhất từ Supabase Cloud về máy này'
+              }
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-sky-300 ${cloudSyncStatus === 'syncing' ? 'animate-spin' : ''}`} />
             </button>
           )}
 

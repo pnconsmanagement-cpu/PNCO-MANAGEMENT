@@ -30,6 +30,8 @@ import {
   loadEmployeesFromSupabase,
   loadSeasonalWorkersFromSupabase,
   loadProjectsFromSupabase,
+  loadTeamWorkersFromSupabase,
+  loadSalaryAdvancesFromSupabase,
   syncAllDataToSupabase,
   deleteBatchSeasonalWorkersFromSupabase,
   clearAllSeasonalWorkersFromSupabase,
@@ -62,6 +64,7 @@ import {
   getRealCurrentDateInfo,
   ensureEmployeeHistoricalMonths,
   sanitizeEmployeeMonthlyAttendance,
+  isGenuineUserEmployeeAttendance,
   normalizeEmpName,
   syncEmployeeForMonth,
   buildMonthlyAttendanceRecord,
@@ -301,12 +304,18 @@ function mergeEmployeeListsPreservingAttendance(
           if (!exRec) {
             mergedMonthly[mKey] = rRec;
           } else {
+            const exIsGenuine = isGenuineUserEmployeeAttendance(exRec);
+            const rIsGenuine = isGenuineUserEmployeeAttendance(rRec);
             const exIsDefault = exRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
             const rIsDefault = rRec.lastSubmittedAt === DEFAULT_MOCK_TIMESTAMP;
             const exTime = exRec.lastSubmittedAt ? new Date(exRec.lastSubmittedAt).getTime() : 0;
             const rTime = rRec.lastSubmittedAt ? new Date(rRec.lastSubmittedAt).getTime() : 0;
 
-            if (exIsDefault && !rIsDefault) {
+            if (rIsGenuine && !exIsGenuine) {
+              mergedMonthly[mKey] = rRec;
+            } else if (exIsGenuine && !rIsGenuine) {
+              mergedMonthly[mKey] = exRec;
+            } else if (exIsDefault && !rIsDefault) {
               mergedMonthly[mKey] = rRec;
             } else if (!exIsDefault && rIsDefault) {
               mergedMonthly[mKey] = exRec;
@@ -920,8 +929,11 @@ export default function App() {
           Number(x.otherIncome || 0),
           Number(x.dependents || 0),
           Number(x.actualWorkDays || 0),
+          Number(x.paidLeaveDays || 0),
+          Number(x.unpaidLeaveDays || 0),
           Number(x.overtimeHours || 0),
           Number(x.advancePayment || 0),
+          Boolean(x.selectedForAttendance),
           x.bankAccount || '',
           x.bankName || '',
           x.contractType || '',
@@ -1518,11 +1530,14 @@ export default function App() {
       const curPeriod = periodCodeRef.current;
       const curM = activeMonthRef.current;
       const curY = activeYearRef.current;
-      const [cloudCfg, cloudEmp, cloudSea, cloudProj] = await Promise.all([
+      const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+      const [cloudCfg, cloudEmp, cloudSea, cloudProj, cloudTeams, cloudAdvs] = await Promise.all([
         loadCompanyConfigFromSupabase(),
         loadEmployeesFromSupabase(curPeriod),
         loadSeasonalWorkersFromSupabase(curPeriod),
         loadProjectsFromSupabase(),
+        loadTeamWorkersFromSupabase(curPeriod),
+        loadSalaryAdvancesFromSupabase(curPeriod),
       ]);
 
       if (
@@ -1544,6 +1559,16 @@ export default function App() {
         projectsRef.current = cloudProj;
         setProjects(cloudProj);
         localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
+      }
+      if (cloudTeams && cloudTeams.length > 0) {
+        teamWorkersRef.current = cloudTeams;
+        setTeamWorkers(cloudTeams);
+        localStorage.setItem('payroll_team_workers', JSON.stringify(cloudTeams));
+      }
+      if (cloudAdvs && cloudAdvs.length > 0) {
+        salaryAdvancesRef.current = cloudAdvs;
+        setSalaryAdvances(cloudAdvs);
+        localStorage.setItem('payroll_salary_advances', JSON.stringify(cloudAdvs));
       }
 
       const appliedCfg = cloudCfg
@@ -1589,10 +1614,11 @@ export default function App() {
         setConfig(appliedCfg);
         localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
       }
-      if (cloudEmp && cloudEmp.length > 0 && nextParts.emp !== prevParts.emp) {
+      if (cloudEmp && cloudEmp.length > 0) {
         employeesRef.current = appliedEmp;
         setEmployees(appliedEmp);
         localStorage.setItem('payroll_employees', JSON.stringify(appliedEmp));
+        localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(appliedEmp));
       }
       if (cloudSea && cloudSea.length > 0 && nextParts.sea !== prevParts.sea) {
         seasonalWorkersRef.current = appliedSea;
@@ -1760,11 +1786,14 @@ export default function App() {
       try {
         const curM = activeMonthRef.current;
         const curY = activeYearRef.current;
-        const [cloudCfg, cloudEmp, cloudSea, cloudProj] = await Promise.all([
+        const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+        const [cloudCfg, cloudEmp, cloudSea, cloudProj, cloudTeams, cloudAdvs] = await Promise.all([
           loadCompanyConfigFromSupabase(),
           loadEmployeesFromSupabase(configRef.current.periodCode),
           loadSeasonalWorkersFromSupabase(configRef.current.periodCode),
           loadProjectsFromSupabase(),
+          loadTeamWorkersFromSupabase(configRef.current.periodCode),
+          loadSalaryAdvancesFromSupabase(configRef.current.periodCode),
         ]);
 
         if (hasUnsavedChangesRef.current) return;
@@ -1773,6 +1802,16 @@ export default function App() {
           projectsRef.current = cloudProj;
           setProjects(cloudProj);
           localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
+        }
+        if (cloudTeams && cloudTeams.length > 0) {
+          teamWorkersRef.current = cloudTeams;
+          setTeamWorkers(cloudTeams);
+          localStorage.setItem('payroll_team_workers', JSON.stringify(cloudTeams));
+        }
+        if (cloudAdvs && cloudAdvs.length > 0) {
+          salaryAdvancesRef.current = cloudAdvs;
+          setSalaryAdvances(cloudAdvs);
+          localStorage.setItem('payroll_salary_advances', JSON.stringify(cloudAdvs));
         }
 
         const appliedCfg = cloudCfg
@@ -1811,6 +1850,7 @@ export default function App() {
           employeesRef.current = appliedEmps;
           setEmployees(appliedEmps);
           localStorage.setItem('payroll_employees', JSON.stringify(appliedEmps));
+          localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(appliedEmps));
         }
         if (cloudSea && cloudSea.length > 0) {
           seasonalWorkersRef.current = appliedSeas;
@@ -2091,53 +2131,82 @@ export default function App() {
     setSeasonalWorkers(initialSeasonalWorkers);
   };
 
-  // Cập nhật nhân viên chính thức (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
+  // Cập nhật nhân viên chính thức (cập nhật đồng bộ tức thời vào employeesRef.current để nhấn "Lưu Data" luôn lấy đúng dữ liệu mới nhất)
   const handleUpdateEmployee = (updated: Employee) => {
     const nowTs = Date.now();
     markUnsaved();
     pendingDeletedEmpRef.current.removedKeys.push(
       ...[updated.id, updated.code].filter(Boolean).map((k) => String(k).trim())
     );
+    const curM = configRef.current.month || realDateInfo.realMonth;
+    const curY = configRef.current.year || realDateInfo.realYear;
+    const curMonthKey = `${curY}-${String(curM).padStart(2, '0')}`;
+
     const recalculated = recomputeEmployeePayroll({
       ...updated,
       updatedAt: nowTs,
     });
-    setEmployees((prev) => {
-      const next = prev.map((emp) => {
-        if (emp.id === recalculated.id || emp.code === recalculated.code) {
-          return {
-            ...emp,
-            ...recalculated,
-            updatedAt: nowTs,
-            monthlyAttendance: {
-              ...(emp.monthlyAttendance || {}),
-              ...(recalculated.monthlyAttendance || {}),
-            },
-            periodRecords: {
-              ...(emp.periodRecords || {}),
-              ...(recalculated.periodRecords || {}),
-            },
-          };
+
+    const prevList = employeesRef.current;
+    const nextList = prevList.map((emp) => {
+      if (emp.id === recalculated.id || emp.code === recalculated.code) {
+        const mergedMonthly = {
+          ...(emp.monthlyAttendance || {}),
+          ...(recalculated.monthlyAttendance || {}),
+        };
+
+        // Nếu số công / OT / nghỉ phép của tháng hiện tại thay đổi nhưng chưa có hoặc lệch với monthlyAttendance[curMonthKey], tự động đồng bộ chuẩn
+        const existingCurRec = mergedMonthly[curMonthKey];
+        const recWork = Number(existingCurRec?.totalWorkDays || 0);
+        const recOt = Number(existingCurRec?.totalOtHours || 0);
+        const targetWork = Number(recalculated.actualWorkDays || 0);
+        const targetOt = Number(recalculated.overtimeHours || 0);
+        const callerProvidedCurMonth = Boolean(updated.monthlyAttendance?.[curMonthKey]);
+
+        if (!callerProvidedCurMonth && (targetWork !== recWork || targetOt !== recOt)) {
+          mergedMonthly[curMonthKey] = buildMonthlyAttendanceRecord(
+            curM,
+            curY,
+            targetWork,
+            targetOt,
+            Number(recalculated.paidLeaveDays || 0),
+            Number(recalculated.unpaidLeaveDays || 0),
+            true
+          );
         }
-        return emp;
-      });
-      employeesRef.current = next;
-      return next;
+
+        return {
+          ...emp,
+          ...recalculated,
+          updatedAt: nowTs,
+          monthlyAttendance: mergedMonthly,
+          periodRecords: {
+            ...(emp.periodRecords || {}),
+            ...(recalculated.periodRecords || {}),
+          },
+        };
+      }
+      return emp;
     });
+
+    employeesRef.current = nextList;
+    setEmployees(nextList);
   };
 
-  // Thêm nhân viên chính thức (chờ nhấn "Lưu Data")
+  // Thêm nhân viên chính thức (cập nhật đồng bộ vào employeesRef.current, chờ nhấn "Lưu Data")
   const handleAddEmployee = (newEmp: Employee) => {
+    const nowTs = Date.now();
     markUnsaved();
     pendingDeletedEmpRef.current.removedKeys.push(
       ...[newEmp.id, newEmp.code].filter(Boolean).map((k) => String(k).trim())
     );
-    const recalculated = recomputeEmployeePayroll(newEmp);
-    setEmployees((prev) => {
-      const next = [...prev, recalculated];
-      employeesRef.current = next;
-      return next;
+    const recalculated = recomputeEmployeePayroll({
+      ...newEmp,
+      updatedAt: nowTs,
     });
+    const nextList = [...employeesRef.current, recalculated];
+    employeesRef.current = nextList;
+    setEmployees(nextList);
   };
 
   // Xóa nhân viên chính thức (chờ nhấn "Lưu Data")
@@ -2173,7 +2242,7 @@ export default function App() {
   };
 
   // =========================================================================
-  // HÀM LƯU DATA CHÍNH THỨC DUY NHẤT (CHỈ CHẠY KHI NGƯỜI DÙNG NHẤN "LƯU DATA")
+  // HÀM LƯU DATA CHÍNH THỨC DUY NHẤT (CHỈ CHẠY KHI NGƯỜNG DÙNG NHẤN "LƯU DATA")
   // =========================================================================
   const handleManualForceSync = async () => {
     lastLocalEditAtRef.current = Date.now();
@@ -2185,8 +2254,12 @@ export default function App() {
     });
     beginSyncTask(true);
     try {
+      const saveStamp = Date.now();
       const latestCfg = configRef.current;
-      const latestEmps = employeesRef.current;
+      const latestEmps = employeesRef.current.map((e) => ({
+        ...e,
+        updatedAt: e.updatedAt || saveStamp,
+      }));
       const latestSeas = seasonalWorkersRef.current;
       const latestProjects = projectsRef.current;
       const latestTeams = teamWorkersRef.current;
@@ -2198,6 +2271,8 @@ export default function App() {
           ? { supabaseUrl: sbCfg.url, supabaseAnonKey: sbCfg.anonKey }
           : {}),
       } as CompanyConfig;
+
+      employeesRef.current = latestEmps;
 
       // 1. Lưu danh sách các khóa đã xóa/khôi phục vào LocalStorage
       const seaPending = pendingDeletedSeaRef.current;
@@ -2236,7 +2311,15 @@ export default function App() {
       localStorage.setItem('payroll_team_workers', JSON.stringify(latestTeams));
       localStorage.setItem('payroll_salary_advances', JSON.stringify(latestAdvances));
 
-      // Cập nhật cache ngày chấm công di động cho tháng hiện tại
+      // Cập nhật cache ngày chấm công di động cho cả Nhân viên chính thức & Thời vụ trong tháng hiện tại
+      latestEmps.forEach((e) => {
+        if (e.code) {
+          const daysObj = e.monthlyAttendance?.[curMonthKey]?.days || {};
+          try {
+            localStorage.setItem(`pncons_mobile_days_${e.code}_${curY}_${curM}`, JSON.stringify(daysObj));
+          } catch {}
+        }
+      });
       latestSeas.forEach((w) => {
         if (w.code) {
           const daysObj = w.monthlyAttendance?.[curMonthKey]?.days || {};
@@ -2274,6 +2357,7 @@ export default function App() {
       await saveAllToServer(cfgToSync, latestEmps, latestSeas);
 
       // 4. Nếu đã cấu hình Supabase Cloud -> Thực thi các thao tác xóa chờ sẵn & đồng bộ toàn bộ bảng lên Cloud
+      let cloudSyncErrorMsg: string | null = null;
       if (isSupabaseConfigured()) {
         if (seaPending.clearAll && latestSeas.length === 0) {
           await clearAllSeasonalWorkersFromSupabase(cfgToSync.periodCode);
@@ -2285,7 +2369,7 @@ export default function App() {
           await deleteEmployeeFromSupabase(delEmp.id, delEmp.code);
         }
 
-        await syncAllDataToSupabase(
+        const cloudReport = await syncAllDataToSupabase(
           cfgToSync,
           latestEmps,
           latestSeas,
@@ -2294,6 +2378,13 @@ export default function App() {
           latestAdvances,
           buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, latestTeams)
         );
+        if (!cloudReport.success) {
+          cloudSyncErrorMsg =
+            cloudReport.employees.error ||
+            cloudReport.seasonalWorkers.error ||
+            cloudReport.companyConfig.error ||
+            'Kiểm tra kết nối Supabase Cloud';
+        }
       }
 
       // Reset danh sách xóa chờ và đánh dấu đã lưu sạch sẽ
@@ -2314,13 +2405,24 @@ export default function App() {
       setHasUnsavedChanges(false);
 
       notifyCrossTab();
-      endSyncTask('synced');
-      const nowTime = getLastSyncedTime() || getServerLastSyncedTime() || new Date().toLocaleTimeString('vi-VN');
-      setLastSyncedText(nowTime);
-      setSaveToastMessage(`✓ Đã lưu Data thành công lúc ${nowTime}!`);
-      setTimeout(() => {
-        setSaveToastMessage((prev) => (prev?.includes(nowTime) ? null : prev));
-      }, 4000);
+
+      if (cloudSyncErrorMsg) {
+        endSyncTask('error');
+        setSaveToastMessage(`Đã lưu trên máy nhưng lỗi đồng bộ Cloud: ${cloudSyncErrorMsg}`);
+        setTimeout(() => setSaveToastMessage(null), 5000);
+      } else {
+        endSyncTask('synced');
+        const nowTime = getLastSyncedTime() || getServerLastSyncedTime() || new Date().toLocaleTimeString('vi-VN');
+        setLastSyncedText(nowTime);
+        setSaveToastMessage(
+          isSupabaseConfigured()
+            ? `✓ Đã lưu Data & đồng bộ Supabase Cloud thành công lúc ${nowTime}!`
+            : `✓ Đã lưu Data thành công lúc ${nowTime}!`
+        );
+        setTimeout(() => {
+          setSaveToastMessage((prev) => (prev?.includes(nowTime) ? null : prev));
+        }, 4000);
+      }
     } catch {
       endSyncTask('error');
       setSaveToastMessage('Đã lưu Data vào trình duyệt (Có lỗi kết nối máy chủ từ xa)!');
@@ -2398,13 +2500,63 @@ export default function App() {
   // Cập nhật hàng loạt nhân viên chính thức trong bộ nhớ (chỉ lưu khi nhấn "Lưu Data")
   const handleBatchUpdate = (updatedList: Employee[]) => {
     const nowTs = Date.now();
+    const nowIso = new Date(nowTs).toISOString();
     markUnsaved();
     const curM = configRef.current.month || realDateInfo.realMonth;
     const curY = configRef.current.year || realDateInfo.realYear;
+    const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+    const curMonthKey = `${curY}-${curMStr}`;
     const stdDays = configRef.current.standardWorkDays || 26;
-    const normalizedList = updatedList.map((emp) =>
-      syncEmployeeForMonth({ ...emp, updatedAt: nowTs }, curM, curY, stdDays)
-    );
+    const normalizedList = updatedList.map((emp) => {
+      const existingRec = emp.monthlyAttendance?.[curMonthKey];
+      let nextMonthly = { ...(emp.monthlyAttendance || {}) };
+      const targetWork = Number(emp.actualWorkDays || 0);
+      const targetOt = Number(emp.overtimeHours || 0);
+
+      if (existingRec) {
+        const recWork = Number(existingRec.totalWorkDays || 0);
+        const recOt = Number(existingRec.totalOtHours || 0);
+        if (Math.abs(recWork - targetWork) > 0.01 || Math.abs(recOt - targetOt) > 0.01) {
+          nextMonthly[curMonthKey] = buildMonthlyAttendanceRecord(
+            curM,
+            curY,
+            targetWork,
+            targetOt,
+            Number(emp.paidLeaveDays || 0),
+            Number(emp.unpaidLeaveDays || 0),
+            true
+          );
+        } else {
+          nextMonthly[curMonthKey] = {
+            ...existingRec,
+            lastSubmittedAt: existingRec.lastSubmittedAt || nowIso,
+            submittedBy: existingRec.submittedBy || 'MANUAL_USER',
+          };
+        }
+      } else if (targetWork > 0 || targetOt > 0 || emp.selectedForAttendance) {
+        nextMonthly[curMonthKey] = buildMonthlyAttendanceRecord(
+          curM,
+          curY,
+          targetWork,
+          targetOt,
+          Number(emp.paidLeaveDays || 0),
+          Number(emp.unpaidLeaveDays || 0),
+          true
+        );
+      }
+
+      return syncEmployeeForMonth(
+        {
+          ...emp,
+          monthlyAttendance: nextMonthly,
+          selectedForAttendance: targetWork > 0 || targetOt > 0 ? true : emp.selectedForAttendance,
+          updatedAt: nowTs,
+        },
+        curM,
+        curY,
+        stdDays
+      );
+    });
     employeesRef.current = normalizedList;
     setEmployees(normalizedList);
   };
@@ -2793,6 +2945,25 @@ export default function App() {
         onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
         onToggleSidebar={() => setIsSidebarMobileOpen((prev) => !prev)}
         onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+        onReloadCloud={async () => {
+          if (hasUnsavedChangesRef.current) return;
+          beginSyncTask(true);
+          try {
+            await reloadLatestFromCloud();
+            endSyncTask('synced');
+            const nowTime = new Date().toLocaleTimeString('vi-VN', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            });
+            setSaveToastMessage(`✓ Đã đồng bộ dữ liệu mới nhất từ Supabase Cloud (${nowTime})!`);
+            setTimeout(() => setSaveToastMessage(null), 3500);
+          } catch {
+            endSyncTask('error');
+            setSaveToastMessage('⚠️ Không thể tải dữ liệu từ Supabase Cloud, vui lòng kiểm tra kết nối!');
+            setTimeout(() => setSaveToastMessage(null), 4000);
+          }
+        }}
         onManualSync={handleManualForceSync}
         onSaveData={handleManualForceSync}
         hasUnsavedChanges={hasUnsavedChanges}

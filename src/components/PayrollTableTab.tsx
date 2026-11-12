@@ -3289,13 +3289,15 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       {/* Modal Chỉnh Sửa Chi Tiết Hồ Sơ, Lương & Phụ Cấp Nhân Viên Chính Thức */}
       <EmployeeModal
         isOpen={!!editingEmployee}
+        initialData={editingEmployee}
         employee={editingEmployee}
         onClose={() => setEditingEmployee(null)}
         onSave={(savedEmp) => {
           onUpdateEmployee(savedEmp);
           setEditingEmployee(null);
         }}
-        existingEmployees={employees}
+        existingCodes={employees.map((e) => e.code)}
+        config={config}
       />
     </div>
   );

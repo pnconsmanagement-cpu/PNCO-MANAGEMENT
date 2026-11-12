@@ -16,6 +16,7 @@ import {
 import {
   buildMonthlyAttendanceRecord,
   sanitizeEmployeeMonthlyAttendance,
+  isGenuineUserEmployeeAttendance,
   normalizeEmpName,
   isLegacy19MockEmployeeList,
 } from '../utils/payrollCalculator';
@@ -528,7 +529,7 @@ export const syncEmployeesToSupabase = async (
         existingData &&
         normalizeEmpName(existingData.fullName) === normalizeEmpName(emp.fullName);
 
-      // Hợp nhất lịch sử chấm công các tháng (chỉ gộp nếu cùng 1 nhân sự, ưu tiên bản ghi mới hơn)
+      // Hợp nhất lịch sử chấm công các tháng: Khi người dùng nhấn "Lưu Data", dữ liệu đang có trên màn hình (emp) là chuẩn gốc!
       const mergedMonthly = samePerson ? { ...(existingData?.monthlyAttendance || {}) } : {};
       if (!emp.monthlyAttendance?.['2026-11']) {
         delete mergedMonthly['2026-11'];
@@ -536,42 +537,34 @@ export const syncEmployeesToSupabase = async (
       Object.entries(emp.monthlyAttendance || {}).forEach(([mKey, mRec]) => {
         if (!mRec) return;
         const oldRec = mergedMonthly[mKey];
+        const newIsDefault = mRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
+        const newIsGenuine = isGenuineUserEmployeeAttendance(mRec);
         if (!oldRec) {
           mergedMonthly[mKey] = mRec;
-        } else {
-          const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
-          const newIsDefault = mRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
-          const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
-          const newTs = mRec.lastSubmittedAt ? new Date(mRec.lastSubmittedAt).getTime() : 0;
-          if (!newIsDefault && oldIsDefault) {
-            mergedMonthly[mKey] = mRec;
-          } else if (newIsDefault && !oldIsDefault) {
-            mergedMonthly[mKey] = oldRec;
-          } else if (newTs >= oldTs) {
-            mergedMonthly[mKey] = mRec;
-          }
+        } else if (newIsGenuine || !newIsDefault) {
+          // Dữ liệu do người dùng chấm hoặc xóa trắng thủ công trên máy hiện tại LUÔN được ưu tiên ghi lên Cloud khi nhấn Lưu Data
+          mergedMonthly[mKey] = {
+            ...mRec,
+            submittedBy: mRec.submittedBy === 'WORKER' ? 'WORKER' : 'MANUAL_USER',
+            lastSubmittedAt: mRec.lastSubmittedAt || new Date().toISOString(),
+          };
+        } else if (!isGenuineUserEmployeeAttendance(oldRec)) {
+          mergedMonthly[mKey] = mRec;
         }
       });
 
-      const exTime = Number(existingData?.updatedAt || 0);
-      const localTime = Number(emp.updatedAt || 0);
-      const baseMergedEmp: Employee =
-        samePerson && exTime > localTime
-          ? {
-              ...emp,
-              ...existingData,
-            }
-          : {
-              ...(samePerson ? existingData || {} : {}),
-              ...emp,
-            };
+      const nowStamp = Date.now();
+      const baseMergedEmp: Employee = {
+        ...(samePerson ? existingData || {} : {}),
+        ...emp,
+      };
 
       const mergedEmp: Employee = sanitizeEmployeeMonthlyAttendance({
         ...baseMergedEmp,
         id: canonicalId,
         code: empCode,
         sortOrder,
-        updatedAt: Math.max(exTime, localTime) || Date.now(),
+        updatedAt: nowStamp,
         monthlyAttendance: mergedMonthly,
         periodRecords: samePerson
           ? {
@@ -694,14 +687,15 @@ export const syncEmployeesToSupabase = async (
     // Đồng bộ chi tiết ngày công nhân viên chính thức vào bảng attendance_records
     try {
       const existingAttMap = new Map<string, string>();
+      const empCodes = payload.map((p) => p.code).filter(Boolean);
       try {
         const { data: exAtt } = await client
           .from('attendance_records')
           .select('id, worker_code, month, year')
-          .eq('worker_type', 'PERMANENT');
+          .in('worker_code', empCodes);
         if (exAtt && Array.isArray(exAtt)) {
           exAtt.forEach((r: any) => {
-            existingAttMap.set(`${r.worker_code}_${r.year}_${r.month}`, String(r.id));
+            existingAttMap.set(`${r.worker_code}_${r.year}_${Number(r.month)}`, String(r.id));
           });
         }
       } catch {}
@@ -734,7 +728,14 @@ export const syncEmployeesToSupabase = async (
         }
       });
       if (attPayloads.length > 0) {
-        await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
+        const { error: attUpsertErr } = await client
+          .from('attendance_records')
+          .upsert(attPayloads, { onConflict: 'id' });
+        if (attUpsertErr) {
+          await client
+            .from('attendance_records')
+            .upsert(attPayloads, { onConflict: 'worker_code,month,year,period_key' });
+        }
       }
     } catch {}
 
@@ -824,6 +825,7 @@ export const loadEmployeesFromSupabase = async (
       list.forEach((emp) => {
         const empNormName = normalizeEmpName(emp.fullName);
         const matchingAtts = attRecords.filter((a) => {
+          if (a.worker_type && a.worker_type !== 'PERMANENT') return false;
           const codeMatch = a.worker_code === emp.code || a.worker_code === emp.id;
           if (!codeMatch) return false;
           if (a.worker_name && normalizeEmpName(a.worker_name) !== empNormName) {
@@ -849,10 +851,11 @@ export const loadEmployeesFromSupabase = async (
             Object.keys(att.attendance_data).length === 0 &&
             Number(att.total_work_days || 0) === 0 &&
             Number(att.total_ot_hours || 0) === 0 &&
-            attTs > existingTs;
+            attTs > existingTs + 1500;
 
           if (attHasDays || attIsExplicitClear) {
-            if (!existingRec || (attTs > 0 && attTs >= existingTs)) {
+            // Chỉ ghi đè từ attendance_records khi chưa có trong employee_data hoặc thực sự được gửi mới hơn (>1.5s) từ Mobile App
+            if (!existingRec || (attTs > 0 && attTs > existingTs + 1500)) {
               emp.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
@@ -861,7 +864,7 @@ export const loadEmployeesFromSupabase = async (
                 totalOtHours: Number(att.total_ot_hours || 0),
                 days: attHasDays ? att.attendance_data : {},
                 lastSubmittedAt: att.updated_at,
-                submittedBy: 'WORKER',
+                submittedBy: existingRec?.submittedBy === 'MANUAL_USER' ? 'MANUAL_USER' : 'WORKER',
               };
             }
           }
@@ -2462,7 +2465,7 @@ export const syncSingleEmployeeToSupabase = async (
       ...cleanedLocal,
       id: String(canonicalId),
       code: empCode,
-      updatedAt: cleanedLocal.updatedAt || Date.now(),
+      updatedAt: Date.now(),
       monthlyAttendance: mergedMonthly,
       periodRecords: samePerson
         ? {

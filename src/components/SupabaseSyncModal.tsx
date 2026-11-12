@@ -281,28 +281,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records cho TẤT CẢ các tháng đã chấm công
       const attendancePayload: AttendanceRecord[] = [];
 
-      employees.forEach((e) => {
-        if (e.monthlyAttendance) {
-          Object.entries(e.monthlyAttendance).forEach(([, mRec]: [string, any]) => {
-            if (mRec && mRec.month && mRec.year) {
-              const mStr = String(mRec.month).padStart(2, '0');
-              attendancePayload.push({
-                id: `ATT-EMP-${mRec.year}-${mStr}-${e.code}`,
-                workerType: 'PERMANENT' as const,
-                workerCode: e.code,
-                workerName: e.fullName,
-                projectCode: e.department,
-                month: Number(mRec.month),
-                year: Number(mRec.year),
-                periodKey: `${mStr}/${mRec.year}`,
-                totalWorkDays: Number(mRec.totalWorkDays || 0),
-                totalOtHours: Number(mRec.totalOtHours || 0),
-                attendanceData: mRec.days || {},
-              });
-            }
-          });
-        }
-      });
+      // Bảng attendance_records của Nhân viên chính thức đã được syncEmployeesToSupabase đồng bộ trực tiếp kèm dấu thời gian gốc chuẩn xác
 
       seasonalWorkers.forEach((rawW) => {
         const w = materializeSeasonalMonthlyAttendance(rawW, config.periodCode);
