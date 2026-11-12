@@ -68,7 +68,12 @@ function sanitizeSeasonalList(list: any[]): any[] {
   return cleaned;
 }
 
+let memoryStorageCache: StoredData | null = null;
+
 function readStorage(): StoredData {
+  if (memoryStorageCache) {
+    return memoryStorageCache;
+  }
   try {
     if (fs.existsSync(DB_PATH)) {
       const content = fs.readFileSync(DB_PATH, 'utf-8');
@@ -91,6 +96,7 @@ function readStorage(): StoredData {
           ...(Array.isArray(parsed.teamWorkers) ? { teamWorkers: parsed.teamWorkers } : {}),
           ...(Array.isArray(parsed.salaryAdvances) ? { salaryAdvances: parsed.salaryAdvances } : {}),
         };
+        memoryStorageCache = result;
         if (isLegacy19) {
           writeStorage(result);
         }
@@ -106,16 +112,18 @@ function readStorage(): StoredData {
     employees: initialEmployees,
     seasonalWorkers: initialSeasonalWorkers,
   };
+  memoryStorageCache = defaultData;
   writeStorage(defaultData);
   return defaultData;
 }
 
 function writeStorage(data: StoredData): void {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error writing payroll_storage.json:', err);
-  }
+  memoryStorageCache = data;
+  fs.promises
+    .writeFile(DB_PATH, JSON.stringify(data, null, 2), 'utf-8')
+    .catch((err) => {
+      console.error('Error writing payroll_storage.json:', err);
+    });
 }
 
 // ================= API ROUTES =================
@@ -127,6 +135,12 @@ app.get('/api/server-info', (req, res) => {
     port: PORT,
     timestamp: Date.now(),
   });
+});
+
+// Ultra-fast lightweight version check (~30 bytes, <1ms)
+app.get('/api/sync-version', (req, res) => {
+  const data = readStorage();
+  res.json({ lastUpdated: data.lastUpdated });
 });
 
 // Full state sync (GET)

@@ -274,3 +274,20 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- KÍCH HOẠT SUPABASE REALTIME CHO CÁC BẢNG ĐỒNG BỘ ĐA ỨNG DỤNG / ĐA TRÌNH DUYỆT
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['company_config', 'employees', 'seasonal_workers', 'team_workers', 'projects', 'payroll_records', 'salary_advances', 'attendance_records'])
+  LOOP
+    BEGIN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I;', tbl);
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END LOOP;
+END
+$$;
+

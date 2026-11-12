@@ -50,17 +50,6 @@ export async function fetchServerData(updateLocalTimestamp: boolean = true): Pro
     if (!res.ok) return null;
     const data = await res.json();
     if (data && typeof data.lastUpdated === 'number') {
-      // Tự động đồng bộ cấu hình Supabase từ máy chủ sang máy tính mới nếu máy này chưa có
-      if (data.config?.supabaseUrl && data.config?.supabaseAnonKey) {
-        try {
-          const curUrl = localStorage.getItem('supabase_config_url') || '';
-          const curKey = localStorage.getItem('supabase_config_anon_key') || '';
-          if (!curUrl || !curKey) {
-            localStorage.setItem('supabase_config_url', String(data.config.supabaseUrl).trim());
-            localStorage.setItem('supabase_config_anon_key', String(data.config.supabaseAnonKey).trim());
-          }
-        } catch {}
-      }
       if (data.lastUpdated > 0 && (updateLocalTimestamp || lastSyncedTimestamp === 0)) {
         lastSyncedTimestamp = data.lastUpdated;
         lastSyncTimeString = new Date(data.lastUpdated).toLocaleTimeString('vi-VN', {
@@ -93,13 +82,14 @@ export async function saveAllToServer(
     const baseUrl = getApiBaseUrl();
     let enrichedConfig: any = { ...config };
     try {
-      const sbUrl = localStorage.getItem('supabase_config_url') || '';
-      const sbKey = localStorage.getItem('supabase_config_anon_key') || '';
+      const env = (import.meta as any).env || {};
+      const sbUrl = (localStorage.getItem('supabase_config_url') || env.VITE_SUPABASE_URL || '').trim();
+      const sbKey = (localStorage.getItem('supabase_config_anon_key') || env.VITE_SUPABASE_ANON_KEY || '').trim();
       if (sbUrl && sbKey) {
         enrichedConfig = {
           ...enrichedConfig,
-          supabaseUrl: sbUrl.trim(),
-          supabaseAnonKey: sbKey.trim(),
+          supabaseUrl: sbUrl.replace(/\/+$/, ''),
+          supabaseAnonKey: sbKey,
         };
       }
     } catch {}
@@ -205,16 +195,23 @@ function startPolling() {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return; // Tiết kiệm tài nguyên khi tab ẩn
     }
-    // Khi đã kết nối Supabase Cloud thì ưu tiên kênh Supabase Realtime WebSocket, không lặp polling 3s gây quá tải
-    try {
-      const sbUrl = localStorage.getItem('supabase_config_url') || '';
-      const sbKey = localStorage.getItem('supabase_config_anon_key') || '';
-      if (sbUrl.startsWith('https://') && sbKey) {
-        return;
-      }
-    } catch {}
 
     const prevTs = lastSyncedTimestamp;
+    try {
+      const baseUrl = getApiBaseUrl();
+      const verRes = await fetch(`${baseUrl}/api/sync-version`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (verRes.ok) {
+        const verJson = await verRes.json();
+        if (verJson && typeof verJson.lastUpdated === 'number' && verJson.lastUpdated <= prevTs) {
+          return; // Không có thay đổi -> không tải gói 250KB
+        }
+      }
+    } catch {
+      return;
+    }
+
     const serverData = await fetchServerData(false);
     if (serverData && serverData.lastUpdated > 0) {
       if (serverData.lastUpdated > prevTs) {
@@ -235,7 +232,7 @@ function startPolling() {
     }
   };
 
-  pollingInterval = setInterval(checkUpdates, 12000);
+  pollingInterval = setInterval(checkUpdates, 2000);
 
   if (typeof window !== 'undefined') {
     window.addEventListener('focus', checkUpdates);
