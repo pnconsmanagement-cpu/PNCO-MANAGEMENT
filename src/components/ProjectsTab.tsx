@@ -33,6 +33,9 @@ interface ProjectsTabProps {
   onUpdateProject: (project: Project) => void;
   onDeleteProject: (id: string) => void;
   onSelectProjectForFilter?: (projectName: string) => void;
+  onSaveData?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
+  isSavingData?: boolean;
 }
 
 export const ProjectsTab: React.FC<ProjectsTabProps> = ({
@@ -43,6 +46,9 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({
   onAddProject,
   onUpdateProject,
   onDeleteProject,
+  onSaveData,
+  hasUnsavedChanges = false,
+  isSavingData = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_PROGRESS' | 'COMPLETED' | 'PENDING' | 'PAUSED'>('ALL');
@@ -279,6 +285,32 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onSaveData && (
+            <button
+              type="button"
+              onClick={async () => {
+                await onSaveData();
+                showToast('Đã lưu Data danh sách dự án thành công!');
+              }}
+              disabled={isSavingData}
+              className={`px-3.5 py-2 font-black text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-60 ${
+                hasUnsavedChanges
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-white/50'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+              }`}
+              title="Nhấn nút Lưu Data để lưu danh sách dự án vừa nhập"
+            >
+              <Save className={`w-4 h-4 ${isSavingData ? 'animate-bounce' : ''}`} />
+              <span>
+                {isSavingData
+                  ? 'Đang lưu Data...'
+                  : hasUnsavedChanges
+                  ? 'Lưu Data (Chưa lưu)'
+                  : 'Lưu Data'}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={openAddModal}

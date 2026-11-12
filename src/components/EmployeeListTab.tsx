@@ -60,6 +60,9 @@ interface EmployeeListTabProps {
   onGoToAttendance: () => void;
   onGoToSeasonalWorkers?: () => void;
   onResetDefault?: () => void;
+  onSaveData?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
+  isSavingData?: boolean;
 }
 
 export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
@@ -73,6 +76,9 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
   onGoToAttendance,
   onGoToSeasonalWorkers,
   onResetDefault,
+  onSaveData,
+  hasUnsavedChanges = false,
+  isSavingData = false,
 }) => {
   const realDateInfo = useMemo(() => getRealCurrentDateInfo(), []);
   const activeMonth = config.month || realDateInfo.realMonth;
@@ -779,6 +785,33 @@ export const EmployeeListTab: React.FC<EmployeeListTabProps> = ({
 
         {/* Thanh tác vụ chính */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Nút LƯU DATA thủ công */}
+          {onSaveData && (
+            <button
+              type="button"
+              onClick={async () => {
+                await onSaveData();
+                showToast('Đã lưu Data danh sách nhân viên chính thức thành công!');
+              }}
+              disabled={isSavingData}
+              className={`px-3.5 py-2 font-black text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition cursor-pointer disabled:opacity-60 ${
+                hasUnsavedChanges
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-white/50'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+              }`}
+              title="Nhấn nút Lưu Data để lưu lại toàn bộ dữ liệu nhân viên vừa nhập"
+            >
+              <Save className={`w-4 h-4 stroke-[2.5] ${isSavingData ? 'animate-bounce' : ''}`} />
+              <span>
+                {isSavingData
+                  ? 'Đang lưu Data...'
+                  : hasUnsavedChanges
+                  ? 'Lưu Data (Chưa lưu)'
+                  : 'Lưu Data'}
+              </span>
+            </button>
+          )}
+
           {/* Nút Thêm nhân viên */}
           <button
             id="btn-add-permanent-employee"

@@ -16,6 +16,7 @@ import {
   Database,
   Cloud,
   Smartphone,
+  Save,
 } from 'lucide-react';
 import { TabType } from './NavigationTabs';
 import { CompanyConfig } from '../types';
@@ -36,6 +37,9 @@ interface SidebarProps {
   onOpenBatchZalo?: () => void;
   onOpenCompanyModal?: () => void;
   onOpenSupabaseModal?: () => void;
+  onOpenMobileAttendance?: () => void;
+  onSaveData?: () => void;
+  hasUnsavedChanges?: boolean;
   permanentSubTab?: 'LIST' | 'ATTENDANCE' | 'PAYROLL' | 'ADVANCES';
   seasonalSubTab?: 'LIST' | 'ATTENDANCE' | 'PAYROLL' | 'ADVANCES';
   onSelectSubTab?: (parentTab: 'PERMANENT_EMPLOYEES' | 'SEASONAL_WORKERS', subTab: 'LIST' | 'ATTENDANCE' | 'PAYROLL' | 'ADVANCES') => void;
@@ -61,6 +65,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenCompanyModal,
   onOpenSupabaseModal,
   onOpenMobileAttendance,
+  onSaveData,
+  hasUnsavedChanges = false,
   cloudSyncStatus = 'idle',
 }) => {
   interface NavMenuItem {
@@ -602,55 +608,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        {/* Supabase Cloud Connection Box */}
-        {onOpenSupabaseModal && (
-          <div className="mx-2.5 mb-2 p-2.5 rounded-lg bg-gradient-to-br from-[#062035] to-[#0a2e4a] border border-emerald-500/40 shadow-xs">
-            <div className="flex items-center justify-between mb-1">
+        {/* Supabase Cloud Connection & Manual Save Box */}
+        {(onOpenSupabaseModal || onSaveData) && (
+          <div className="mx-2.5 mb-2 p-2.5 rounded-lg bg-gradient-to-br from-[#062035] to-[#0a2e4a] border border-emerald-500/40 shadow-xs space-y-1.5">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
                 <Database className="w-3.5 h-3.5 text-emerald-400" />
-                <span>KẾT NỐI SUPABASE</span>
+                <span>LƯU DATA & CLOUD</span>
               </div>
               <span
                 className={`w-2 h-2 rounded-full ${
                   cloudSyncStatus === 'syncing'
                     ? 'bg-amber-300 animate-pulse'
+                    : hasUnsavedChanges
+                    ? 'bg-amber-400 animate-ping'
                     : cloudSyncStatus === 'error'
                     ? 'bg-rose-400 animate-ping'
                     : isSupabaseConfigured()
                     ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
-                    : 'bg-amber-400'
+                    : 'bg-sky-400'
                 }`}
-                title={
-                  cloudSyncStatus === 'syncing'
-                    ? 'Đang đồng bộ lên Supabase...'
-                    : cloudSyncStatus === 'error'
-                    ? 'Lỗi đồng bộ'
-                    : isSupabaseConfigured()
-                    ? 'Đã liên kết Supabase'
-                    : 'Chưa cấu hình Supabase'
-                }
               />
             </div>
-            <p className="text-[10px] text-slate-300 mb-2 leading-tight">
+            <p className="text-[10px] text-slate-300 leading-tight">
               {cloudSyncStatus === 'syncing'
-                ? 'Đang đồng bộ dữ liệu lên Cloud...'
+                ? 'Đang lưu Data...'
+                : hasUnsavedChanges
+                ? 'Có dữ liệu mới chưa lưu • Nhấn Lưu Data!'
                 : cloudSyncStatus === 'error'
-                ? 'Có lỗi đồng bộ • Bấm để xem chi tiết'
-                : isSupabaseConfigured()
-                ? 'Đã liên kết DB đám mây • Tự động lưu'
-                : 'Lưu trữ online & Deploy Vercel'}
+                ? 'Có lỗi lưu Cloud • Bấm để kiểm tra'
+                : 'Chế độ thủ công • Nhấn nút Lưu Data để lưu'}
             </p>
-            <button
-              onClick={onOpenSupabaseModal}
-              className={`w-full py-1.5 px-2 rounded text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer ${
-                cloudSyncStatus === 'syncing'
-                  ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-              }`}
-            >
-              <Cloud className="w-3.5 h-3.5" />
-              <span>{isSupabaseConfigured() ? 'Quản lý Supabase Cloud' : 'Cấu hình kết nối ngay'}</span>
-            </button>
+            {onSaveData && (
+              <button
+                type="button"
+                onClick={onSaveData}
+                disabled={cloudSyncStatus === 'syncing'}
+                className={`w-full py-1.5 px-2 rounded text-xs font-black transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-60 ${
+                  hasUnsavedChanges
+                    ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>
+                  {cloudSyncStatus === 'syncing'
+                    ? 'Đang lưu Data...'
+                    : hasUnsavedChanges
+                    ? 'Lưu Data (Chưa lưu)'
+                    : 'Lưu Data'}
+                </span>
+              </button>
+            )}
+            {onOpenSupabaseModal && (
+              <button
+                type="button"
+                onClick={onOpenSupabaseModal}
+                className="w-full py-1 px-2 rounded text-[11px] font-semibold transition flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-slate-200 cursor-pointer"
+              >
+                <Cloud className="w-3 h-3 text-emerald-300" />
+                <span>{isSupabaseConfigured() ? 'Quản lý Supabase Cloud' : 'Cấu hình kết nối Cloud'}</span>
+              </button>
+            )}
           </div>
         )}
 

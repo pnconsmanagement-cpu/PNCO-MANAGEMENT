@@ -40,6 +40,7 @@ import {
   Smartphone,
   QrCode,
   Users,
+  Save,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SeasonalWorker, CompanyConfig, SeasonalCycleType, PayrollPeriodOption, Project } from '../types';
@@ -83,6 +84,9 @@ interface SeasonalWorkersTabProps {
   onGoToPermanentEmployees?: () => void;
   onGoToSeasonalAttendance?: () => void;
   onGoToSeasonalPayroll?: () => void;
+  onSaveData?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
+  isSavingData?: boolean;
 }
 
 export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
@@ -101,6 +105,9 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
   onGoToPermanentEmployees,
   onGoToSeasonalAttendance,
   onGoToSeasonalPayroll,
+  onSaveData,
+  hasUnsavedChanges = false,
+  isSavingData = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState('ALL');
@@ -482,13 +489,8 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           submittedBy: 'ADMIN',
         },
       };
-      if (typeof window !== 'undefined' && cleared.code) {
-        try {
-          localStorage.setItem(`pncons_mobile_days_${cleared.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
-        } catch {}
-      }
       onUpdateWorker(cleared);
-      showToast(`Đã chuyển ${worker.fullName} sang "Chưa chấm công" (0 công)`);
+      showToast(`Đã chuyển ${worker.fullName} sang "Chưa chấm công" (0 công) — Nhấn "Lưu Data" để lưu!`);
     } else {
       const activated = recordWorkerPeriod(original, currentPeriodOption, {
         status: 'ACTIVE',
@@ -590,16 +592,11 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
             submittedBy: 'ADMIN',
           },
         };
-        if (typeof window !== 'undefined' && updated.code) {
-          try {
-            localStorage.setItem(`pncons_mobile_days_${updated.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
-          } catch {}
-        }
         onUpdateWorker(updated);
       }
     });
 
-    showToast(`Đã đặt lại 0 công ("Chưa chấm công") cho ${targetIds.size} thợ tại ${currentPeriodOption.shortLabel}!`);
+    showToast(`Đã đặt lại 0 công ("Chưa chấm công") cho ${targetIds.size} thợ tại ${currentPeriodOption.shortLabel} — Nhấn "Lưu Data" để lưu!`);
   };
 
   // Xuất Excel bảng kê chi trả theo đúng kỳ đang chọn
@@ -711,8 +708,35 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
         </div>
       )}
 
-      {/* Thanh tác vụ rút gọn: chỉ hiển thị nút Thêm Nhân Viên Thời Vụ */}
-      <div className="flex items-center justify-end">
+      {/* Thanh tác vụ: Nút Lưu Data & Thêm Nhân Viên Thời Vụ */}
+      <div className="flex flex-wrap items-center justify-end gap-2.5">
+        {onSaveData && (
+          <button
+            type="button"
+            onClick={async () => {
+              await onSaveData();
+              setToastMessage('Đã lưu Data danh sách nhân viên thời vụ thành công!');
+              setTimeout(() => setToastMessage(null), 3500);
+            }}
+            disabled={isSavingData}
+            className={`px-4 py-2.5 font-black text-xs sm:text-sm rounded-xl shadow-sm flex items-center gap-2 transition cursor-pointer disabled:opacity-60 ${
+              hasUnsavedChanges
+                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+            }`}
+            title="Nhấn nút Lưu Data để lưu lại toàn bộ dữ liệu nhân viên thời vụ vừa nhập"
+          >
+            <Save className={`w-4 h-4 stroke-[2.5] ${isSavingData ? 'animate-bounce' : ''}`} />
+            <span>
+              {isSavingData
+                ? 'Đang lưu Data...'
+                : hasUnsavedChanges
+                ? 'Lưu Data (Chưa lưu)'
+                : 'Lưu Data'}
+            </span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => {

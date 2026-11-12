@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Calendar,
   Clock,
@@ -19,6 +19,7 @@ import {
   Send,
   Lock,
   Shield,
+  Save,
 } from 'lucide-react';
 import {
   SeasonalWorker,
@@ -53,6 +54,7 @@ interface MobileAttendanceAppProps {
   initialWorkerCode?: string;
   isAdminPreview?: boolean;
   onUpdateWorker: (worker: SeasonalWorker) => void;
+  onSaveData?: () => Promise<void> | void;
   onExitMobileView?: () => void;
 }
 
@@ -63,6 +65,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   initialWorkerCode,
   isAdminPreview = false,
   onUpdateWorker,
+  onSaveData,
   onExitMobileView,
 }) => {
   // 1. Trích xuất thông tin định danh công nhân từ URL params và Hash (bảo đảm nhận đúng tên thợ 100%)
@@ -247,8 +250,8 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
   // Tải dữ liệu công nhân và chấm công mới nhất từ Supabase Cloud và máy chủ
   const syncLatestAttendance = async () => {
-    // Không ghi đè nếu người dùng vừa thao tác lưu/xóa cục bộ trong vòng 12 giây qua
-    if (Date.now() - lastLocalEditAtRef.current < 12000) {
+    // Không ghi đè nếu người dùng có thay đổi chưa nhấn Lưu Data hoặc vừa thao tác
+    if (hasUnsavedMobileRef.current || Date.now() - lastLocalEditAtRef.current < 12000) {
       return;
     }
     try {
@@ -263,9 +266,6 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
           ]);
           if (projs && projs.length > 0) {
             setCloudProjects(projs);
-            try {
-              localStorage.setItem('payroll_projects', JSON.stringify(projs));
-            } catch {}
           }
           if (cloudWorkers && cloudWorkers.length > 0) {
             const matched = cloudWorkers.find(
@@ -293,12 +293,11 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         }
       }
 
-      if (loadedWorker && Date.now() - lastLocalEditAtRef.current >= 12000) {
+      if (loadedWorker && !hasUnsavedMobileRef.current && Date.now() - lastLocalEditAtRef.current >= 12000) {
         const mKey = `${year}-${String(month).padStart(2, '0')}`;
         const localSubmittedAt = currentWorker?.monthlyAttendance?.[mKey]?.lastSubmittedAt;
         const remoteSubmittedAt = loadedWorker.monthlyAttendance?.[mKey]?.lastSubmittedAt;
 
-        // Nếu đang ở chế độ xem thử từ Quản trị (isAdminPreview) hoặc dữ liệu trên máy (currentWorker) mới hơn bản từ xa, không ghi đè bằng bản cũ
         if (localSubmittedAt && remoteSubmittedAt) {
           if (new Date(localSubmittedAt).getTime() > new Date(remoteSubmittedAt).getTime()) {
             return;
@@ -309,11 +308,6 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
         const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
         setAttendanceDays(record.days);
-        try {
-          const cacheKey = `pncons_mobile_days_${loadedWorker.code}_${year}_${month}`;
-          localStorage.setItem(cacheKey, JSON.stringify(record.days));
-          localStorage.setItem(`pncons_mobile_worker_${loadedWorker.code}`, JSON.stringify(loadedWorker));
-        } catch {}
       }
     } catch {}
   };
@@ -321,16 +315,15 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   useEffect(() => {
     syncLatestAttendance();
 
-    // 1. Tự động cập nhật khi có thay đổi trên Supabase Realtime (khi máy tính bấm chấm công)
+    // Chỉ cập nhật từ xa khi người dùng không có dữ liệu đang nhập chưa lưu
     const unsubscribeSupabase = subscribeToSupabaseRealtime((table) => {
-      if (table === 'seasonal_workers' && Date.now() - lastLocalEditAtRef.current >= 4000) {
+      if (table === 'seasonal_workers' && !hasUnsavedMobileRef.current && Date.now() - lastLocalEditAtRef.current >= 4000) {
         syncLatestAttendance();
       }
     });
 
-    // 2. Tự động cập nhật khi có tín hiệu từ server
     const unsubscribeServer = subscribeToSync((serverData) => {
-      if (Date.now() - lastLocalEditAtRef.current < 4000) return;
+      if (hasUnsavedMobileRef.current || Date.now() - lastLocalEditAtRef.current < 4000) return;
       if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
         const matched = serverData.seasonalWorkers.find(
           (w) => w.code === selectedWorkerCode || w.code === parsedWorkerInfo.code || String(w.id) === selectedWorkerCode
@@ -342,26 +335,16 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       }
     });
 
-    // 3. Polling dự phòng chu kỳ 15 giây khi tab đang mở
-    const interval = setInterval(() => {
-      if (
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible' &&
-        Date.now() - lastLocalEditAtRef.current >= 4000
-      ) {
-        syncLatestAttendance();
-      }
-    }, 15000);
-
     return () => {
       unsubscribeSupabase();
       unsubscribeServer();
-      clearInterval(interval);
     };
   }, [selectedWorkerCode, parsedWorkerInfo.code, year, month, isAdminPreview]);
 
-  // Dữ liệu chấm công tháng của công nhân
+  // Dữ liệu chấm công tháng của công nhân & trạng thái chưa nhấn nút Lưu Data
   const [attendanceDays, setAttendanceDays] = useState<{ [dayNumber: number]: DailyAttendanceDetail }>({});
+  const [hasUnsavedMobileChanges, setHasUnsavedMobileChanges] = useState(false);
+  const hasUnsavedMobileRef = useRef(false);
   
   // State Modal Chấm Công Popup (Theo Ảnh 2 của người dùng)
   const [editingCell, setEditingCell] = useState<CalendarDayCell | null>(null);
@@ -411,7 +394,6 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   // Nạp dữ liệu chấm công khi đổi công nhân, đổi tháng hoặc khi dữ liệu công nhân cập nhật từ xa
   useEffect(() => {
     if (!currentWorker) return;
-    // Không ghi đè state đang chấm công tức thời bằng prop cũ từ parent trong vòng 3.5 giây sau khi bấm lưu
     if (Date.now() - lastLocalEditAtRef.current < 3500) return;
 
     const workerCode = currentWorker.code || selectedWorkerCode;
@@ -421,13 +403,8 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
     const record = getWorkerMonthlyAttendance(currentWorker, year, month);
 
-    // Nếu currentWorker đã có bản ghi tháng chính thức (kể cả khi đã xóa trắng về {}) hoặc đang ở chế độ Admin xem thử:
-    // Sử dụng trực tiếp record.days từ currentWorker và đồng bộ ngược lại vào localStorage để xóa sạch cache cũ
     if (hasAuthoritativeMonthRecord || isAdminPreview) {
       setAttendanceDays(record.days);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(record.days));
-      } catch {}
       return;
     }
 
@@ -607,13 +584,10 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     };
 
     setAttendanceDays(updated);
-    if (currentWorker) {
-      const workerCode = currentWorker.code || selectedWorkerCode;
-      // 1. Lưu vào LocalStorage của điện thoại ngay lập tức để không bao giờ bị mất khi F5
-      try {
-        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(updated));
-      } catch {}
+    hasUnsavedMobileRef.current = true;
+    setHasUnsavedMobileChanges(true);
 
+    if (currentWorker) {
       const updatedWorker = updateWorkerMonthlyAttendance(
         currentWorker,
         year,
@@ -622,35 +596,13 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
-      try {
-        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
-      } catch {}
-
-      // 2. Đồng bộ ngay lập tức lên Máy chủ Backend
-      saveAttendanceToServer(updatedWorker);
-
-      // 3. Đồng bộ trực tiếp lên Supabase Cloud Database để Web App trên máy tính nhận ngay tức thì
-      if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
-          .then((res) => {
-            if (res.success) {
-              showToast(`Đã lưu & đồng bộ Supabase: ngày ${dayNum}/${month}/${year}`);
-            } else {
-              console.warn('[Mobile Sync] Supabase warning:', res.message);
-              showToast(`Đã lưu chấm công ngày ${dayNum}/${month}/${year}`);
-            }
-          })
-          .catch((err) => {
-            console.warn('[Mobile Sync] Supabase error:', err);
-            showToast(`Đã lưu chấm công ngày ${dayNum}/${month}/${year}`);
-          });
-      }
     }
 
+    showToast(`Đã chọn ngày ${dayNum}/${month}/${year} — Nhấn nút "Lưu Data" để lưu!`);
     setEditingCell(null);
   };
 
-  // Xóa trạng thái của ngày trong popup
+  // Xóa trạng thái của ngày trong popup (chỉ xóa trên màn hình, cần nhấn Lưu Data để lưu)
   const handleDeleteStatus = () => {
     if (!editingCell || !editingCell.day) return;
     const dayNum = editingCell.day;
@@ -661,12 +613,10 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     delete (updated as any)[String(dayNum)];
 
     setAttendanceDays(updated);
-    if (currentWorker) {
-      const workerCode = currentWorker.code || selectedWorkerCode;
-      try {
-        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(updated));
-      } catch {}
+    hasUnsavedMobileRef.current = true;
+    setHasUnsavedMobileChanges(true);
 
+    if (currentWorker) {
       const updatedWorker = updateWorkerMonthlyAttendance(
         currentWorker,
         year,
@@ -675,42 +625,21 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'WORKER'
       );
       onUpdateWorker(updatedWorker);
-      try {
-        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
-      } catch {}
-
-      saveAttendanceToServer(updatedWorker);
-      if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
-          .then((res) => {
-            if (res.success) {
-              showToast(`Đã xóa & đồng bộ Supabase: ngày ${dayNum}/${month}/${year}`);
-            } else {
-              showToast(`Đã xóa trạng thái ngày ${dayNum}/${month}/${year}`);
-            }
-          })
-          .catch((err) => {
-            console.warn('[Mobile Sync] Supabase error:', err);
-            showToast(`Đã xóa trạng thái ngày ${dayNum}/${month}/${year}`);
-          });
-      }
     }
 
+    showToast(`Đã xóa ngày ${dayNum}/${month}/${year} — Nhấn nút "Lưu Data" để lưu!`);
     setEditingCell(null);
   };
 
-  // Xóa trắng toàn bộ ngày chấm công trong tháng của công nhân này
+  // Xóa trắng toàn bộ ngày chấm công trong tháng của công nhân này (chỉ lưu khi nhấn Lưu Data)
   const handleClearAllMonthDays = () => {
     lastLocalEditAtRef.current = Date.now();
     const emptyDays: { [dayNumber: number]: DailyAttendanceDetail } = {};
     setAttendanceDays(emptyDays);
+    hasUnsavedMobileRef.current = true;
+    setHasUnsavedMobileChanges(true);
 
     if (currentWorker) {
-      const workerCode = currentWorker.code || selectedWorkerCode;
-      try {
-        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(emptyDays));
-      } catch {}
-
       const updatedWorker = updateWorkerMonthlyAttendance(
         currentWorker,
         year,
@@ -719,66 +648,52 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         'ADMIN'
       );
       onUpdateWorker(updatedWorker);
-      try {
-        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
-      } catch {}
-
-      saveAttendanceToServer(updatedWorker);
-      if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(updatedWorker, `${String(month).padStart(2, '0')}/${year}`)
-          .then(() => {
-            showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year} của ${currentWorker.fullName}`);
-          })
-          .catch(() => {
-            showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year}`);
-          });
-      } else {
-        showToast(`Đã xóa trắng toàn bộ công tháng ${month}/${year} của ${currentWorker.fullName}`);
-      }
+      showToast(`Đã đặt trắng tháng ${month}/${year} — Nhấn nút "Lưu Data" để lưu!`);
     }
     setEditingCell(null);
   };
 
   const [isSyncing, setIsSyncing] = useState(false);
-  const handleManualSync = async () => {
+
+  // Nút LƯU DATA thủ công chính thức cho Chấm Công Di Động
+  const handleSaveMobileData = async () => {
+    if (!currentWorker) return;
     setIsSyncing(true);
+    lastLocalEditAtRef.current = Date.now();
     try {
-      // 1. Nếu có công nhân hiện tại và có Supabase, đẩy ngay lập tức lên Cloud
-      if (currentWorker && isSupabaseConfigured()) {
-        const periodCode = `${String(month).padStart(2, '0')}/${year}`;
-        await syncSingleSeasonalWorkerToSupabase(currentWorker, periodCode);
-      }
-
-      // 2. Tải bản mới nhất từ Supabase Cloud
-      let cloudTarget: SeasonalWorker | null = null;
-      if (isSupabaseConfigured()) {
-        try {
-          const cloudWorkers = await loadSeasonalWorkersFromSupabase();
-          if (cloudWorkers && cloudWorkers.length > 0) {
-            cloudTarget = cloudWorkers.find(
-              (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode || (parsedWorkerInfo.code && w.code === parsedWorkerInfo.code)
-            ) || null;
-          }
-        } catch {}
-      }
-
-      // 3. Fallback: Máy chủ Backend
-      const serverData = await fetchServerData();
-      const serverTarget = serverData?.seasonalWorkers?.find(
-        (w) => w.code === selectedWorkerCode || String(w.id) === selectedWorkerCode || (parsedWorkerInfo.code && w.code === parsedWorkerInfo.code)
+      const workerCode = currentWorker.code || selectedWorkerCode;
+      const updatedWorker = updateWorkerMonthlyAttendance(
+        currentWorker,
+        year,
+        month,
+        attendanceDays,
+        isAdminPreview ? 'ADMIN' : 'WORKER'
       );
 
-      const target = cloudTarget || serverTarget;
-      if (target) {
-        onUpdateWorker(target);
-        const record = getWorkerMonthlyAttendance(target, year, month);
-        setAttendanceDays(record.days);
-        showToast(`Đã đồng bộ thành công cho thợ ${target.fullName}!`);
+      onUpdateWorker(updatedWorker);
+
+      try {
+        localStorage.setItem(`pncons_mobile_days_${workerCode}_${year}_${month}`, JSON.stringify(attendanceDays));
+        localStorage.setItem(`pncons_mobile_worker_${workerCode}`, JSON.stringify(updatedWorker));
+      } catch {}
+
+      if (onSaveData) {
+        await onSaveData();
       } else {
-        showToast('Đã hoàn tất đồng bộ với Supabase Cloud & Máy chủ');
+        await saveAttendanceToServer(updatedWorker);
+        if (isSupabaseConfigured()) {
+          await syncSingleSeasonalWorkerToSupabase(
+            updatedWorker,
+            `${String(month).padStart(2, '0')}/${year}`
+          );
+        }
       }
+
+      hasUnsavedMobileRef.current = false;
+      setHasUnsavedMobileChanges(false);
+      showToast(`Đã lưu Data chấm công của ${updatedWorker.fullName} thành công!`);
     } catch {
-      showToast('Không thể kết nối máy chủ');
+      showToast('Có lỗi khi kết nối máy chủ, dữ liệu đã được lưu cục bộ!');
     } finally {
       setIsSyncing(false);
     }
@@ -816,13 +731,23 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleManualSync}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-full text-xs font-bold transition-colors cursor-pointer shadow-xs"
-              title="Đồng bộ dữ liệu chấm công về máy chủ và Supabase Cloud"
+              onClick={handleSaveMobileData}
+              disabled={isSyncing}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-black transition-colors cursor-pointer shadow-xs disabled:opacity-60 ${
+                hasUnsavedMobileChanges
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
+              title="Nhấn nút Lưu Data để lưu dữ liệu chấm công vừa chọn"
             >
-              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
-              <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ Supabase'}</span>
-              <RotateCcw className={`w-3 h-3 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+              <Save className={`w-3.5 h-3.5 ${isSyncing ? 'animate-bounce' : ''}`} />
+              <span>
+                {isSyncing
+                  ? 'Đang lưu Data...'
+                  : hasUnsavedMobileChanges
+                  ? 'Lưu Data (Chưa lưu)'
+                  : 'Lưu Data'}
+              </span>
             </button>
 
             {/* Chỉ hiển thị nút Đóng khi người quản trị mở chế độ Xem thử trong phần mềm máy tính */}
@@ -955,17 +880,35 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
                 </div>
               </div>
 
-              {/* Thông báo trạng thái đồng bộ cho công nhân (Đã ẩn nút Chia sẻ link & Về Quản trị) */}
+              {/* Nút Lưu Data & hướng dẫn thủ công */}
               <div className="pt-3 border-t border-slate-100 space-y-2">
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-center text-xs text-emerald-900 font-medium flex items-center justify-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Chạm vào ngày trên lịch để chấm công & lưu tự động</span>
+                <button
+                  type="button"
+                  onClick={handleSaveMobileData}
+                  disabled={isSyncing}
+                  className={`w-full px-3 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60 ${
+                    hasUnsavedMobileChanges
+                      ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  <Save className="w-4 h-4" />
+                  <span>
+                    {isSyncing
+                      ? 'Đang lưu Data...'
+                      : hasUnsavedMobileChanges
+                      ? 'Lưu Data (Chưa lưu)'
+                      : 'Lưu Data'}
+                  </span>
+                </button>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-center text-[11px] text-slate-600 font-medium">
+                  Chạm vào ngày trên lịch để chấm công, sau đó nhấn <strong>Lưu Data</strong> để lưu lại
                 </div>
                 {Object.keys(attendanceDays).length > 0 && (
                   <button
                     type="button"
                     onClick={handleClearAllMonthDays}
-                    className="w-full px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                     <span>Xóa trắng chấm công tháng {month}/{year} (về 0 công)</span>

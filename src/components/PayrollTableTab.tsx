@@ -56,6 +56,7 @@ interface PayrollTableTabProps {
   onDeleteEmployee: (id: string) => void;
   onUpdateSeasonalWorker?: (worker: SeasonalWorker) => void;
   onSavePayrollToCloud?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
   forcedCategory?: 'PERMANENT' | 'SEASONAL' | 'TEAM' | 'ALL';
 }
 
@@ -70,6 +71,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onDeleteEmployee,
   onUpdateSeasonalWorker,
   onSavePayrollToCloud,
+  hasUnsavedChanges = false,
   forcedCategory,
 }) => {
   const { realMonth, realYear } = getRealCurrentDateInfo();
@@ -360,11 +362,11 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       if (onSavePayrollToCloud) {
         await Promise.race([
           Promise.resolve(onSavePayrollToCloud()),
-          new Promise((resolve) => setTimeout(resolve, 3500)),
+          new Promise((resolve) => setTimeout(resolve, 6000)),
         ]);
       }
       setSavePayrollNotice(
-        `✓ Đã lưu Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} và đồng bộ lên Supabase thành công!`
+        `✓ Đã lưu Data Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} thành công!`
       );
       setTimeout(() => {
         setSavePayrollNotice(null);
@@ -475,23 +477,12 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     });
 
     setIsTeamVoucherModalOpen(false);
-    setIsSavingPayroll(true);
-    try {
-      if (onSavePayrollToCloud) {
-        await Promise.race([
-          Promise.resolve(onSavePayrollToCloud()),
-          new Promise((resolve) => setTimeout(resolve, 3500)),
-        ]);
-      }
-      setSavePayrollNotice(
-        `✓ Đã lưu phiếu chi lương của ${baseWorker.fullName} (Kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear}) lên Supabase thành công!`
-      );
-      setTimeout(() => {
-        setSavePayrollNotice(null);
-      }, 4500);
-    } finally {
-      setIsSavingPayroll(false);
-    }
+    setSavePayrollNotice(
+      `Đã nhập phiếu chi lương của ${baseWorker.fullName} (Kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear}) — Nhấn nút "Lưu Data" để lưu chính thức!`
+    );
+    setTimeout(() => {
+      setSavePayrollNotice(null);
+    }, 5000);
   };
 
   // Số lượng nhân viên thời vụ ĐÃ CÓ CHẤM CÔNG hoặc CÓ TẠM ỨNG theo từng Tab Chu kỳ lương đã khai báo
@@ -1158,11 +1149,21 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                   type="button"
                   onClick={handleSavePayrollTable}
                   disabled={isSavingPayroll}
-                  className="px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-60 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                  title="Lưu lại toàn bộ Bản Lương tháng này và đồng bộ trực tiếp lên Supabase"
+                  className={`px-3.5 py-1.5 disabled:opacity-60 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs ${
+                    hasUnsavedChanges
+                      ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                  title="Nhấn nút Lưu Data để lưu toàn bộ Bản Lương vừa nhập"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{isSavingPayroll ? 'Đang lưu & đồng bộ...' : 'Lưu bản lương'}</span>
+                  <span>
+                    {isSavingPayroll
+                      ? 'Đang lưu Data...'
+                      : hasUnsavedChanges
+                      ? 'Lưu Data (Chưa lưu)'
+                      : 'Lưu Data'}
+                  </span>
                 </button>
 
                 <button
@@ -1541,6 +1542,29 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               </button>
             )}
 
+            {onSavePayrollToCloud && (
+              <button
+                type="button"
+                onClick={handleSavePayrollTable}
+                disabled={isSavingPayroll}
+                className={`px-3 py-1 rounded text-xs font-black flex items-center gap-1.5 transition cursor-pointer disabled:opacity-60 ${
+                  hasUnsavedChanges
+                    ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+                title="Nhấn nút Lưu Data để lưu toàn bộ thông tin Bản Lương vừa nhập"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>
+                  {isSavingPayroll
+                    ? 'Đang lưu Data...'
+                    : hasUnsavedChanges
+                    ? 'Lưu Data (Chưa lưu)'
+                    : 'Lưu Data'}
+                </span>
+              </button>
+            )}
+
             <button
               id="btn-export-excel"
               onClick={handleExportExcel}
@@ -1550,6 +1574,22 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               <span>Xuất Excel (.xlsx)</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {forcedCategory !== 'SEASONAL' && savePayrollNotice && (
+        <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{savePayrollNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSavePayrollNotice(null)}
+            className="text-emerald-700 hover:text-emerald-950 font-black px-1.5 cursor-pointer"
+          >
+            ✕
+          </button>
         </div>
       )}
 

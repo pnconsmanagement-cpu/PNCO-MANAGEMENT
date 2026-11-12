@@ -34,7 +34,7 @@ import {
   Clock,
   Search,
   Cloud,
-  RefreshCw,
+  Save,
 } from 'lucide-react';
 import { MobileAttendanceShareModal } from './MobileAttendanceShareModal';
 import { isSupabaseConfigured } from '../services/supabaseService';
@@ -57,6 +57,8 @@ interface AttendanceTabProps {
   seasonalCount?: number;
   forcedGroup?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
   onManualSync?: () => Promise<void> | void;
+  onSaveData?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
   onOpenSupabaseModal?: () => void;
   cloudSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error';
 }
@@ -165,6 +167,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
   onOpenMobileView,
   forcedGroup,
   onManualSync,
+  onSaveData,
+  hasUnsavedChanges = false,
   onOpenSupabaseModal,
   cloudSyncStatus = 'idle',
 }) => {
@@ -523,15 +527,6 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             }
           });
 
-          if (typeof window !== 'undefined' && w.code) {
-            try {
-              localStorage.setItem(
-                `pncons_mobile_days_${w.code}_${currentYear}_${currentMonth}`,
-                JSON.stringify(finalMap)
-              );
-            } catch {}
-          }
-
           const updatedFromHelper = updateWorkerMonthlyAttendance(
             syncedW,
             currentYear,
@@ -680,11 +675,6 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
       let updatedSingleWorker: SeasonalWorker | null = null;
       const updatedList = modifiedSeasonal.map((w) => {
         if (w.code === workerCode) {
-          if (typeof window !== 'undefined' && w.code) {
-            try {
-              localStorage.setItem(`pncons_mobile_days_${w.code}_${currentYear}_${currentMonth}`, JSON.stringify({}));
-            } catch {}
-          }
           const clearedFromHelper = updateWorkerMonthlyAttendance(
             w,
             currentYear,
@@ -944,40 +934,48 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           </button>
         </div>
 
-        {/* Nút Lưu & Đồng bộ Supabase nhanh cho Bản Chấm Công */}
+        {/* Nút Lưu Data thủ công cho Bản Chấm Công */}
         <div className="flex items-center gap-2">
-          {isSupabaseConfigured() ? (
+          <button
+            type="button"
+            onClick={async () => {
+              const saveFn = onSaveData || onManualSync;
+              if (saveFn) {
+                await saveFn();
+              }
+              setToastMessage(
+                `Đã lưu Data chấm công Tháng ${currentMonth}/${currentYear} thành công!`
+              );
+            }}
+            disabled={cloudSyncStatus === 'syncing'}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-2xs transition cursor-pointer disabled:opacity-60 ${
+              cloudSyncStatus === 'syncing'
+                ? 'bg-amber-600 text-white'
+                : hasUnsavedChanges
+                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+            }`}
+            title="Nhấn nút Lưu Data để lưu toàn bộ dữ liệu chấm công vừa nhập"
+          >
+            <Save className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-bounce' : ''}`} />
+            <span>
+              {cloudSyncStatus === 'syncing'
+                ? 'Đang lưu Data...'
+                : hasUnsavedChanges
+                ? 'Lưu Data (Chưa lưu)'
+                : 'Lưu Data'}
+            </span>
+          </button>
+
+          {!isSupabaseConfigured() && onOpenSupabaseModal && (
             <button
               type="button"
-              onClick={async () => {
-                if (attendanceGroup === 'SEASONAL') {
-                  onBatchUpdateSeasonal?.(modifiedSeasonal);
-                } else {
-                  onBatchUpdate(modifiedEmployees);
-                }
-                if (onManualSync) {
-                  await onManualSync();
-                }
-                setToastMessage(
-                  `Đã lưu & đồng bộ toàn bộ dữ liệu chấm công Tháng ${currentMonth}/${currentYear} lên Supabase Cloud!`
-                );
-              }}
-              disabled={cloudSyncStatus === 'syncing'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition cursor-pointer disabled:opacity-60"
-              title="Đẩy toàn bộ dữ liệu chấm công hiện tại lên Supabase Cloud để đồng bộ sang các máy tính khác"
+              onClick={() => onOpenSupabaseModal()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition cursor-pointer"
+              title="Cấu hình kết nối Supabase Cloud"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-              <span>{cloudSyncStatus === 'syncing' ? 'Đang lưu Supabase...' : 'Lưu & Đồng bộ Supabase'}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onOpenSupabaseModal?.()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition cursor-pointer"
-              title="Kết nối Supabase để đồng bộ dữ liệu chấm công giữa nhiều máy tính"
-            >
-              <Cloud className="w-3.5 h-3.5 text-amber-600" />
-              <span>Chưa nối Supabase (Bấm để kết nối)</span>
+              <Cloud className="w-3.5 h-3.5 text-sky-600" />
+              <span className="hidden sm:inline">Kết nối Cloud</span>
             </button>
           )}
         </div>

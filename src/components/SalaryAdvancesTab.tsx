@@ -34,6 +34,9 @@ interface SalaryAdvancesTabProps {
   onUpdateAdvance: (advance: SalaryAdvance) => void;
   onDeleteAdvance: (id: string) => void;
   forcedTargetType?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
+  onSaveData?: () => Promise<void> | void;
+  hasUnsavedChanges?: boolean;
+  isSavingData?: boolean;
 }
 
 export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
@@ -46,6 +49,9 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   onUpdateAdvance,
   onDeleteAdvance,
   forcedTargetType,
+  onSaveData,
+  hasUnsavedChanges = false,
+  isSavingData = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [targetTypeFilter, setTargetTypeFilter] = useState<'ALL' | 'PERMANENT' | 'SEASONAL' | 'TEAM'>(
@@ -486,6 +492,32 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onSaveData && (
+            <button
+              type="button"
+              onClick={async () => {
+                await onSaveData();
+                showToast('Đã lưu Data Bản Ứng Lương thành công!');
+              }}
+              disabled={isSavingData}
+              className={`px-3.5 py-2 font-black text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-60 ${
+                hasUnsavedChanges
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-white/50'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+              title="Nhấn nút Lưu Data để lưu các phiếu tạm ứng vừa nhập"
+            >
+              <Save className={`w-4 h-4 ${isSavingData ? 'animate-bounce' : ''}`} />
+              <span>
+                {isSavingData
+                  ? 'Đang lưu Data...'
+                  : hasUnsavedChanges
+                  ? 'Lưu Data (Chưa lưu)'
+                  : 'Lưu Data'}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={openAddModal}

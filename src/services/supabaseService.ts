@@ -1213,6 +1213,8 @@ export const syncSeasonalWorkersToSupabase = async (
   }
 };
 
+const cleanedPhantomAttIds = new Set<string>();
+
 /**
  * Tải danh sách Công nhân thời vụ từ Supabase
  */
@@ -1298,7 +1300,11 @@ export const loadSeasonalWorkersFromSupabase = async (
               yNum === 2026 &&
               isLeakedNov2026Record(att, w.monthlyAttendance['2026-10'] || octAtt))
           ) {
-            if (att.id) leakedAttIdsToDelete.push(String(att.id));
+            const attIdStr = att.id ? String(att.id) : '';
+            if (attIdStr && !cleanedPhantomAttIds.has(attIdStr)) {
+              cleanedPhantomAttIds.add(attIdStr);
+              leakedAttIdsToDelete.push(attIdStr);
+            }
             return;
           }
 
@@ -1986,36 +1992,38 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
     let existingRowId: string | null = null;
     let existingWorkerData: SeasonalWorker | null = null;
 
-    // 1. Tìm bản ghi hiện có trong bảng seasonal_workers theo CODE hoặc ID
-    // Cực kỳ quan trọng: Trong Postgres, cột code có UNIQUE constraint ("seasonal_workers_code_key").
-    // Nếu thiết bị di động có ID khác với máy tính, phải dùng ID hiện có trong DB để UPDATE, tránh lỗi duplicate key!
+    // 1. Tìm bản ghi hiện có trong bảng seasonal_workers theo CODE hoặc ID (chạy song song 1 lượt để tiết kiệm thời gian)
     try {
-      const { data: codeMatches } = await client
-        .from('seasonal_workers')
-        .select('id, code, worker_data')
-        .eq('code', workerCode)
-        .limit(1);
+      const [codeRes, idRes] = await Promise.all([
+        client
+          .from('seasonal_workers')
+          .select('id, code, worker_data')
+          .eq('code', workerCode)
+          .limit(1),
+        worker.id && String(worker.id) !== workerCode
+          ? client
+              .from('seasonal_workers')
+              .select('id, code, worker_data')
+              .eq('id', String(worker.id))
+              .limit(1)
+          : Promise.resolve({ data: null }),
+      ]);
+
+      const codeMatches = codeRes.data;
+      const idMatches = idRes.data;
 
       if (codeMatches && codeMatches.length > 0) {
         existingRowId = String(codeMatches[0].id);
         existingWorkerData = (codeMatches[0].worker_data as SeasonalWorker) || null;
       }
 
-      if (worker.id) {
-        const { data: idMatches } = await client
-          .from('seasonal_workers')
-          .select('id, code, worker_data')
-          .eq('id', String(worker.id))
-          .limit(1);
-        if (idMatches && idMatches.length > 0) {
-          const matchedRowId = String(idMatches[0].id);
-          if (existingRowId && existingRowId !== matchedRowId) {
-            // Nếu có 2 dòng xung đột giữa id và code, xóa dòng cũ theo id để giữ đúng dòng có code = workerCode
-            await client.from('seasonal_workers').delete().eq('id', matchedRowId);
-          } else if (!existingRowId) {
-            existingRowId = matchedRowId;
-            existingWorkerData = (idMatches[0].worker_data as SeasonalWorker) || null;
-          }
+      if (idMatches && idMatches.length > 0) {
+        const matchedRowId = String(idMatches[0].id);
+        if (existingRowId && existingRowId !== matchedRowId) {
+          await client.from('seasonal_workers').delete().eq('id', matchedRowId);
+        } else if (!existingRowId) {
+          existingRowId = matchedRowId;
+          existingWorkerData = (idMatches[0].worker_data as SeasonalWorker) || null;
         }
       }
     } catch (lookupErr) {
@@ -2215,15 +2223,14 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
       }
     }
 
-    // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase
-    // Đảm bảo dữ liệu chấm công từ điện thoại được lưu vào cả 2 bảng và xóa bỏ các bản ghi trùng lặp cũ
+    // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase bằng 1 lệnh batch upsert duy nhất
     if (mergedWorker.monthlyAttendance) {
-      for (const [, mRec] of Object.entries(mergedWorker.monthlyAttendance)) {
+      const attBatch: any[] = [];
+      Object.values(mergedWorker.monthlyAttendance).forEach((mRec: any) => {
         if (mRec && mRec.month && mRec.year) {
           const mStr = String(mRec.month).padStart(2, '0');
           const attId = `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
-          const nowIso = mRec.lastSubmittedAt || new Date().toISOString();
-          const attPayload = {
+          attBatch.push({
             id: attId,
             worker_type: 'SEASONAL',
             worker_code: workerCode,
@@ -2235,25 +2242,27 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
             total_work_days: Number(mRec.totalWorkDays || 0),
             total_ot_hours: Number(mRec.totalOtHours || 0),
             attendance_data: mRec.days || {},
-            updated_at: nowIso,
-          };
-          try {
-            // Xóa các dòng attendance_records cũ có id khác của cùng worker_code, month, year để không bị bóng ma dữ liệu cũ
+            updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
+          });
+        }
+      });
+      if (attBatch.length > 0) {
+        try {
+          const { error: attErr } = await client
+            .from('attendance_records')
+            .upsert(attBatch, { onConflict: 'id' });
+          if (attErr) {
             await client
               .from('attendance_records')
-              .delete()
-              .eq('worker_code', workerCode)
-              .eq('month', Number(mRec.month))
-              .eq('year', Number(mRec.year))
-              .neq('id', attId);
-            await client.from('attendance_records').upsert(attPayload, { onConflict: 'id' });
-          } catch (e) {
-            console.warn('[Supabase Sync] Upsert attendance_records warning:', e);
+              .upsert(attBatch, { onConflict: 'worker_code,month,year' });
           }
+        } catch (e) {
+          console.warn('[Supabase Sync] Upsert attendance_records warning:', e);
         }
       }
     }
 
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
     return { success: true, message: 'Đã lưu công nhân thời vụ lên Supabase.' };
   } catch (e: any) {
     console.error('[Supabase Sync] syncSingleSeasonalWorker exception:', e);
@@ -2551,11 +2560,12 @@ export const syncSingleEmployeeToSupabase = async (
     }
 
     if (mergedEmployee.monthlyAttendance) {
-      for (const [, mRec] of Object.entries(mergedEmployee.monthlyAttendance)) {
+      const attBatch: any[] = [];
+      Object.values(mergedEmployee.monthlyAttendance).forEach((mRec: any) => {
         if (mRec && mRec.month && mRec.year) {
           const mStr = String(mRec.month).padStart(2, '0');
           const attId = `ATT-EMP-${mRec.year}-${mStr}-${empCode}`;
-          const attPayload = {
+          attBatch.push({
             id: attId,
             worker_type: 'PERMANENT',
             worker_code: empCode,
@@ -2568,21 +2578,24 @@ export const syncSingleEmployeeToSupabase = async (
             total_ot_hours: Number(mRec.totalOtHours || 0),
             attendance_data: isValidDailyAttendanceMap(mRec.days) ? mRec.days : {},
             updated_at: mRec.lastSubmittedAt || new Date().toISOString(),
-          };
-          try {
+          });
+        }
+      });
+      if (attBatch.length > 0) {
+        try {
+          const { error: attErr } = await client
+            .from('attendance_records')
+            .upsert(attBatch, { onConflict: 'id' });
+          if (attErr) {
             await client
               .from('attendance_records')
-              .delete()
-              .eq('worker_code', empCode)
-              .eq('month', Number(mRec.month))
-              .eq('year', Number(mRec.year))
-              .neq('id', attId);
-            await client.from('attendance_records').upsert(attPayload, { onConflict: 'id' });
-          } catch {}
-        }
+              .upsert(attBatch, { onConflict: 'worker_code,month,year' });
+          }
+        } catch {}
       }
     }
 
+    localStorage.setItem('supabase_last_synced_at', new Date().toISOString());
     return { success: true, message: 'Đã lưu nhân viên lên Supabase.' };
   } catch (e: any) {
     return { success: false, message: e.message || String(e), error: e.message };

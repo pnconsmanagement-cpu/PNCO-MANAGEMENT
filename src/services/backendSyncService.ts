@@ -38,7 +38,7 @@ export function getApiBaseUrl(): string {
 /**
  * Lấy toàn bộ dữ liệu mới nhất từ máy chủ
  */
-export async function fetchServerData(): Promise<ServerSyncData | null> {
+export async function fetchServerData(updateLocalTimestamp: boolean = true): Promise<ServerSyncData | null> {
   try {
     const baseUrl = getApiBaseUrl();
     const res = await fetch(`${baseUrl}/api/sync`, {
@@ -58,7 +58,7 @@ export async function fetchServerData(): Promise<ServerSyncData | null> {
           }
         } catch {}
       }
-      if (data.lastUpdated > 0) {
+      if (data.lastUpdated > 0 && (updateLocalTimestamp || lastSyncedTimestamp === 0)) {
         lastSyncedTimestamp = data.lastUpdated;
         lastSyncTimeString = new Date(data.lastUpdated).toLocaleTimeString('vi-VN', {
           hour: '2-digit',
@@ -192,10 +192,25 @@ function startPolling() {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return; // Tiết kiệm tài nguyên khi tab ẩn
     }
-    const serverData = await fetchServerData();
+    // Khi đã kết nối Supabase Cloud thì ưu tiên kênh Supabase Realtime WebSocket, không lặp polling 3s gây quá tải
+    try {
+      const sbUrl = localStorage.getItem('supabase_config_url') || '';
+      const sbKey = localStorage.getItem('supabase_config_anon_key') || '';
+      if (sbUrl.startsWith('https://') && sbKey) {
+        return;
+      }
+    } catch {}
+
+    const prevTs = lastSyncedTimestamp;
+    const serverData = await fetchServerData(false);
     if (serverData && serverData.lastUpdated > 0) {
-      if (serverData.lastUpdated > lastSyncedTimestamp) {
+      if (serverData.lastUpdated > prevTs) {
         lastSyncedTimestamp = serverData.lastUpdated;
+        lastSyncTimeString = new Date(serverData.lastUpdated).toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
         syncListeners.forEach((listener) => {
           try {
             listener(serverData);
@@ -207,7 +222,7 @@ function startPolling() {
     }
   };
 
-  pollingInterval = setInterval(checkUpdates, 3000);
+  pollingInterval = setInterval(checkUpdates, 12000);
 
   if (typeof window !== 'undefined') {
     window.addEventListener('focus', checkUpdates);

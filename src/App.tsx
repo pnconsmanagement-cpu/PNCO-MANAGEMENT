@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Users, HardHat, Building, CalendarCheck, Table2, CreditCard } from 'lucide-react';
+import { Users, HardHat, Building, CalendarCheck, Table2, CreditCard, CheckCircle2, Save, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { MetricCards } from './components/MetricCards';
@@ -31,15 +31,9 @@ import {
   loadSeasonalWorkersFromSupabase,
   loadProjectsFromSupabase,
   syncAllDataToSupabase,
-  syncSeasonalWorkersToSupabase,
-  syncSingleSeasonalWorkerToSupabase,
-  deleteSeasonalWorkerFromSupabase,
   deleteBatchSeasonalWorkersFromSupabase,
   clearAllSeasonalWorkersFromSupabase,
-  syncSingleEmployeeToSupabase,
-  syncEmployeesToSupabase,
   deleteEmployeeFromSupabase,
-  syncProjectsToSupabase,
   subscribeToSupabaseRealtime,
   autoApplyUrlConfig,
   getLastSyncedTime,
@@ -77,8 +71,6 @@ import { ensureEmployeeContract } from './utils/contractHelper';
 import {
   fetchServerData,
   saveAllToServer,
-  saveAttendanceToServer,
-  saveSingleWorkerToServer,
   subscribeToSync,
   getLastSyncedTime as getServerLastSyncedTime,
 } from './services/backendSyncService';
@@ -361,7 +353,6 @@ function mergeEmployeeListsPreservingAttendance(
                 mealAllowance: existing.mealAllowance || 0,
                 phoneTravelAllowance: existing.phoneTravelAllowance || 0,
                 kpiBonus: existing.kpiBonus || 0,
-                updatedAt: Date.now(),
               }
             : {}),
         };
@@ -756,6 +747,54 @@ export default function App() {
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'idle'>('idle');
   const [lastSyncedText, setLastSyncedText] = useState<string | null>(getLastSyncedTime());
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [saveToastMessage, setSaveToastMessage] = useState<string | null>(null);
+  const hasUnsavedChangesRef = useRef(false);
+
+  // Theo dõi các thao tác xóa nhân sự chờ nhấn nút "Lưu Data" mới thực thi xóa vĩnh viễn
+  const pendingDeletedSeaRef = useRef<{
+    ids: string[];
+    codes: string[];
+    removedKeys: string[];
+    clearAll: boolean;
+    resetDeleted: boolean;
+  }>({
+    ids: [],
+    codes: [],
+    removedKeys: [],
+    clearAll: false,
+    resetDeleted: false,
+  });
+
+  const pendingDeletedEmpRef = useRef<{
+    items: Array<{ id: string; code?: string }>;
+    deletedStorageKeys: string[];
+    removedKeys: string[];
+    resetDeleted: boolean;
+  }>({
+    items: [],
+    deletedStorageKeys: [],
+    removedKeys: [],
+    resetDeleted: false,
+  });
+
+  const markUnsaved = () => {
+    lastLocalEditAtRef.current = Date.now();
+    hasUnsavedChangesRef.current = true;
+    setHasUnsavedChanges(true);
+  };
+
+  // Cảnh báo nếu người dùng đóng trình duyệt hoặc F5 khi đang có dữ liệu nhập chưa nhấn nút "Lưu Data"
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChangesRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   const initialAttendanceCheck = useMemo(() => checkShouldShowAttendanceView(), []);
 
@@ -787,77 +826,163 @@ export default function App() {
     };
   }, []);
 
-  // Hàm tạo chuỗi snapshot đại diện cho TOÀN BỘ thông tin nhân viên (lương, phụ cấp, bảo hiểm, hợp đồng, ngân hàng, chấm công...)
-  const serializeDataSnapshot = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]): string => {
+  // Chuẩn hóa dữ liệu chấm công theo tháng & kỳ lương để so sánh nội dung thực (bỏ qua dấu thời gian updatedAt / lastSubmittedAt gây vòng lặp lưu)
+  const canonicalizeMonthlyAttendance = (mAtt?: Record<string, any>) => {
+    if (!mAtt || typeof mAtt !== 'object') return [];
+    return Object.keys(mAtt)
+      .sort()
+      .map((mKey) => {
+        const rec = mAtt[mKey];
+        if (!rec) return [mKey, 0, 0, []];
+        const daysObj = rec.days && typeof rec.days === 'object' ? rec.days : {};
+        const sortedDays = Object.keys(daysObj)
+          .sort((a, b) => Number(a) - Number(b))
+          .map((dKey) => {
+            const d = daysObj[dKey];
+            return [
+              Number(dKey),
+              Number(d?.workUnits || 0),
+              Number(d?.otHours || 0),
+              String(d?.statusType || ''),
+            ];
+          });
+        return [
+          mKey,
+          Number(rec.totalWorkDays || 0),
+          Number(rec.totalOtHours || 0),
+          sortedDays,
+        ];
+      });
+  };
+
+  const canonicalizePeriodRecords = (pRecs?: Record<string, any>) => {
+    if (!pRecs || typeof pRecs !== 'object') return [];
+    return Object.keys(pRecs)
+      .sort()
+      .map((pKey) => {
+        const r = pRecs[pKey];
+        if (!r) return [pKey];
+        return [
+          pKey,
+          Boolean(r.isRecorded),
+          Number(r.dailyRate || 0),
+          Number(r.actualWorkDays || 0),
+          Number(r.salaryByDays || 0),
+          Number(r.overtimeHours || 0),
+          Number(r.mealAllowance || 0),
+          Number(r.travelSafetyAllowance || 0),
+          Number(r.otherBonus || 0),
+          Number(r.advancePayment || 0),
+          String(r.cycleType || ''),
+        ];
+      });
+  };
+
+  const serializeConfigSnapshot = (cfg: CompanyConfig): string => {
     try {
-      return JSON.stringify({
-        p: cfg?.periodCode,
-        e: emps.map((x) => [
+      return JSON.stringify([
+        cfg?.name || '',
+        cfg?.address || '',
+        cfg?.taxCode || '',
+        cfg?.phone || '',
+        Number(cfg?.standardWorkDays || 26),
+        cfg?.zaloOA || null,
+      ]);
+    } catch {
+      return '';
+    }
+  };
+
+  const serializeEmployeesSnapshot = (emps: Employee[]): string => {
+    try {
+      return JSON.stringify(
+        emps.map((x) => [
           x.id,
           x.code,
           x.fullName,
           x.title,
           x.department,
-          x.phone,
-          x.email,
-          x.idCard,
-          x.taxCode,
-          x.joinDate,
-          x.status,
-          x.salaryType,
-          x.dailyRate,
-          x.baseSalary,
-          x.insuranceSalary,
-          x.responsibilityAllowance,
-          x.projectAllowance,
-          x.mealAllowance,
-          x.phoneTravelAllowance,
-          x.kpiBonus,
-          x.otherIncome,
-          x.dependents,
-          x.actualWorkDays,
-          x.overtimeHours,
-          x.advancePayment,
-          x.bankAccount,
-          x.bankName,
-          x.contractType,
-          x.contractDuration,
-          x.contractStartDate,
-          x.contractEndDate,
-          x.contractNumber,
-          x.updatedAt,
-          x.monthlyAttendance,
-        ]),
-        s: seas.map((x) => [
+          x.phone || '',
+          x.email || '',
+          x.idCard || '',
+          x.taxCode || '',
+          x.joinDate || '',
+          x.status || 'ACTIVE',
+          x.salaryType || 'MONTHLY',
+          Number(x.dailyRate || 0),
+          Number(x.baseSalary || 0),
+          Number(x.insuranceSalary || 0),
+          Number(x.responsibilityAllowance || 0),
+          Number(x.projectAllowance || 0),
+          Number(x.mealAllowance || 0),
+          Number(x.phoneTravelAllowance || 0),
+          Number(x.kpiBonus || 0),
+          Number(x.otherIncome || 0),
+          Number(x.dependents || 0),
+          Number(x.actualWorkDays || 0),
+          Number(x.overtimeHours || 0),
+          Number(x.advancePayment || 0),
+          x.bankAccount || '',
+          x.bankName || '',
+          x.contractType || '',
+          x.contractDuration || '',
+          x.contractStartDate || '',
+          x.contractEndDate || '',
+          x.contractNumber || '',
+          canonicalizeMonthlyAttendance(x.monthlyAttendance),
+          canonicalizePeriodRecords(x.periodRecords),
+        ])
+      );
+    } catch {
+      return '';
+    }
+  };
+
+  const serializeSeasonalSnapshot = (seas: SeasonalWorker[]): string => {
+    try {
+      return JSON.stringify(
+        seas.map((x) => [
           x.id,
           x.code,
           x.fullName,
-          x.trade,
-          x.skillLevel,
-          x.project,
-          x.teamName,
-          x.phone,
-          x.idCard,
-          x.paymentMethod,
-          x.actualWorkDays,
-          x.advancePayment,
-          x.dailyRate,
-          x.overtimeHours,
-          x.mealAllowance,
-          x.travelSafetyAllowance,
-          x.otherBonus,
-          x.hasTaxCommitment,
-          x.status,
-          x.payrollCycleType,
-          x.bankAccount,
-          x.bankName,
-          x.salaryByDays,
-          x.paymentDate,
-          x.selectedForAttendance,
-          x.updatedAt,
-          x.monthlyAttendance,
-          x.periodRecords,
-        ]),
+          x.trade || '',
+          x.skillLevel || '',
+          x.project || '',
+          x.teamName || '',
+          x.phone || '',
+          x.idCard || '',
+          x.paymentMethod || 'BANK',
+          Number(x.actualWorkDays || 0),
+          Number(x.advancePayment || 0),
+          Number(x.dailyRate || 0),
+          Number(x.overtimeHours || 0),
+          Number(x.mealAllowance || 0),
+          Number(x.travelSafetyAllowance || 0),
+          Number(x.otherBonus || 0),
+          Boolean(x.hasTaxCommitment ?? true),
+          x.status || 'ACTIVE',
+          x.payrollCycleType || '1_MONTH',
+          x.bankAccount || '',
+          x.bankName || '',
+          Number(x.salaryByDays || 0),
+          x.paymentDate || '',
+          Boolean(x.selectedForAttendance),
+          canonicalizeMonthlyAttendance(x.monthlyAttendance),
+          canonicalizePeriodRecords(x.periodRecords),
+        ])
+      );
+    } catch {
+      return '';
+    }
+  };
+
+  // Hàm tạo chuỗi snapshot đại diện cho TOÀN BỘ thông tin nhân viên (bỏ qua dấu thời gian biến động & tháng đang xem trên UI)
+  const serializeDataSnapshot = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]): string => {
+    try {
+      return JSON.stringify({
+        c: serializeConfigSnapshot(cfg),
+        e: serializeEmployeesSnapshot(emps),
+        s: serializeSeasonalSnapshot(seas),
       });
     } catch {
       return '';
@@ -867,14 +992,64 @@ export default function App() {
   // Snapshot & state refs theo dõi trạng thái mới nhất (chống stale closure, chống loop và không ghi đè khi đang nhập liệu)
   const lastSavedSnapshotRef = useRef<string>('');
   const lastServerSnapshotRef = useRef<string>('');
+  const lastSavedPartsRef = useRef<{ cfg: string; emp: string; sea: string }>({
+    cfg: '',
+    emp: '',
+    sea: '',
+  });
   const isSyncingRef = useRef(false);
+  const activeSyncCountRef = useRef<number>(0);
+  const isReloadingFromCloudRef = useRef(false);
+  const lastWriteCompletedAtRef = useRef<number>(0);
   const lastLocalEditAtRef = useRef<number>(0);
   const singleWorkerSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const realtimeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const markSnapshotAsSaved = (cfg: CompanyConfig, emps: Employee[], seas: SeasonalWorker[]) => {
+    const cfgSnap = serializeConfigSnapshot(cfg);
+    const empSnap = serializeEmployeesSnapshot(emps);
+    const seaSnap = serializeSeasonalSnapshot(seas);
+    const fullSnap = JSON.stringify({ c: cfgSnap, e: empSnap, s: seaSnap });
+    lastSavedPartsRef.current = { cfg: cfgSnap, emp: empSnap, sea: seaSnap };
+    lastSavedSnapshotRef.current = fullSnap;
+    lastServerSnapshotRef.current = fullSnap;
+    return fullSnap;
+  };
+
+  const beginSyncTask = (showIndicator: boolean = true) => {
+    activeSyncCountRef.current += 1;
+    isSyncingRef.current = true;
+    if (showIndicator) {
+      setCloudSyncStatus('syncing');
+    }
+  };
+
+  const endSyncTask = (finalStatus: 'synced' | 'error' = 'synced') => {
+    activeSyncCountRef.current = Math.max(0, activeSyncCountRef.current - 1);
+    lastWriteCompletedAtRef.current = Date.now();
+    if (activeSyncCountRef.current === 0) {
+      isSyncingRef.current = false;
+      setCloudSyncStatus(finalStatus);
+    }
+  };
+
+  // Watchdog bảo vệ: nếu một yêu cầu mạng bị treo quá 12 giây thì tự động giải phóng trạng thái 'syncing' để không bao giờ kẹt "Đang lưu Supabase..."
+  useEffect(() => {
+    if (cloudSyncStatus !== 'syncing') return;
+    const watchdog = setTimeout(() => {
+      activeSyncCountRef.current = 0;
+      isSyncingRef.current = false;
+      setCloudSyncStatus(isSupabaseConfigured() ? 'synced' : 'idle');
+    }, 12000);
+    return () => clearTimeout(watchdog);
+  }, [cloudSyncStatus]);
+
   const configRef = useRef(config);
   const employeesRef = useRef(employees);
   const seasonalWorkersRef = useRef(seasonalWorkers);
+  const projectsRef = useRef(projects);
+  const teamWorkersRef = useRef(teamWorkers);
+  const salaryAdvancesRef = useRef(salaryAdvances);
   const periodCodeRef = useRef(config.periodCode);
   const activeMonthRef = useRef(config.month || realDateInfo.realMonth);
   const activeYearRef = useRef(config.year || realDateInfo.realYear);
@@ -883,21 +1058,35 @@ export default function App() {
     configRef.current = config;
     employeesRef.current = employees;
     seasonalWorkersRef.current = seasonalWorkers;
+    projectsRef.current = projects;
+    teamWorkersRef.current = teamWorkers;
+    salaryAdvancesRef.current = salaryAdvances;
     periodCodeRef.current = config.periodCode;
     activeMonthRef.current = config.month || realDateInfo.realMonth;
     activeYearRef.current = config.year || realDateInfo.realYear;
-  }, [config, employees, seasonalWorkers, realDateInfo.realMonth, realDateInfo.realYear]);
+  }, [
+    config,
+    employees,
+    seasonalWorkers,
+    projects,
+    teamWorkers,
+    salaryAdvances,
+    realDateInfo.realMonth,
+    realDateInfo.realYear,
+  ]);
 
   // Chỉ chặn đồng bộ nền trong 2.5 giây ngay sau khi người dùng vừa gõ phím hoặc bấm sửa dữ liệu
   const isUserEditingOrTyping = (): boolean => {
     return Date.now() - lastLocalEditAtRef.current < 2500;
   };
 
+  const isInWriteCooldown = (): boolean => {
+    return Date.now() - lastWriteCompletedAtRef.current < 4500;
+  };
+
   // Khởi tạo snapshot ban đầu
   useEffect(() => {
-    const initSnap = serializeDataSnapshot(config, employees, seasonalWorkers);
-    lastSavedSnapshotRef.current = initSnap;
-    lastServerSnapshotRef.current = initSnap;
+    markSnapshotAsSaved(config, employees, seasonalWorkers);
   }, []);
 
   // Kênh truyền tin giữa các tab/cửa sổ trên cùng trình duyệt (BroadcastChannel)
@@ -1309,13 +1498,22 @@ export default function App() {
     return { mergedList, needsPushToCloud };
   };
 
-  // Hàm tải dữ liệu mới nhất từ Supabase Cloud và áp dụng an toàn vào ứng dụng (không kích hoạt auto-save ngược lại)
+  // Hàm tải dữ liệu đã lưu từ Supabase Cloud (CHỈ ĐỌC khi không có thay đổi chưa lưu, TUYỆT ĐỐI KHÔNG TỰ ĐỘNG GHI)
   const reloadLatestFromCloud = async (options?: { silent?: boolean }) => {
     if (!isSupabaseConfigured()) return;
-    // Tuyệt đối không tải đè dữ liệu nền khi đang lưu hoặc khi người dùng đang gõ nhập liệu
-    if (options?.silent && (isSyncingRef.current || isUserEditingOrTyping())) {
+    if (isReloadingFromCloudRef.current) return;
+    // Tuyệt đối không ghi đè dữ liệu đang nhập chưa nhấn "Lưu Data"
+    if (
+      hasUnsavedChangesRef.current ||
+      (options?.silent &&
+        (isSyncingRef.current ||
+          activeSyncCountRef.current > 0 ||
+          isUserEditingOrTyping() ||
+          isInWriteCooldown()))
+    ) {
       return;
     }
+    isReloadingFromCloudRef.current = true;
     try {
       const curPeriod = periodCodeRef.current;
       const curM = activeMonthRef.current;
@@ -1327,8 +1525,14 @@ export default function App() {
         loadProjectsFromSupabase(),
       ]);
 
-      // Kiểm tra lại sau khi await mạng: nếu người dùng vừa gõ phím trong lúc chờ mạng thì hủy áp dụng để không giật mất chữ
-      if (options?.silent && (isSyncingRef.current || isUserEditingOrTyping())) {
+      if (
+        hasUnsavedChangesRef.current ||
+        (options?.silent &&
+          (isSyncingRef.current ||
+            activeSyncCountRef.current > 0 ||
+            isUserEditingOrTyping() ||
+            isInWriteCooldown()))
+      ) {
         return;
       }
 
@@ -1337,101 +1541,82 @@ export default function App() {
       const latestSeasonal = seasonalWorkersRef.current;
 
       if (cloudProj && cloudProj.length > 0) {
+        projectsRef.current = cloudProj;
         setProjects(cloudProj);
         localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
       }
 
-      let nextSea = latestSeasonal;
-      let shouldPushSeaToCloud = false;
-      if (cloudSea && cloudSea.length > 0) {
-        const mergedRes = mergeSeasonalListsPreservingAttendance(
-          latestSeasonal,
-          cloudSea,
-          curM,
-          curY,
-          curPeriod
-        );
-        nextSea = mergedRes.mergedList;
-        shouldPushSeaToCloud = mergedRes.needsPushToCloud;
-      }
+      const appliedCfg = cloudCfg
+        ? mergeRemoteConfigPreservingPeriod(latestConfig, cloudCfg)
+        : latestConfig;
 
-      if (shouldPushSeaToCloud) {
-        syncSeasonalWorkersToSupabase(nextSea, curPeriod).catch((err) =>
-          console.warn('[Auto Push Missing Seasonal Data]', err)
-        );
-      }
-
-      const nextCfg = mergeRemoteConfigPreservingPeriod(latestConfig, cloudCfg);
-      const nextEmp =
+      const appliedEmp =
         cloudEmp && cloudEmp.length > 0
           ? mergeEmployeeListsPreservingAttendance(
               latestEmployees,
               cloudEmp,
               curM,
               curY,
-              nextCfg.standardWorkDays || 26
+              appliedCfg.standardWorkDays || 26
             )
           : latestEmployees;
 
-      // So sánh với snapshot hiện tại trong bộ nhớ: nếu giống hệt, DỪNG NGAY KHÔNG GÂY LẶP VÀ KHÔNG GÂY TREO APP
+      const appliedSea =
+        cloudSea && cloudSea.length > 0
+          ? mergeSeasonalListsPreservingAttendance(
+              latestSeasonal,
+              cloudSea,
+              curM,
+              curY,
+              curPeriod
+            ).mergedList
+          : latestSeasonal;
+
       const currentMemorySnapshot = serializeDataSnapshot(latestConfig, latestEmployees, latestSeasonal);
-      const newSnapshot = serializeDataSnapshot(nextCfg, nextEmp, nextSea);
+      const newSnapshot = serializeDataSnapshot(appliedCfg, appliedEmp, appliedSea);
       if (newSnapshot && newSnapshot === currentMemorySnapshot) {
-        lastSavedSnapshotRef.current = newSnapshot;
-        lastServerSnapshotRef.current = newSnapshot;
-        setCloudSyncStatus('synced');
+        markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
+        setCloudSyncStatus((prev) => (prev === 'syncing' ? prev : 'synced'));
         return;
       }
 
-      // Cập nhật snapshot refs trước khi setState để các effect auto-save nhận biết đây là dữ liệu từ Cloud
-      lastSavedSnapshotRef.current = newSnapshot;
-      lastServerSnapshotRef.current = newSnapshot;
+      const prevParts = { ...lastSavedPartsRef.current };
+      markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
+      const nextParts = lastSavedPartsRef.current;
 
-      if (cloudCfg) {
-        configRef.current = nextCfg;
-        setConfig(nextCfg);
-        localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
+      if (cloudCfg && nextParts.cfg !== prevParts.cfg) {
+        configRef.current = appliedCfg;
+        setConfig(appliedCfg);
+        localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
       }
-      if (cloudEmp && cloudEmp.length > 0) {
-        employeesRef.current = nextEmp;
-        setEmployees(nextEmp);
-        localStorage.setItem('payroll_employees', JSON.stringify(nextEmp));
+      if (cloudEmp && cloudEmp.length > 0 && nextParts.emp !== prevParts.emp) {
+        employeesRef.current = appliedEmp;
+        setEmployees(appliedEmp);
+        localStorage.setItem('payroll_employees', JSON.stringify(appliedEmp));
       }
-      if (cloudSea && cloudSea.length > 0) {
-        seasonalWorkersRef.current = nextSea;
-        setSeasonalWorkers(nextSea);
-        localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSea));
+      if (cloudSea && cloudSea.length > 0 && nextParts.sea !== prevParts.sea) {
+        seasonalWorkersRef.current = appliedSea;
+        setSeasonalWorkers(appliedSea);
+        localStorage.setItem('payroll_seasonal_workers', JSON.stringify(appliedSea));
       }
       setCloudSyncStatus('synced');
       setLastSyncedText(getLastSyncedTime());
     } catch (e) {
       console.warn('Error reloading from Supabase Cloud:', e);
       if (!options?.silent) setCloudSyncStatus('error');
+    } finally {
+      isReloadingFromCloudRef.current = false;
     }
   };
 
-  // Persistence LocalStorage
-  useEffect(() => {
-    localStorage.setItem('payroll_company_config', JSON.stringify(config));
-  }, [config]);
-
-  useEffect(() => {
-    localStorage.setItem('payroll_employees', JSON.stringify(employees));
-  }, [employees]);
-
-  useEffect(() => {
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(seasonalWorkers));
-  }, [seasonalWorkers]);
-
-  // ĐỒNG BỘ 2 CHIỀU VỚI MÁY CHỦ BACKEND (SERVER REALTIME SYNC)
+  // KHỞI ĐỘNG: Chỉ đọc dữ liệu đã lưu từ Máy chủ Backend (KHÔNG TỰ ĐỘNG LƯU)
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Tải dữ liệu ban đầu từ máy chủ
     (async () => {
       try {
         const serverData = await fetchServerData();
-        if (!isMounted) return;
+        if (!isMounted || hasUnsavedChangesRef.current) return;
 
         if (serverData && serverData.lastUpdated > 0) {
           const wasSupabaseConfigured = isSupabaseConfigured();
@@ -1439,7 +1624,6 @@ export default function App() {
           const curY = activeYearRef.current;
           const nextCfg = mergeRemoteConfigPreservingPeriod(configRef.current, serverData.config);
 
-          // Nếu máy chủ vừa cung cấp thông tin kết nối Supabase cho máy tính mới này -> tải thêm từ Supabase Cloud!
           if (!wasSupabaseConfigured && isSupabaseConfigured()) {
             configRef.current = nextCfg;
             setConfig(nextCfg);
@@ -1448,7 +1632,6 @@ export default function App() {
             return;
           }
 
-          // Nếu đã cấu hình Supabase Cloud thì lấy Supabase Cloud làm nguồn chuẩn duy nhất (không để file cục bộ cũ ghi đè)
           if (isSupabaseConfigured()) {
             return;
           }
@@ -1474,14 +1657,13 @@ export default function App() {
                 ).mergedList
               : seasonalWorkersRef.current;
 
-          const initSnap = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
-          lastServerSnapshotRef.current = initSnap;
-          lastSavedSnapshotRef.current = initSnap;
+          const appliedCfg = serverData.config ? nextCfg : configRef.current;
+          markSnapshotAsSaved(appliedCfg, nextEmps, nextSeas);
 
           if (serverData.config) {
-            configRef.current = nextCfg;
-            setConfig(nextCfg);
-            localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
+            configRef.current = appliedCfg;
+            setConfig(appliedCfg);
+            localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
           }
           if (serverData.employees && serverData.employees.length > 0) {
             employeesRef.current = nextEmps;
@@ -1497,15 +1679,16 @@ export default function App() {
           setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
         }
       } catch (err) {
-        console.warn('Initial server sync error:', err);
+        console.warn('Initial server load error:', err);
       }
     })();
 
-    // 2. Lắng nghe cập nhật Real-time từ máy chủ (khi thợ chấm công trên điện thoại)
+    // Lắng nghe cập nhật từ thiết bị khác ĐÃ NHẤN LƯU DATA (chỉ nhận khi máy này không có thay đổi chưa lưu)
     const unsubscribe = subscribeToSync((serverData) => {
-      if (!isMounted) return;
-      // Không ghi đè khi người dùng đang gõ nhập liệu hoặc đang đồng bộ
-      if (isSyncingRef.current || isUserEditingOrTyping()) return;
+      if (!isMounted || hasUnsavedChangesRef.current) return;
+      if (isSyncingRef.current || activeSyncCountRef.current > 0 || isUserEditingOrTyping() || isInWriteCooldown()) {
+        return;
+      }
       if (isSupabaseConfigured()) {
         reloadLatestFromCloud({ silent: true });
         return;
@@ -1513,7 +1696,9 @@ export default function App() {
 
       const curM = activeMonthRef.current;
       const curY = activeYearRef.current;
-      const nextCfg = mergeRemoteConfigPreservingPeriod(configRef.current, serverData.config);
+      const nextCfg = serverData.config
+        ? mergeRemoteConfigPreservingPeriod(configRef.current, serverData.config)
+        : configRef.current;
       const nextEmps =
         serverData.employees && serverData.employees.length > 0
           ? mergeEmployeeListsPreservingAttendance(
@@ -1540,8 +1725,7 @@ export default function App() {
         return;
       }
 
-      lastServerSnapshotRef.current = snapshot;
-      lastSavedSnapshotRef.current = snapshot;
+      markSnapshotAsSaved(nextCfg, nextEmps, nextSeas);
 
       if (serverData.config) {
         configRef.current = nextCfg;
@@ -1568,7 +1752,7 @@ export default function App() {
     };
   }, []);
 
-  // Khởi động: Tải dữ liệu từ Supabase Cloud
+  // KHỞI ĐỘNG: Chỉ đọc dữ liệu đã lưu từ Supabase Cloud (TUYỆT ĐỐI KHÔNG TỰ ĐỘNG GHI LÊN CLOUD KHI MỞ APP)
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
@@ -1583,125 +1767,71 @@ export default function App() {
           loadProjectsFromSupabase(),
         ]);
 
+        if (hasUnsavedChangesRef.current) return;
+
         if (cloudProj && cloudProj.length > 0) {
+          projectsRef.current = cloudProj;
           setProjects(cloudProj);
           localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
         }
 
-        let hasAnyDataOnCloud = false;
-        let shouldPushSeasonalToCloud = false;
-
-        const nextCfg = mergeRemoteConfigPreservingPeriod(configRef.current, cloudCfg);
-        const nextEmps =
+        const appliedCfg = cloudCfg
+          ? mergeRemoteConfigPreservingPeriod(configRef.current, cloudCfg)
+          : configRef.current;
+        const appliedEmps =
           cloudEmp && cloudEmp.length > 0
             ? mergeEmployeeListsPreservingAttendance(
                 employeesRef.current,
                 cloudEmp,
                 curM,
                 curY,
-                nextCfg.standardWorkDays || 26
+                appliedCfg.standardWorkDays || 26
               )
             : employeesRef.current;
 
-        let nextSeas = seasonalWorkersRef.current;
-        if (cloudSea && cloudSea.length > 0) {
-          const mergedRes = mergeSeasonalListsPreservingAttendance(
-            seasonalWorkersRef.current,
-            cloudSea,
-            curM,
-            curY,
-            nextCfg.periodCode
-          );
-          nextSeas = mergedRes.mergedList;
-          shouldPushSeasonalToCloud = mergedRes.needsPushToCloud;
-        } else if (seasonalWorkersRef.current.length > 0) {
-          shouldPushSeasonalToCloud = true;
-        }
+        const appliedSeas =
+          cloudSea && cloudSea.length > 0
+            ? mergeSeasonalListsPreservingAttendance(
+                seasonalWorkersRef.current,
+                cloudSea,
+                curM,
+                curY,
+                appliedCfg.periodCode
+              ).mergedList
+            : seasonalWorkersRef.current;
 
-        const snapshot = serializeDataSnapshot(nextCfg, nextEmps, nextSeas);
-        lastSavedSnapshotRef.current = snapshot;
-        lastServerSnapshotRef.current = snapshot;
+        markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
 
         if (cloudCfg) {
-          configRef.current = nextCfg;
-          setConfig(nextCfg);
-          localStorage.setItem('payroll_company_config', JSON.stringify(nextCfg));
-          hasAnyDataOnCloud = true;
+          configRef.current = appliedCfg;
+          setConfig(appliedCfg);
+          localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
         }
         if (cloudEmp && cloudEmp.length > 0) {
-          employeesRef.current = nextEmps;
-          setEmployees(nextEmps);
-          localStorage.setItem('payroll_employees', JSON.stringify(nextEmps));
-          hasAnyDataOnCloud = true;
+          employeesRef.current = appliedEmps;
+          setEmployees(appliedEmps);
+          localStorage.setItem('payroll_employees', JSON.stringify(appliedEmps));
         }
         if (cloudSea && cloudSea.length > 0) {
-          seasonalWorkersRef.current = nextSeas;
-          setSeasonalWorkers(nextSeas);
-          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeas));
-          hasAnyDataOnCloud = true;
+          seasonalWorkersRef.current = appliedSeas;
+          setSeasonalWorkers(appliedSeas);
+          localStorage.setItem('payroll_seasonal_workers', JSON.stringify(appliedSeas));
         }
 
-        // Cập nhật sang máy chủ cục bộ để đồng nhất 100%
-        saveAllToServer(nextCfg, nextEmps, nextSeas).catch(() => {});
-
-        const shouldPushEmployeesToCloud =
-          !cloudEmp ||
-          cloudEmp.length === 0 ||
-          cloudEmp.length !== nextEmps.length ||
-          nextEmps.some((ne) => {
-            const ce = cloudEmp.find((c) => c.code === ne.code || c.id === ne.id);
-            if (!ce) return true;
-            return (
-              Number(ne.baseSalary || 0) !== Number(ce.baseSalary || 0) ||
-              Number(ne.insuranceSalary || 0) !== Number(ce.insuranceSalary || 0) ||
-              Number(ne.responsibilityAllowance || 0) !== Number(ce.responsibilityAllowance || 0) ||
-              Number(ne.projectAllowance || 0) !== Number(ce.projectAllowance || 0) ||
-              Number(ne.mealAllowance || 0) !== Number(ce.mealAllowance || 0) ||
-              Number(ne.phoneTravelAllowance || 0) !== Number(ce.phoneTravelAllowance || 0) ||
-              Number(ne.kpiBonus || 0) !== Number(ce.kpiBonus || 0) ||
-              String(ne.bankAccount || '') !== String(ce.bankAccount || '') ||
-              String(ne.bankName || '') !== String(ce.bankName || '') ||
-              String(ne.title || '') !== String(ce.title || '') ||
-              String(ne.department || '') !== String(ce.department || '') ||
-              Number(ne.updatedAt || 0) > Number(ce.updatedAt || 0)
-            );
-          });
-
-        if (!hasAnyDataOnCloud || shouldPushSeasonalToCloud || shouldPushEmployeesToCloud) {
-          isSyncingRef.current = true;
-          try {
-            const report = await syncAllDataToSupabase(
-              nextCfg,
-              nextEmps,
-              nextSeas,
-              teamWorkers,
-              projects,
-              salaryAdvances,
-              buildPayrollRecordsForSync(nextCfg, nextEmps, nextSeas, teamWorkers)
-            );
-            if (report.success) {
-              setCloudSyncStatus('synced');
-              setLastSyncedText(getLastSyncedTime());
-            }
-          } finally {
-            isSyncingRef.current = false;
-          }
-        } else {
-          setCloudSyncStatus('synced');
-          setLastSyncedText(getLastSyncedTime());
-        }
+        setCloudSyncStatus('synced');
+        setLastSyncedText(getLastSyncedTime());
       } catch (e) {
-        console.warn('Initial cloud sync error:', e);
+        console.warn('Initial cloud load error:', e);
         setCloudSyncStatus('error');
       }
     })();
   }, []);
 
-  // 1. Lắng nghe BroadcastChannel (cho các tab trong cùng trình duyệt)
+  // 1. Lắng nghe BroadcastChannel khi tab khác ĐÃ NHẤN LƯU DATA (bỏ qua nếu tab này đang có dữ liệu chưa lưu)
   useEffect(() => {
     if (!syncBroadcast) return;
     const handleBroadcast = (e: MessageEvent) => {
-      if (e.data?.type === 'PAYROLL_DATA_CHANGED') {
+      if (e.data?.type === 'PAYROLL_DATA_CHANGED' && !hasUnsavedChangesRef.current) {
         reloadLatestFromCloud({ silent: true });
       }
     };
@@ -1711,20 +1841,33 @@ export default function App() {
     };
   }, [syncBroadcast]);
 
-  // 2. Lắng nghe Supabase Realtime (cho các máy tính khác qua Cloud WebSocket - có debounce chống lặp)
+  // 2. Lắng nghe Supabase Realtime khi máy khác ĐÃ NHẤN LƯU DATA (bỏ qua nếu máy này đang có thay đổi chưa lưu)
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
     const unsubscribe = subscribeToSupabaseRealtime(() => {
+      if (
+        hasUnsavedChangesRef.current ||
+        isSyncingRef.current ||
+        activeSyncCountRef.current > 0 ||
+        isInWriteCooldown()
+      ) {
+        return;
+      }
       if (realtimeDebounceTimerRef.current) {
         clearTimeout(realtimeDebounceTimerRef.current);
       }
-      const delayMs = isSyncingRef.current || isUserEditingOrTyping() ? 2600 : 1000;
       realtimeDebounceTimerRef.current = setTimeout(() => {
-        if (!isSyncingRef.current && !isUserEditingOrTyping()) {
+        if (
+          !hasUnsavedChangesRef.current &&
+          !isSyncingRef.current &&
+          activeSyncCountRef.current === 0 &&
+          !isUserEditingOrTyping() &&
+          !isInWriteCooldown()
+        ) {
           reloadLatestFromCloud({ silent: true });
         }
-      }, delayMs);
+      }, 1500);
     });
 
     return () => {
@@ -1735,108 +1878,13 @@ export default function App() {
     };
   }, []);
 
-  // 3. Tự động đồng bộ nhẹ nhàng khi người dùng chuyển tab sang trang này (Focus & Visibility Change)
-  useEffect(() => {
-    const handleVisibilityOrFocus = () => {
-      if (
-        document.visibilityState === 'visible' &&
-        isSupabaseConfigured() &&
-        !isSyncingRef.current &&
-        !isUserEditingOrTyping()
-      ) {
-        reloadLatestFromCloud({ silent: true });
-      }
-    };
+  // =========================================================================
+  // CÁC HÀM CẬP NHẬT TRONG BỘ NHỚ TẠM (CHỈ LƯU KHI NHẤN NÚT "LƯU DATA")
+  // =========================================================================
 
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-
-    // Heartbeat tự động đồng bộ mỗi 3 giây để các trình duyệt/máy tính khác luôn nhận được phụ cấp / lương / chấm công mới nhất ngay tức thì
-    const interval = setInterval(() => {
-      if (
-        document.visibilityState === 'visible' &&
-        isSupabaseConfigured() &&
-        !isSyncingRef.current &&
-        !isUserEditingOrTyping()
-      ) {
-        reloadLatestFromCloud({ silent: true });
-      }
-    }, 3000);
-
-    return () => {
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // 4. Tự động lưu lên Máy chủ & Supabase Cloud khi có thay đổi tổng thể chưa được lưu bởi các hàm cập nhật đơn lẻ
-  useEffect(() => {
-    const currentSnapshot = serializeDataSnapshot(config, employees, seasonalWorkers);
-    if (!currentSnapshot) return;
-
-    const needsServerSync = currentSnapshot !== lastServerSnapshotRef.current;
-    const needsCloudSync = isSupabaseConfigured() && currentSnapshot !== lastSavedSnapshotRef.current;
-
-    if (!needsServerSync && !needsCloudSync) {
-      return;
-    }
-
-    lastLocalEditAtRef.current = Date.now();
-
-    const timer = setTimeout(async () => {
-      const nowCfg = configRef.current;
-      const nowEmps = employeesRef.current;
-      const nowSeas = seasonalWorkersRef.current;
-      const nowSnapshot = serializeDataSnapshot(nowCfg, nowEmps, nowSeas);
-      if (nowSnapshot === lastSavedSnapshotRef.current && nowSnapshot === lastServerSnapshotRef.current) {
-        return;
-      }
-
-      if (isSyncingRef.current) return;
-      isSyncingRef.current = true;
-
-      // Đánh dấu snapshot ngay trước khi gọi mạng để chặn sự kiện Realtime vọng ngược gây vòng lặp
-      const prevServerSnap = lastServerSnapshotRef.current;
-      const prevCloudSnap = lastSavedSnapshotRef.current;
-      lastServerSnapshotRef.current = nowSnapshot;
-      lastSavedSnapshotRef.current = nowSnapshot;
-
-      try {
-        setCloudSyncStatus('syncing');
-
-        if (nowSnapshot !== prevServerSnap) {
-          await saveAllToServer(nowCfg, nowEmps, nowSeas);
-        }
-
-        if (isSupabaseConfigured() && nowSnapshot !== prevCloudSnap) {
-          await syncAllDataToSupabase(
-            nowCfg,
-            nowEmps,
-            nowSeas,
-            teamWorkers,
-            projects,
-            salaryAdvances,
-            buildPayrollRecordsForSync(nowCfg, nowEmps, nowSeas, teamWorkers)
-          );
-        }
-
-        setCloudSyncStatus('synced');
-        setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
-      } catch (err) {
-        console.warn('Auto sync error:', err);
-        setCloudSyncStatus('error');
-      } finally {
-        isSyncingRef.current = false;
-      }
-    }, 2500);
-
-    return () => clearTimeout(timer);
-  }, [config, employees, seasonalWorkers]);
-
-  // Cập nhật công nhân thời vụ - cập nhật đồng bộ tức thì vào Ref + State và đẩy lên Supabase Cloud
+  // Cập nhật công nhân thời vụ (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleUpdateSeasonalWorker = (updated: SeasonalWorker) => {
-    lastLocalEditAtRef.current = Date.now();
+    markUnsaved();
     const recalculated = recomputeSeasonal(updated);
     const prev = seasonalWorkersRef.current;
 
@@ -1863,7 +1911,7 @@ export default function App() {
     }
 
     let next: SeasonalWorker[];
-    let finalWorkerToSync: SeasonalWorker;
+    let finalWorker: SeasonalWorker;
     if (idx !== -1) {
       next = [...prev];
       const effectiveCycleType =
@@ -1904,7 +1952,7 @@ export default function App() {
           }
         });
       }
-      finalWorkerToSync = {
+      finalWorker = {
         ...next[idx],
         ...recalculated,
         bankAccount:
@@ -1925,114 +1973,54 @@ export default function App() {
         },
         periodRecords: mergedRecords,
       } as SeasonalWorker;
-      next[idx] = finalWorkerToSync;
+      next[idx] = finalWorker;
     } else {
-      finalWorkerToSync = {
+      finalWorker = {
         ...recalculated,
         bankUpdatedAt: Date.now(),
         dailyRateUpdatedAt: Date.now(),
         updatedAt: Date.now(),
       } as SeasonalWorker;
-      next = [...prev, finalWorkerToSync];
+      next = [...prev, finalWorker];
     }
 
-    // Cập nhật đồng bộ vào Ref & LocalStorage NGAY LẬP TỨC trước khi gọi setState
-    // để mọi hàm lưu tức thì (như handleSavePayrollTable / handleManualForceSync) đọc được dữ liệu mới 100%
     seasonalWorkersRef.current = next;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, next);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(next));
     setSeasonalWorkers(next);
-
-    const timerKey = `sea_${finalWorkerToSync.id || finalWorkerToSync.code}`;
-    if (singleWorkerSyncTimersRef.current[timerKey]) {
-      clearTimeout(singleWorkerSyncTimersRef.current[timerKey]);
-    }
-    singleWorkerSyncTimersRef.current[timerKey] = setTimeout(async () => {
-      isSyncingRef.current = true;
-      try {
-        setCloudSyncStatus('syncing');
-        const latestWorker =
-          seasonalWorkersRef.current.find(
-            (w) =>
-              (finalWorkerToSync.id && String(w.id) === String(finalWorkerToSync.id)) ||
-              (finalWorkerToSync.code && w.code === finalWorkerToSync.code)
-          ) || finalWorkerToSync;
-        saveAttendanceToServer(latestWorker);
-        await saveAllToServer(configRef.current, employeesRef.current, seasonalWorkersRef.current);
-        if (isSupabaseConfigured()) {
-          await syncSingleSeasonalWorkerToSupabase(latestWorker, periodCodeRef.current);
-          setCloudSyncStatus('synced');
-          setLastSyncedText(getLastSyncedTime());
-          notifyCrossTab();
-        } else {
-          setCloudSyncStatus('synced');
-          setLastSyncedText(getServerLastSyncedTime());
-        }
-      } catch {
-        setCloudSyncStatus('error');
-      } finally {
-        isSyncingRef.current = false;
-      }
-    }, 250);
   };
 
-  // Thêm mới công nhân thời vụ - đồng bộ ngay lập tức lên Supabase Cloud (không cần F5)
+  // Thêm mới công nhân thời vụ (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleAddSeasonalWorker = (newWorker: SeasonalWorker) => {
-    lastLocalEditAtRef.current = Date.now();
-    removeDeletedKeys(DELETED_SEA_STORAGE_KEY, [newWorker.id, newWorker.code]);
+    markUnsaved();
+    pendingDeletedSeaRef.current.removedKeys.push(
+      ...[newWorker.id, newWorker.code].filter(Boolean).map((k) => String(k).trim())
+    );
     const recalculated = recomputeSeasonal(newWorker);
     setSeasonalWorkers((prev) => {
       const maxOrder = prev.reduce((max, w) => Math.max(max, w.sortOrder || 0), 0);
       const workerWithOrder: SeasonalWorker = {
         ...recalculated,
-        sortOrder: recalculated.sortOrder || (maxOrder + 1),
+        sortOrder: recalculated.sortOrder || maxOrder + 1,
       };
       const next = [...prev, workerWithOrder];
       seasonalWorkersRef.current = next;
-      const snap = serializeDataSnapshot(configRef.current, employeesRef.current, next);
-      lastSavedSnapshotRef.current = snap;
-      lastServerSnapshotRef.current = snap;
-      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(next));
-      saveSingleWorkerToServer(workerWithOrder);
-      if (isSupabaseConfigured()) {
-        syncSingleSeasonalWorkerToSupabase(workerWithOrder, periodCodeRef.current).then(() => notifyCrossTab());
-      }
       return next;
     });
   };
 
   const handleReorderSeasonalWorkers = (reordered: SeasonalWorker[]) => {
-    lastLocalEditAtRef.current = Date.now();
+    markUnsaved();
     seasonalWorkersRef.current = reordered;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, reordered);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(reordered);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(reordered));
-    saveAllToServer(configRef.current, employeesRef.current, reordered);
-    if (isSupabaseConfigured()) {
-      syncSeasonalWorkersToSupabase(reordered, periodCodeRef.current).then(() => notifyCrossTab());
-    }
   };
 
-  // Xóa triệt để công nhân thời vụ - xóa ngay trên Supabase Cloud
+  // Xóa công nhân thời vụ (chờ nhấn "Lưu Data" mới thực thi lưu/xóa vĩnh viễn)
   const handleDeleteSeasonalWorker = (id: string) => {
-    lastLocalEditAtRef.current = Date.now();
+    markUnsaved();
     const strId = String(id).trim();
     const currentList = seasonalWorkersRef.current;
     const target = currentList.find((w) => String(w.id) === strId || String(w.code) === strId);
     const targetId = target ? String(target.id) : strId;
     const targetCode = target?.code ? String(target.code).trim() : '';
-
-    // Hủy mọi bộ đếm lưu tự động đang chờ của thợ này để không ghi đè ngược lại sau khi xóa
-    [`sea_${targetId}`, `sea_${targetCode}`, `sea_${strId}`].forEach((tk) => {
-      if (singleWorkerSyncTimersRef.current[tk]) {
-        clearTimeout(singleWorkerSyncTimersRef.current[tk]);
-        delete singleWorkerSyncTimersRef.current[tk];
-      }
-    });
 
     const filtered = currentList.filter((w) => {
       if (target) {
@@ -2045,29 +2033,18 @@ export default function App() {
       ? filtered.some((w) => String(w.code).trim() === targetCode)
       : false;
 
-    addDeletedKeys(
-      DELETED_SEA_STORAGE_KEY,
-      hasRemainingSameCode ? [targetId, strId] : [targetId, targetCode, strId]
-    );
+    pendingDeletedSeaRef.current.ids.push(targetId, strId);
+    if (!hasRemainingSameCode && targetCode) {
+      pendingDeletedSeaRef.current.codes.push(targetCode);
+    }
 
     seasonalWorkersRef.current = filtered;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, filtered);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(filtered);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(filtered));
-    saveAllToServer(configRef.current, employeesRef.current, filtered);
-    if (isSupabaseConfigured()) {
-      deleteSeasonalWorkerFromSupabase(
-        targetId,
-        hasRemainingSameCode ? undefined : targetCode || undefined
-      ).then(() => notifyCrossTab());
-    }
   };
 
-  // Xóa hàng loạt công nhân thời vụ - xóa ngay trên Supabase Cloud
+  // Xóa hàng loạt công nhân thời vụ (chờ nhấn "Lưu Data")
   const handleDeleteBatchSeasonalWorkers = (ids: string[]) => {
-    lastLocalEditAtRef.current = Date.now();
+    markUnsaved();
     const idSet = new Set(ids.map((item) => String(item).trim()));
     const currentList = seasonalWorkersRef.current;
     const targets = currentList.filter(
@@ -2082,75 +2059,53 @@ export default function App() {
       .map((w) => String(w.code || '').trim())
       .filter((c) => c && !remainingCodes.has(c));
 
-    targets.forEach((t) => {
-      [`sea_${t.id}`, `sea_${t.code}`].forEach((tk) => {
-        if (singleWorkerSyncTimersRef.current[tk]) {
-          clearTimeout(singleWorkerSyncTimersRef.current[tk]);
-          delete singleWorkerSyncTimersRef.current[tk];
-        }
-      });
-    });
-
-    addDeletedKeys(DELETED_SEA_STORAGE_KEY, [...ids, ...codesToDelete]);
+    pendingDeletedSeaRef.current.ids.push(...ids);
+    pendingDeletedSeaRef.current.codes.push(...codesToDelete);
 
     seasonalWorkersRef.current = filtered;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, filtered);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(filtered);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(filtered));
-    saveAllToServer(configRef.current, employeesRef.current, filtered);
-    if (isSupabaseConfigured()) {
-      deleteBatchSeasonalWorkersFromSupabase(ids, codesToDelete).then(() => notifyCrossTab());
-    }
   };
 
-  // Xóa toàn bộ công nhân thời vụ trên Supabase Cloud
+  // Xóa toàn bộ công nhân thời vụ (chờ nhấn "Lưu Data")
   const handleClearAllSeasonalWorkers = () => {
-    lastLocalEditAtRef.current = Date.now();
-    const allKeys = seasonalWorkersRef.current.flatMap((w) => [w.id, w.code]);
-    addDeletedKeys(DELETED_SEA_STORAGE_KEY, allKeys);
+    markUnsaved();
+    const allIds = seasonalWorkersRef.current.map((w) => String(w.id || '').trim()).filter(Boolean);
+    const allCodes = seasonalWorkersRef.current.map((w) => String(w.code || '').trim()).filter(Boolean);
+    pendingDeletedSeaRef.current.ids.push(...allIds);
+    pendingDeletedSeaRef.current.codes.push(...allCodes);
+    pendingDeletedSeaRef.current.clearAll = true;
     seasonalWorkersRef.current = [];
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, []);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers([]);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify([]));
-    saveAllToServer(configRef.current, employeesRef.current, []);
-    if (isSupabaseConfigured()) {
-      clearAllSeasonalWorkersFromSupabase(periodCodeRef.current).then(() => notifyCrossTab());
-    }
   };
 
   const handleResetSeasonalWorkers = () => {
-    lastLocalEditAtRef.current = Date.now();
-    localStorage.removeItem(DELETED_SEA_STORAGE_KEY);
+    markUnsaved();
+    pendingDeletedSeaRef.current = {
+      ids: [],
+      codes: [],
+      removedKeys: [],
+      clearAll: false,
+      resetDeleted: true,
+    };
     seasonalWorkersRef.current = initialSeasonalWorkers;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, initialSeasonalWorkers);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(initialSeasonalWorkers);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(initialSeasonalWorkers));
-    saveAllToServer(configRef.current, employeesRef.current, initialSeasonalWorkers);
-    if (isSupabaseConfigured()) {
-      syncSeasonalWorkersToSupabase(initialSeasonalWorkers, periodCodeRef.current).then(() => notifyCrossTab());
-    }
   };
 
-  // Cập nhật nhân viên chính thức - phản hồi tức thì trên UI và đồng bộ ngay toàn bộ thông tin (phụ cấp, lương, BHXH, hợp đồng, ngân hàng...) lên Server & Supabase Cloud
+  // Cập nhật nhân viên chính thức (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleUpdateEmployee = (updated: Employee) => {
     const nowTs = Date.now();
-    lastLocalEditAtRef.current = nowTs;
-    removeDeletedKeys(DELETED_EMP_STORAGE_KEY, [updated.id, updated.code]);
+    markUnsaved();
+    pendingDeletedEmpRef.current.removedKeys.push(
+      ...[updated.id, updated.code].filter(Boolean).map((k) => String(k).trim())
+    );
     const recalculated = recomputeEmployeePayroll({
       ...updated,
       updatedAt: nowTs,
     });
     setEmployees((prev) => {
-      let finalEmpToSync: Employee = recalculated;
       const next = prev.map((emp) => {
         if (emp.id === recalculated.id || emp.code === recalculated.code) {
-          finalEmpToSync = {
+          return {
             ...emp,
             ...recalculated,
             updatedAt: nowTs,
@@ -2163,94 +2118,36 @@ export default function App() {
               ...(recalculated.periodRecords || {}),
             },
           };
-          return finalEmpToSync;
         }
         return emp;
       });
       employeesRef.current = next;
-      const snap = serializeDataSnapshot(configRef.current, next, seasonalWorkersRef.current);
-      lastSavedSnapshotRef.current = snap;
-      lastServerSnapshotRef.current = snap;
-      localStorage.setItem('payroll_employees', JSON.stringify(next));
-
-      // Cập nhật luôn vào slot tháng hiện tại để khi chuyển qua lại giữa các tháng không bao giờ đọc lại giá trị phụ cấp cũ
-      try {
-        const curM = configRef.current.month || realDateInfo.realMonth;
-        const curY = configRef.current.year || realDateInfo.realYear;
-        const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
-        localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(next));
-      } catch {}
-
-      const timerKey = `emp_${finalEmpToSync.code || finalEmpToSync.id}`;
-      if (singleWorkerSyncTimersRef.current[timerKey]) {
-        clearTimeout(singleWorkerSyncTimersRef.current[timerKey]);
-      }
-      singleWorkerSyncTimersRef.current[timerKey] = setTimeout(async () => {
-        isSyncingRef.current = true;
-        try {
-          setCloudSyncStatus('syncing');
-          const latestEmp =
-            employeesRef.current.find(
-              (e) =>
-                (finalEmpToSync.id && String(e.id) === String(finalEmpToSync.id)) ||
-                (finalEmpToSync.code && e.code === finalEmpToSync.code)
-            ) || finalEmpToSync;
-          await saveAllToServer(configRef.current, employeesRef.current, seasonalWorkersRef.current);
-          if (isSupabaseConfigured()) {
-            await syncSingleEmployeeToSupabase(latestEmp, periodCodeRef.current);
-            setCloudSyncStatus('synced');
-            setLastSyncedText(getLastSyncedTime());
-            notifyCrossTab();
-          } else {
-            setCloudSyncStatus('synced');
-            setLastSyncedText(getServerLastSyncedTime());
-          }
-        } catch {
-          setCloudSyncStatus('error');
-        } finally {
-          isSyncingRef.current = false;
-        }
-      }, 300);
-
       return next;
     });
   };
 
-  // Thêm nhân viên chính thức
+  // Thêm nhân viên chính thức (chờ nhấn "Lưu Data")
   const handleAddEmployee = (newEmp: Employee) => {
-    lastLocalEditAtRef.current = Date.now();
-    removeDeletedKeys(DELETED_EMP_STORAGE_KEY, [newEmp.id, newEmp.code]);
+    markUnsaved();
+    pendingDeletedEmpRef.current.removedKeys.push(
+      ...[newEmp.id, newEmp.code].filter(Boolean).map((k) => String(k).trim())
+    );
     const recalculated = recomputeEmployeePayroll(newEmp);
     setEmployees((prev) => {
       const next = [...prev, recalculated];
       employeesRef.current = next;
-      const snap = serializeDataSnapshot(configRef.current, next, seasonalWorkersRef.current);
-      lastSavedSnapshotRef.current = snap;
-      lastServerSnapshotRef.current = snap;
-      localStorage.setItem('payroll_employees', JSON.stringify(next));
-      saveAllToServer(configRef.current, next, seasonalWorkersRef.current);
-      if (isSupabaseConfigured()) {
-        syncSingleEmployeeToSupabase(recalculated, periodCodeRef.current).then(() => notifyCrossTab());
-      }
       return next;
     });
   };
 
-  // Xóa nhân viên chính thức - xóa ngay trên Supabase Cloud, Server và LocalStorage
+  // Xóa nhân viên chính thức (chờ nhấn "Lưu Data")
   const handleDeleteEmployee = (id: string) => {
-    lastLocalEditAtRef.current = Date.now();
+    markUnsaved();
     const strId = String(id).trim();
     const currentList = employeesRef.current;
     const target = currentList.find((e) => String(e.id) === strId || String(e.code) === strId);
     const targetId = target ? String(target.id) : strId;
     const targetCode = target?.code ? String(target.code).trim() : '';
-
-    [`emp_${targetId}`, `emp_${targetCode}`, `emp_${strId}`].forEach((tk) => {
-      if (singleWorkerSyncTimersRef.current[tk]) {
-        clearTimeout(singleWorkerSyncTimersRef.current[tk]);
-        delete singleWorkerSyncTimersRef.current[tk];
-      }
-    });
 
     const filtered = currentList.filter((e) => {
       if (target) {
@@ -2263,63 +2160,37 @@ export default function App() {
       ? filtered.some((e) => String(e.code).trim() === targetCode)
       : false;
 
-    addDeletedKeys(
-      DELETED_EMP_STORAGE_KEY,
-      hasRemainingSameCode ? [targetId, strId] : [targetId, targetCode, strId]
+    pendingDeletedEmpRef.current.items.push({
+      id: targetId,
+      code: hasRemainingSameCode ? undefined : targetCode || undefined,
+    });
+    pendingDeletedEmpRef.current.deletedStorageKeys.push(
+      ...(hasRemainingSameCode ? [targetId, strId] : [targetId, targetCode, strId]).filter(Boolean)
     );
 
     employeesRef.current = filtered;
-    const snap = serializeDataSnapshot(configRef.current, filtered, seasonalWorkersRef.current);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setEmployees(filtered);
-    localStorage.setItem('payroll_employees', JSON.stringify(filtered));
-
-    // Xóa luôn trong các slot tháng cũ nếu có để khi đổi tháng / F5 không bị phục hồi ngược lại
-    ['payroll_month_2026_09', 'payroll_month_2026_10', 'payroll_month_2026_11', 'payroll_month_2026_12'].forEach(
-      (slotKey) => {
-        try {
-          const raw = localStorage.getItem(slotKey);
-          if (raw) {
-            const arr = JSON.parse(raw);
-            if (Array.isArray(arr)) {
-              const nextArr = arr.filter(
-                (x: any) =>
-                  String(x?.id) !== targetId &&
-                  (hasRemainingSameCode || !targetCode || String(x?.code) !== targetCode)
-              );
-              localStorage.setItem(slotKey, JSON.stringify(nextArr));
-            }
-          }
-        } catch {}
-      }
-    );
-
-    saveAllToServer(configRef.current, filtered, seasonalWorkersRef.current);
-    if (isSupabaseConfigured()) {
-      deleteEmployeeFromSupabase(
-        targetId,
-        hasRemainingSameCode ? undefined : targetCode || undefined
-      ).then(() => notifyCrossTab());
-    }
   };
 
-  // Nút cưỡng bức làm mới & đẩy đồng bộ 2 chiều ngay tức thì lên Supabase Cloud + Máy chủ
+  // =========================================================================
+  // HÀM LƯU DATA CHÍNH THỨC DUY NHẤT (CHỈ CHẠY KHI NGƯỜI DÙNG NHẤN "LƯU DATA")
+  // =========================================================================
   const handleManualForceSync = async () => {
-    setCloudSyncStatus('syncing');
     lastLocalEditAtRef.current = Date.now();
-    isSyncingRef.current = true;
-    // Hủy các timer lưu đơn lẻ đang chờ để không chạy đè sau khi đã đồng bộ toàn bộ
     Object.keys(singleWorkerSyncTimersRef.current).forEach((k) => {
       if (singleWorkerSyncTimersRef.current[k]) {
         clearTimeout(singleWorkerSyncTimersRef.current[k]);
         delete singleWorkerSyncTimersRef.current[k];
       }
     });
+    beginSyncTask(true);
     try {
       const latestCfg = configRef.current;
       const latestEmps = employeesRef.current;
       const latestSeas = seasonalWorkersRef.current;
+      const latestProjects = projectsRef.current;
+      const latestTeams = teamWorkersRef.current;
+      const latestAdvances = salaryAdvancesRef.current;
       const sbCfg = getSupabaseConfig();
       const cfgToSync: CompanyConfig = {
         ...latestCfg,
@@ -2328,77 +2199,137 @@ export default function App() {
           : {}),
       } as CompanyConfig;
 
-      const currentSnap = serializeDataSnapshot(cfgToSync, latestEmps, latestSeas);
-      lastSavedSnapshotRef.current = currentSnap;
-      lastServerSnapshotRef.current = currentSnap;
+      // 1. Lưu danh sách các khóa đã xóa/khôi phục vào LocalStorage
+      const seaPending = pendingDeletedSeaRef.current;
+      if (seaPending.resetDeleted) {
+        localStorage.removeItem(DELETED_SEA_STORAGE_KEY);
+      }
+      if (seaPending.removedKeys.length > 0) {
+        removeDeletedKeys(DELETED_SEA_STORAGE_KEY, seaPending.removedKeys);
+      }
+      if (seaPending.ids.length > 0 || seaPending.codes.length > 0) {
+        addDeletedKeys(DELETED_SEA_STORAGE_KEY, [...seaPending.ids, ...seaPending.codes]);
+      }
 
-      // Luôn lưu đồng thời lên cả Máy chủ Backend và Supabase Cloud để 2 trình duyệt / 2 máy tính đồng bộ tức thì
+      const empPending = pendingDeletedEmpRef.current;
+      if (empPending.resetDeleted) {
+        localStorage.removeItem(DELETED_EMP_STORAGE_KEY);
+      }
+      if (empPending.removedKeys.length > 0) {
+        removeDeletedKeys(DELETED_EMP_STORAGE_KEY, empPending.removedKeys);
+      }
+      if (empPending.deletedStorageKeys.length > 0) {
+        addDeletedKeys(DELETED_EMP_STORAGE_KEY, empPending.deletedStorageKeys);
+      }
+
+      // 2. Lưu toàn bộ dữ liệu hiện tại vào LocalStorage
+      const curM = cfgToSync.month || realDateInfo.realMonth;
+      const curY = cfgToSync.year || realDateInfo.realYear;
+      const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
+      const curMonthKey = `${curY}-${curMStr}`;
+
+      localStorage.setItem('payroll_company_config', JSON.stringify(cfgToSync));
+      localStorage.setItem('payroll_employees', JSON.stringify(latestEmps));
+      localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(latestEmps));
+      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(latestSeas));
+      localStorage.setItem('payroll_projects', JSON.stringify(latestProjects));
+      localStorage.setItem('payroll_team_workers', JSON.stringify(latestTeams));
+      localStorage.setItem('payroll_salary_advances', JSON.stringify(latestAdvances));
+
+      // Cập nhật cache ngày chấm công di động cho tháng hiện tại
+      latestSeas.forEach((w) => {
+        if (w.code) {
+          const daysObj = w.monthlyAttendance?.[curMonthKey]?.days || {};
+          try {
+            localStorage.setItem(`pncons_mobile_days_${w.code}_${curY}_${curM}`, JSON.stringify(daysObj));
+          } catch {}
+        }
+      });
+
+      // Làm sạch nhân sự đã xóa khỏi các slot tháng cũ nếu có
+      if (empPending.items.length > 0) {
+        const delIds = new Set(empPending.items.map((x) => String(x.id)));
+        const delCodes = new Set(empPending.items.map((x) => x.code).filter(Boolean) as string[]);
+        ['payroll_month_2026_09', 'payroll_month_2026_10', 'payroll_month_2026_11', 'payroll_month_2026_12'].forEach(
+          (slotKey) => {
+            try {
+              const raw = localStorage.getItem(slotKey);
+              if (raw) {
+                const arr = JSON.parse(raw);
+                if (Array.isArray(arr)) {
+                  const nextArr = arr.filter(
+                    (x: any) => !delIds.has(String(x?.id)) && (!x?.code || !delCodes.has(String(x.code)))
+                  );
+                  localStorage.setItem(slotKey, JSON.stringify(nextArr));
+                }
+              }
+            } catch {}
+          }
+        );
+      }
+
+      markSnapshotAsSaved(cfgToSync, latestEmps, latestSeas);
+
+      // 3. Lưu lên Máy chủ Backend
       await saveAllToServer(cfgToSync, latestEmps, latestSeas);
 
+      // 4. Nếu đã cấu hình Supabase Cloud -> Thực thi các thao tác xóa chờ sẵn & đồng bộ toàn bộ bảng lên Cloud
       if (isSupabaseConfigured()) {
+        if (seaPending.clearAll && latestSeas.length === 0) {
+          await clearAllSeasonalWorkersFromSupabase(cfgToSync.periodCode);
+        } else if (seaPending.ids.length > 0 || seaPending.codes.length > 0) {
+          await deleteBatchSeasonalWorkersFromSupabase(seaPending.ids, seaPending.codes);
+        }
+
+        for (const delEmp of empPending.items) {
+          await deleteEmployeeFromSupabase(delEmp.id, delEmp.code);
+        }
+
         await syncAllDataToSupabase(
           cfgToSync,
           latestEmps,
           latestSeas,
-          teamWorkers,
-          projects,
-          salaryAdvances,
-          buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, teamWorkers)
+          latestTeams,
+          latestProjects,
+          latestAdvances,
+          buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, latestTeams)
         );
-        notifyCrossTab();
-      } else {
-        const curM = latestCfg.month || realDateInfo.realMonth;
-        const curY = latestCfg.year || realDateInfo.realYear;
-        const serverData = await fetchServerData();
-        if (serverData && serverData.lastUpdated > 0) {
-          if (serverData.config) {
-            setConfig((prev) => mergeRemoteConfigPreservingPeriod(prev, serverData.config));
-          }
-          if (serverData.employees && serverData.employees.length > 0) {
-            setEmployees((prev) =>
-              mergeEmployeeListsPreservingAttendance(
-                prev,
-                serverData.employees,
-                curM,
-                curY,
-                latestCfg.standardWorkDays || 26
-              )
-            );
-          }
-          if (serverData.seasonalWorkers && serverData.seasonalWorkers.length > 0) {
-            setSeasonalWorkers(
-              mergeSeasonalListsPreservingAttendance(
-                seasonalWorkersRef.current,
-                serverData.seasonalWorkers,
-                curM,
-                curY,
-                latestCfg.periodCode
-              ).mergedList
-            );
-          }
-          setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
-        }
-        notifyCrossTab();
       }
-      setCloudSyncStatus('synced');
-      setLastSyncedText(getLastSyncedTime() || getServerLastSyncedTime());
+
+      // Reset danh sách xóa chờ và đánh dấu đã lưu sạch sẽ
+      pendingDeletedSeaRef.current = {
+        ids: [],
+        codes: [],
+        removedKeys: [],
+        clearAll: false,
+        resetDeleted: false,
+      };
+      pendingDeletedEmpRef.current = {
+        items: [],
+        deletedStorageKeys: [],
+        removedKeys: [],
+        resetDeleted: false,
+      };
+      hasUnsavedChangesRef.current = false;
+      setHasUnsavedChanges(false);
+
+      notifyCrossTab();
+      endSyncTask('synced');
+      const nowTime = getLastSyncedTime() || getServerLastSyncedTime() || new Date().toLocaleTimeString('vi-VN');
+      setLastSyncedText(nowTime);
+      setSaveToastMessage(`✓ Đã lưu Data thành công lúc ${nowTime}!`);
+      setTimeout(() => {
+        setSaveToastMessage((prev) => (prev?.includes(nowTime) ? null : prev));
+      }, 4000);
     } catch {
-      setCloudSyncStatus('error');
-    } finally {
-      isSyncingRef.current = false;
+      endSyncTask('error');
+      setSaveToastMessage('Đã lưu Data vào trình duyệt (Có lỗi kết nối máy chủ từ xa)!');
+      setTimeout(() => setSaveToastMessage(null), 4000);
     }
   };
 
-  // Chuyển đổi Tháng/Năm đồng bộ toàn diện cho Bản Chấm Công và Bản Lương (Tháng hiện tại, Tháng 9, Tháng 10...)
+  // Chuyển đổi Tháng/Năm đồng bộ toàn diện cho Bản Chấm Công và Bản Lương (CHỈ ĐỔI KỲ ĐANG XEM, KHÔNG GÂY AUTO-SAVE)
   const handleChangeMonthYear = (newMonth: number, newYear: number) => {
-    const curM = config.month || realDateInfo.realMonth;
-    const curY = config.year || realDateInfo.realYear;
-    const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
-    const currentKey = `payroll_month_${curY}_${curMStr}`;
-    try {
-      localStorage.setItem(currentKey, JSON.stringify(employees));
-    } catch {}
-
     const mStr = newMonth < 10 ? `0${newMonth}` : `${newMonth}`;
     const nextM = newMonth === 12 ? '01' : newMonth + 1 < 10 ? `0${newMonth + 1}` : `${newMonth + 1}`;
     const nextY = newMonth === 12 ? newYear + 1 : newYear;
@@ -2412,9 +2343,7 @@ export default function App() {
       periodCode: `${mStr}/${newYear}`,
       paymentDate: `05/${nextM}/${nextY}`,
     };
-    setConfig(newConfig);
 
-    // Kiểm tra nếu có dữ liệu cũ từng lưu trong slot payroll_month_YYYY_MM thì gộp vào monthlyAttendance[targetMonthKey]
     const targetStorageKey = `payroll_month_${newYear}_${mStr}`;
     let legacySlotEmployees: Employee[] | null = null;
     try {
@@ -2428,38 +2357,48 @@ export default function App() {
     } catch {}
 
     const stdDays = config.standardWorkDays || 26;
-    setEmployees((prev) =>
-      prev.map((emp) => {
-        const mergedMonthly = { ...(emp.monthlyAttendance || {}) };
-        if (legacySlotEmployees && !mergedMonthly[targetMonthKey]) {
-          const matchedOld = legacySlotEmployees.find(
-            (x) =>
-              normalizeEmpName(x?.fullName) === normalizeEmpName(emp.fullName) &&
-              (x.code === emp.code || x.id === emp.id)
-          );
-          if (matchedOld) {
-            const oldRec = matchedOld.monthlyAttendance?.[targetMonthKey];
-            if (oldRec && Object.keys(oldRec.days || {}).length > 0) {
-              mergedMonthly[targetMonthKey] = oldRec;
-            }
+    const nextEmployeesForMonth = employeesRef.current.map((emp) => {
+      const mergedMonthly = { ...(emp.monthlyAttendance || {}) };
+      if (legacySlotEmployees && !mergedMonthly[targetMonthKey]) {
+        const matchedOld = legacySlotEmployees.find(
+          (x) =>
+            normalizeEmpName(x?.fullName) === normalizeEmpName(emp.fullName) &&
+            (x.code === emp.code || x.id === emp.id)
+        );
+        if (matchedOld) {
+          const oldRec = matchedOld.monthlyAttendance?.[targetMonthKey];
+          if (oldRec && Object.keys(oldRec.days || {}).length > 0) {
+            mergedMonthly[targetMonthKey] = oldRec;
           }
         }
-        const withHistory = ensureEmployeeHistoricalMonths({
-          ...emp,
-          monthlyAttendance: mergedMonthly,
-        });
-        return syncEmployeeForMonth(withHistory, newMonth, newYear, stdDays);
-      })
+      }
+      const withHistory = ensureEmployeeHistoricalMonths({
+        ...emp,
+        monthlyAttendance: mergedMonthly,
+      });
+      return syncEmployeeForMonth(withHistory, newMonth, newYear, stdDays);
+    });
+
+    const nextSeasonalForMonth = seasonalWorkersRef.current.map((w) =>
+      syncSeasonalWorkerForMonth(ensureSeasonalHistoricalMonths(w), newMonth, newYear)
     );
 
-    setSeasonalWorkers((prev) =>
-      prev.map((w) => syncSeasonalWorkerForMonth(ensureSeasonalHistoricalMonths(w), newMonth, newYear))
-    );
+    configRef.current = newConfig;
+    employeesRef.current = nextEmployeesForMonth;
+    seasonalWorkersRef.current = nextSeasonalForMonth;
+    periodCodeRef.current = newConfig.periodCode;
+    activeMonthRef.current = newMonth;
+    activeYearRef.current = newYear;
+
+    setConfig(newConfig);
+    setEmployees(nextEmployeesForMonth);
+    setSeasonalWorkers(nextSeasonalForMonth);
   };
 
+  // Cập nhật hàng loạt nhân viên chính thức trong bộ nhớ (chỉ lưu khi nhấn "Lưu Data")
   const handleBatchUpdate = (updatedList: Employee[]) => {
     const nowTs = Date.now();
-    lastLocalEditAtRef.current = nowTs;
+    markUnsaved();
     const curM = configRef.current.month || realDateInfo.realMonth;
     const curY = configRef.current.year || realDateInfo.realYear;
     const stdDays = configRef.current.standardWorkDays || 26;
@@ -2467,41 +2406,17 @@ export default function App() {
       syncEmployeeForMonth({ ...emp, updatedAt: nowTs }, curM, curY, stdDays)
     );
     employeesRef.current = normalizedList;
-    const snap = serializeDataSnapshot(configRef.current, normalizedList, seasonalWorkersRef.current);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setEmployees(normalizedList);
-    const mStr = curM < 10 ? `0${curM}` : `${curM}`;
-    const currentMonthKey = `payroll_month_${curY}_${mStr}`;
-    try {
-      localStorage.setItem(currentMonthKey, JSON.stringify(normalizedList));
-      localStorage.setItem('payroll_employees', JSON.stringify(normalizedList));
-    } catch (e) {
-      console.warn('LocalStorage save error:', e);
-    }
-    isSyncingRef.current = true;
-    setCloudSyncStatus('syncing');
-    saveAllToServer(configRef.current, normalizedList, seasonalWorkersRef.current)
-      .then(async () => {
-        if (isSupabaseConfigured()) {
-          await syncEmployeesToSupabase(normalizedList, periodCodeRef.current);
-          setCloudSyncStatus('synced');
-          setLastSyncedText(getLastSyncedTime());
-          notifyCrossTab();
-        } else {
-          setCloudSyncStatus('synced');
-        }
-      })
-      .catch(() => setCloudSyncStatus('error'))
-      .finally(() => {
-        isSyncingRef.current = false;
-      });
   };
 
   const handleResetDefault = () => {
-    localStorage.removeItem(DELETED_EMP_STORAGE_KEY);
-    localStorage.removeItem('payroll_employees');
-    localStorage.removeItem('payroll_company_config');
+    markUnsaved();
+    pendingDeletedEmpRef.current = {
+      items: [],
+      deletedStorageKeys: [],
+      removedKeys: [],
+      resetDeleted: true,
+    };
     const clean = initialEmployees.map((emp) =>
       syncEmployeeForMonth(
         ensureEmployeeHistoricalMonths(emp),
@@ -2510,66 +2425,59 @@ export default function App() {
         26
       )
     );
+    employeesRef.current = clean;
+    configRef.current = initialCompanyConfig;
     setEmployees(clean);
     setConfig(initialCompanyConfig);
-    localStorage.setItem('payroll_employees', JSON.stringify(clean));
   };
 
-  const handleAuditSelectEmployee = (code: string) => {
+  const handleAuditSelectEmployee = (_code: string) => {
     setActiveTab('PAYSLIP');
   };
 
-  // Handlers for Projects
+  // Handlers for Projects (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleAddProject = (p: Project) => {
-    const updated = [p, ...projects];
+    markUnsaved();
+    const updated = [p, ...projectsRef.current];
+    projectsRef.current = updated;
     setProjects(updated);
-    localStorage.setItem('payroll_projects', JSON.stringify(updated));
-    if (isSupabaseConfigured()) {
-      syncProjectsToSupabase(updated)
-        .then(() => notifyCrossTab())
-        .catch(() => {});
-    }
   };
   const handleUpdateProject = (p: Project) => {
-    const updated = projects.map((item) => (item.id === p.id ? p : item));
+    markUnsaved();
+    const updated = projectsRef.current.map((item) => (item.id === p.id ? p : item));
+    projectsRef.current = updated;
     setProjects(updated);
-    localStorage.setItem('payroll_projects', JSON.stringify(updated));
-    if (isSupabaseConfigured()) {
-      syncProjectsToSupabase(updated)
-        .then(() => notifyCrossTab())
-        .catch(() => {});
-    }
   };
   const handleDeleteProject = (id: string) => {
-    const updated = projects.filter((item) => item.id !== id);
+    markUnsaved();
+    const updated = projectsRef.current.filter((item) => item.id !== id);
+    projectsRef.current = updated;
     setProjects(updated);
-    localStorage.setItem('payroll_projects', JSON.stringify(updated));
-    if (isSupabaseConfigured()) {
-      syncProjectsToSupabase(updated)
-        .then(() => notifyCrossTab())
-        .catch(() => {});
-    }
   };
 
-  // Handlers for Team Workers
+  // Handlers for Team Workers (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleAddTeamWorker = (tw: TeamWorker) => {
-    const updated = [...teamWorkers, tw];
+    markUnsaved();
+    const updated = [...teamWorkersRef.current, tw];
+    teamWorkersRef.current = updated;
     setTeamWorkers(updated);
-    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
   };
   const handleUpdateTeamWorker = (tw: TeamWorker) => {
-    const updated = teamWorkers.map((item) => (item.id === tw.id ? tw : item));
+    markUnsaved();
+    const updated = teamWorkersRef.current.map((item) => (item.id === tw.id ? tw : item));
+    teamWorkersRef.current = updated;
     setTeamWorkers(updated);
-    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
   };
   const handleDeleteTeamWorker = (id: string) => {
-    const updated = teamWorkers.filter((item) => item.id !== id);
+    markUnsaved();
+    const updated = teamWorkersRef.current.filter((item) => item.id !== id);
+    teamWorkersRef.current = updated;
     setTeamWorkers(updated);
-    localStorage.setItem('payroll_team_workers', JSON.stringify(updated));
   };
   const handleBatchUpdateTeamWorkers = (list: TeamWorker[]) => {
+    markUnsaved();
+    teamWorkersRef.current = list;
     setTeamWorkers(list);
-    localStorage.setItem('payroll_team_workers', JSON.stringify(list));
   };
 
   // Helper kiểm tra phiếu tạm ứng thuộc Tháng / Năm đang xét
@@ -2598,14 +2506,14 @@ export default function App() {
     return true;
   };
 
-  // Đồng bộ danh sách phiếu tạm ứng vào Nhân viên chính thức & Nhân viên thời vụ
+  // Đồng bộ danh sách phiếu tạm ứng vào Nhân viên chính thức & Nhân viên thời vụ trong bộ nhớ (chờ nhấn "Lưu Data")
   const syncAdvancesIntoWorkers = (nextAdvances: SalaryAdvance[]) => {
-    const curM = config.month || realDateInfo.realMonth;
-    const curY = config.year || realDateInfo.realYear;
+    const curM = configRef.current.month || realDateInfo.realMonth;
+    const curY = configRef.current.year || realDateInfo.realYear;
     const mStr = String(curM).padStart(2, '0');
     const monthPeriodKey = `${curY}-${mStr}_MONTH`;
 
-    const nextEmployees = employees.map((e) => {
+    const nextEmployees = employeesRef.current.map((e) => {
       const empAdvances = nextAdvances.filter(
         (a) =>
           a.targetType === 'PERMANENT' &&
@@ -2616,7 +2524,7 @@ export default function App() {
       return recomputeEmployeePayroll({ ...e, advancePayment: sumAdv });
     });
 
-    const nextSeasonal = seasonalWorkers.map((w) => {
+    const nextSeasonal = seasonalWorkersRef.current.map((w) => {
       const workerAdvances = nextAdvances.filter(
         (a) =>
           a.targetType === 'SEASONAL' &&
@@ -2646,64 +2554,46 @@ export default function App() {
       };
     });
 
+    employeesRef.current = nextEmployees;
+    seasonalWorkersRef.current = nextSeasonal;
     setEmployees(nextEmployees);
     setSeasonalWorkers(nextSeasonal);
-    localStorage.setItem('payroll_employees', JSON.stringify(nextEmployees));
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeasonal));
-    saveAllToServer(config, nextEmployees, nextSeasonal);
   };
 
-  // Handlers for Salary Advances
+  // Handlers for Salary Advances (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
   const handleAddSalaryAdvance = (adv: SalaryAdvance) => {
-    const updated = [adv, ...salaryAdvances];
+    markUnsaved();
+    const updated = [adv, ...salaryAdvancesRef.current];
+    salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
-    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
     syncAdvancesIntoWorkers(updated);
   };
   const handleUpdateSalaryAdvance = (adv: SalaryAdvance) => {
-    const updated = salaryAdvances.map((item) => (item.id === adv.id ? adv : item));
+    markUnsaved();
+    const updated = salaryAdvancesRef.current.map((item) => (item.id === adv.id ? adv : item));
+    salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
-    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
     syncAdvancesIntoWorkers(updated);
   };
   const handleDeleteSalaryAdvance = (id: string) => {
-    const updated = salaryAdvances.filter((item) => item.id !== id);
+    markUnsaved();
+    const updated = salaryAdvancesRef.current.filter((item) => item.id !== id);
+    salaryAdvancesRef.current = updated;
     setSalaryAdvances(updated);
-    localStorage.setItem('payroll_salary_advances', JSON.stringify(updated));
     syncAdvancesIntoWorkers(updated);
   };
 
+  // Cập nhật hàng loạt công nhân thời vụ trong bộ nhớ (chỉ lưu khi nhấn "Lưu Data")
   const handleBatchUpdateSeasonalWorkers = (list: SeasonalWorker[]) => {
     const nowTs = Date.now();
-    lastLocalEditAtRef.current = nowTs;
+    markUnsaved();
     const curM = configRef.current.month || realDateInfo.realMonth;
     const curY = configRef.current.year || realDateInfo.realYear;
     const syncedList = list.map((w) =>
       syncSeasonalWorkerForMonth({ ...w, updatedAt: nowTs }, curM, curY)
     );
     seasonalWorkersRef.current = syncedList;
-    const snap = serializeDataSnapshot(configRef.current, employeesRef.current, syncedList);
-    lastSavedSnapshotRef.current = snap;
-    lastServerSnapshotRef.current = snap;
     setSeasonalWorkers(syncedList);
-    localStorage.setItem('payroll_seasonal_workers', JSON.stringify(syncedList));
-    isSyncingRef.current = true;
-    setCloudSyncStatus('syncing');
-    saveAllToServer(configRef.current, employeesRef.current, syncedList)
-      .then(async () => {
-        if (isSupabaseConfigured()) {
-          await syncSeasonalWorkersToSupabase(syncedList, periodCodeRef.current);
-          setCloudSyncStatus('synced');
-          setLastSyncedText(getLastSyncedTime());
-          notifyCrossTab();
-        } else {
-          setCloudSyncStatus('synced');
-        }
-      })
-      .catch(() => setCloudSyncStatus('error'))
-      .finally(() => {
-        isSyncingRef.current = false;
-      });
   };
 
   // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)
@@ -2819,6 +2709,7 @@ export default function App() {
         config={config}
         initialWorkerCode={activeMobileWorkerCode}
         isAdminPreview={isAdminPreview}
+        onSaveData={handleManualForceSync}
         onUpdateWorker={(updatedWorker) => {
           const matchedPerm = employees.find(
             (e) => e.code === updatedWorker.code || String(e.id) === String(updatedWorker.id)
@@ -2856,6 +2747,42 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans">
+      {/* Thông báo xác nhận khi nhấn nút Lưu Data */}
+      {saveToastMessage && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-emerald-500/50 text-xs font-bold flex items-center gap-2.5">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{saveToastMessage}</span>
+          <button
+            type="button"
+            onClick={() => setSaveToastMessage(null)}
+            className="ml-1 text-slate-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Thanh nhắc nhở nổi khi có dữ liệu mới nhập chưa nhấn Lưu Data */}
+      {hasUnsavedChanges && (
+        <div className="bg-amber-100 border-b border-amber-300 px-3 sm:px-6 py-1.5 flex items-center justify-between gap-3 text-xs text-amber-950 no-print">
+          <div className="flex items-center gap-2 font-bold">
+            <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping shrink-0" />
+            <span>
+              Bạn vừa nhập hoặc chỉnh sửa dữ liệu. Vui lòng nhấn nút <strong>"Lưu Data"</strong> để lưu chính thức!
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleManualForceSync}
+            disabled={cloudSyncStatus === 'syncing'}
+            className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer transition shrink-0 disabled:opacity-60"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{cloudSyncStatus === 'syncing' ? 'Đang lưu Data...' : 'Lưu Data ngay'}</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Header */}
       <Header
         config={config}
@@ -2867,6 +2794,8 @@ export default function App() {
         onToggleSidebar={() => setIsSidebarMobileOpen((prev) => !prev)}
         onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
         onManualSync={handleManualForceSync}
+        onSaveData={handleManualForceSync}
+        hasUnsavedChanges={hasUnsavedChanges}
         cloudSyncStatus={cloudSyncStatus}
         lastSyncedText={lastSyncedText}
       />
@@ -2893,6 +2822,8 @@ export default function App() {
           onOpenCompanyModal={() => setIsCompanyOpen(true)}
           onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
           onOpenMobileAttendance={() => setIsMobileAttendanceView(true)}
+          onSaveData={handleManualForceSync}
+          hasUnsavedChanges={hasUnsavedChanges}
           cloudSyncStatus={cloudSyncStatus}
         />
 
@@ -3073,6 +3004,9 @@ export default function App() {
                         setSeasonalSubTab('LIST');
                       }}
                       onResetDefault={handleResetDefault}
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
+                      isSavingData={cloudSyncStatus === 'syncing'}
                     />
                   )}
 
@@ -3097,6 +3031,8 @@ export default function App() {
                       forcedGroup="PERMANENT"
                       seasonalCount={syncedSeasonalWorkers.length}
                       onManualSync={handleManualForceSync}
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
                       onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
                       cloudSyncStatus={cloudSyncStatus}
                     />
@@ -3114,6 +3050,7 @@ export default function App() {
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onSavePayrollToCloud={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
                       forcedCategory="PERMANENT"
                     />
                   )}
@@ -3130,6 +3067,9 @@ export default function App() {
                       onUpdateAdvance={handleUpdateSalaryAdvance}
                       onDeleteAdvance={handleDeleteSalaryAdvance}
                       forcedTargetType="PERMANENT"
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
+                      isSavingData={cloudSyncStatus === 'syncing'}
                     />
                   )}
                 </div>
@@ -3293,6 +3233,9 @@ export default function App() {
                       }}
                       onGoToSeasonalAttendance={() => setSeasonalSubTab('ATTENDANCE')}
                       onGoToSeasonalPayroll={() => setSeasonalSubTab('PAYROLL')}
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
+                      isSavingData={cloudSyncStatus === 'syncing'}
                     />
                   )}
 
@@ -3317,6 +3260,8 @@ export default function App() {
                       forcedGroup="SEASONAL"
                       seasonalCount={syncedSeasonalWorkers.length}
                       onManualSync={handleManualForceSync}
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
                       onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
                       cloudSyncStatus={cloudSyncStatus}
                     />
@@ -3335,6 +3280,7 @@ export default function App() {
                       onDeleteEmployee={handleDeleteEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       onSavePayrollToCloud={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
                       forcedCategory="SEASONAL"
                     />
                   )}
@@ -3351,6 +3297,9 @@ export default function App() {
                       onUpdateAdvance={handleUpdateSalaryAdvance}
                       onDeleteAdvance={handleDeleteSalaryAdvance}
                       forcedTargetType="SEASONAL"
+                      onSaveData={handleManualForceSync}
+                      hasUnsavedChanges={hasUnsavedChanges}
+                      isSavingData={cloudSyncStatus === 'syncing'}
                     />
                   )}
                 </div>
@@ -3366,6 +3315,9 @@ export default function App() {
                   onAddProject={handleAddProject}
                   onUpdateProject={handleUpdateProject}
                   onDeleteProject={handleDeleteProject}
+                  onSaveData={handleManualForceSync}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  isSavingData={cloudSyncStatus === 'syncing'}
                 />
               )}
 
@@ -3389,8 +3341,9 @@ export default function App() {
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
                   onUpdateEmployeeContact={(empId, updates) => {
-                    setEmployees((prev) =>
-                      prev.map((e) =>
+                    markUnsaved();
+                    setEmployees((prev) => {
+                      const next = prev.map((e) =>
                         e.id === empId || e.code === empId
                           ? {
                               ...e,
@@ -3398,15 +3351,20 @@ export default function App() {
                               ...(updates.phone !== undefined ? { phone: updates.phone } : {}),
                             }
                           : e
-                      )
-                    );
+                      );
+                      employeesRef.current = next;
+                      return next;
+                    });
                   }}
                   onUpdateEmployeeEmail={(empId, newEmail) => {
-                    setEmployees((prev) =>
-                      prev.map((e) =>
+                    markUnsaved();
+                    setEmployees((prev) => {
+                      const next = prev.map((e) =>
                         e.id === empId || e.code === empId ? { ...e, email: newEmail } : e
-                      )
-                    );
+                      );
+                      employeesRef.current = next;
+                      return next;
+                    });
                   }}
                   onOpenZaloSettings={() => setIsZaloSettingsOpen(true)}
                   onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
@@ -3437,6 +3395,8 @@ export default function App() {
                   onUpdateEmployee={handleUpdateEmployee}
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
+                  onSavePayrollToCloud={handleManualForceSync}
+                  hasUnsavedChanges={hasUnsavedChanges}
                   forcedCategory="PERMANENT"
                 />
               )}
@@ -3452,6 +3412,8 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
                   onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
+                  onSavePayrollToCloud={handleManualForceSync}
+                  hasUnsavedChanges={hasUnsavedChanges}
                   forcedCategory="SEASONAL"
                 />
               )}
@@ -3467,6 +3429,10 @@ export default function App() {
                   onBatchUpdateSeasonal={handleBatchUpdateSeasonalWorkers}
                   onBatchUpdateTeam={handleBatchUpdateTeamWorkers}
                   seasonalCount={syncedSeasonalWorkers.length}
+                  onManualSync={handleManualForceSync}
+                  onSaveData={handleManualForceSync}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  cloudSyncStatus={cloudSyncStatus}
                 />
               )}
 
@@ -3480,6 +3446,9 @@ export default function App() {
                   onAddAdvance={handleAddSalaryAdvance}
                   onUpdateAdvance={handleUpdateSalaryAdvance}
                   onDeleteAdvance={handleDeleteSalaryAdvance}
+                  onSaveData={handleManualForceSync}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  isSavingData={cloudSyncStatus === 'syncing'}
                 />
               )}
             </div>
@@ -3492,6 +3461,8 @@ export default function App() {
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
         onImportSuccess={(newEmployees) => {
+          markUnsaved();
+          employeesRef.current = newEmployees;
           setEmployees(newEmployees);
         }}
         onResetDefault={handleResetDefault}
@@ -3509,16 +3480,20 @@ export default function App() {
         onClose={() => setIsCompanyOpen(false)}
         config={config}
         onSave={(newCfg) => {
+          markUnsaved();
+          configRef.current = newCfg;
           setConfig(newCfg);
           if (newCfg.standardWorkDays && newCfg.standardWorkDays !== config.standardWorkDays) {
-            setEmployees((prev) =>
-              prev.map((emp) =>
+            setEmployees((prev) => {
+              const next = prev.map((emp) =>
                 recomputeEmployeePayroll({
                   ...emp,
                   standardWorkDays: newCfg.standardWorkDays,
                 })
-              )
-            );
+              );
+              employeesRef.current = next;
+              return next;
+            });
           }
         }}
       />
@@ -3528,10 +3503,15 @@ export default function App() {
         onClose={() => setIsZaloSettingsOpen(false)}
         config={config}
         onSave={(newZaloConfig) => {
-          setConfig((prev) => ({
-            ...prev,
-            zaloOA: newZaloConfig,
-          }));
+          markUnsaved();
+          setConfig((prev) => {
+            const next = {
+              ...prev,
+              zaloOA: newZaloConfig,
+            };
+            configRef.current = next;
+            return next;
+          });
         }}
       />
 
@@ -3563,34 +3543,51 @@ export default function App() {
           projects: newProjs,
           salaryAdvances: newAdvs,
         }) => {
+          const appliedCfg = newCfg || configRef.current;
+          const appliedEmps = newEmps && newEmps.length > 0 ? newEmps : employeesRef.current;
+          const appliedSeas = newSeas && newSeas.length > 0 ? newSeas : seasonalWorkersRef.current;
+          markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
+
           if (newCfg) {
+            configRef.current = newCfg;
             setConfig(newCfg);
             localStorage.setItem('payroll_company_config', JSON.stringify(newCfg));
           }
           if (newEmps && newEmps.length > 0) {
+            employeesRef.current = newEmps;
             setEmployees(newEmps);
             localStorage.setItem('payroll_employees', JSON.stringify(newEmps));
           }
           if (newSeas && newSeas.length > 0) {
+            seasonalWorkersRef.current = newSeas;
             setSeasonalWorkers(newSeas);
             localStorage.setItem('payroll_seasonal_workers', JSON.stringify(newSeas));
           }
           if (newTeams && newTeams.length > 0) {
+            teamWorkersRef.current = newTeams;
             setTeamWorkers(newTeams);
             localStorage.setItem('payroll_team_workers', JSON.stringify(newTeams));
           }
           if (newProjs && newProjs.length > 0) {
+            projectsRef.current = newProjs;
             setProjects(newProjs);
             localStorage.setItem('payroll_projects', JSON.stringify(newProjs));
           }
           if (newAdvs && newAdvs.length > 0) {
+            salaryAdvancesRef.current = newAdvs;
             setSalaryAdvances(newAdvs);
             localStorage.setItem('payroll_salary_advances', JSON.stringify(newAdvs));
           }
+          hasUnsavedChangesRef.current = false;
+          setHasUnsavedChanges(false);
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());
         }}
         onSyncSuccess={() => {
+          lastWriteCompletedAtRef.current = Date.now();
+          markSnapshotAsSaved(configRef.current, employeesRef.current, seasonalWorkersRef.current);
+          hasUnsavedChangesRef.current = false;
+          setHasUnsavedChanges(false);
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());
         }}
