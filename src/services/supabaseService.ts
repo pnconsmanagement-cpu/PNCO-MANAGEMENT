@@ -2479,20 +2479,53 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
       ? (worker.paymentMethod || 'BANK')
       : (worker.paymentMethod || existingWorkerData?.paymentMethod || 'BANK');
 
+    const isPlaceholderPayload =
+      Boolean((worker as any).__isUrlFallback) ||
+      (Number(worker.dailyRate || 0) === 0 && Number(existingWorkerData?.dailyRate || 0) > 0);
+
     const mergedWorker = materializeSeasonalMonthlyAttendance(
       {
-        ...(existingWorkerData || {}),
-        ...worker,
+        ...(isPlaceholderPayload
+          ? { ...worker, ...(existingWorkerData || {}) }
+          : { ...(existingWorkerData || {}), ...worker }),
         id: String(canonicalId),
         code: workerCode,
-        fullName: worker.fullName || existingWorkerData?.fullName || 'Công nhân',
-        trade: worker.trade || existingWorkerData?.trade || '',
+        fullName: existingWorkerData?.fullName || worker.fullName || 'Công nhân',
+        trade: existingWorkerData?.trade || worker.trade || '',
         project: worker.project || existingWorkerData?.project || '',
-        teamName: worker.teamName || existingWorkerData?.teamName || '',
+        teamName: existingWorkerData?.teamName || worker.teamName || '',
+        phone: isPlaceholderPayload
+          ? String(existingWorkerData?.phone || '')
+          : String(worker.phone || existingWorkerData?.phone || ''),
+        idCard: isPlaceholderPayload
+          ? String(existingWorkerData?.idCard || '')
+          : String(worker.idCard || existingWorkerData?.idCard || ''),
+        mealAllowance: isPlaceholderPayload
+          ? Number(existingWorkerData?.mealAllowance || 0)
+          : Number(worker.mealAllowance ?? existingWorkerData?.mealAllowance ?? 0),
+        travelSafetyAllowance: isPlaceholderPayload
+          ? Number(existingWorkerData?.travelSafetyAllowance || 0)
+          : Number(worker.travelSafetyAllowance ?? existingWorkerData?.travelSafetyAllowance ?? 0),
+        otherBonus: isPlaceholderPayload
+          ? Number(existingWorkerData?.otherBonus || 0)
+          : Number(worker.otherBonus ?? existingWorkerData?.otherBonus ?? 0),
+        advancePayment: isPlaceholderPayload
+          ? Number(existingWorkerData?.advancePayment || 0)
+          : Number(worker.advancePayment ?? existingWorkerData?.advancePayment ?? 0),
+        hasTaxCommitment:
+          existingWorkerData?.hasTaxCommitment ?? worker.hasTaxCommitment ?? true,
         bankAccount: effectiveBankAccount,
         bankName: effectiveBankName,
         paymentMethod: effectivePaymentMethod,
         dailyRate: effectiveDailyRate > 0 ? effectiveDailyRate : Number(worker.dailyRate || 0),
+        actualWorkDays:
+          worker.actualWorkDays !== undefined
+            ? Number(worker.actualWorkDays || 0)
+            : Number(existingWorkerData?.actualWorkDays || 0),
+        overtimeHours:
+          worker.overtimeHours !== undefined
+            ? Number(worker.overtimeHours || 0)
+            : Number(existingWorkerData?.overtimeHours || 0),
         sortOrder,
         monthlyAttendance: mergedMonthlyAttendance,
         periodRecords: mergedPeriodRecords,
@@ -2794,15 +2827,22 @@ export const syncSingleEmployeeToSupabase = async (
       cleanedExisting &&
       normalizeEmpName(cleanedExisting.fullName) === normalizeEmpName(cleanedLocal.fullName);
 
-    const mergedMonthly = samePerson
-      ? {
-          ...(cleanedExisting?.monthlyAttendance || {}),
-          ...(cleanedLocal.monthlyAttendance || {}),
-        }
-      : { ...(cleanedLocal.monthlyAttendance || {}) };
-    if (!cleanedLocal.monthlyAttendance?.['2026-11']) {
-      delete mergedMonthly['2026-11'];
-    }
+    const mergedMonthly: Record<string, any> = samePerson
+      ? { ...(cleanedExisting?.monthlyAttendance || {}) }
+      : {};
+    Object.entries(cleanedLocal.monthlyAttendance || {}).forEach(([mKey, localRec]: [string, any]) => {
+      if (!localRec) return;
+      const existingRec = mergedMonthly[mKey];
+      if (!existingRec) {
+        mergedMonthly[mKey] = localRec;
+        return;
+      }
+      const exTs = existingRec.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+      const locTs = localRec.lastSubmittedAt ? new Date(localRec.lastSubmittedAt).getTime() : 0;
+      if (locTs >= exTs || isGenuineUserEmployeeAttendance(localRec)) {
+        mergedMonthly[mKey] = localRec;
+      }
+    });
 
     const mergedEmployee: Employee = sanitizeEmployeeMonthlyAttendance({
       ...(samePerson ? cleanedExisting || {} : {}),

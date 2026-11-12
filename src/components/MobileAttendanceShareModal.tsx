@@ -182,13 +182,10 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
   };
 
   const handlePrintQr = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
     const workerTitle =
       shareMode === 'SPECIFIC' && activeWorker
         ? `${activeWorker.fullName} (${activeWorker.code}) - ${activeWorker.trade}`
-        : 'TẤT CẢ CÔNG NHÂN THỜI VỤ & KỸ THUẬT';
+        : 'TẤT CẢ NHÂN VIÊN & CÔNG NHÂN KỸ THUẬT';
 
     const html = `
       <!DOCTYPE html>
@@ -212,7 +209,7 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
         </head>
         <body>
           <div class="card">
-            <div class="header">${config.name || 'CÔNG TY TNHH TV TK XD PHÚC NGUYÊN'}</div>
+            <div class="header">${config.name || 'CÔNG TY TNHH XÂY DỰNG - CƠ ĐIỆN PHÚC NGUYÊN'}</div>
             <h1 class="title">BẢNG CHẤM CÔNG DI ĐỘNG</h1>
             <div class="subtitle">Tháng ${currentMonth < 10 ? '0' + currentMonth : currentMonth}/${currentYear}</div>
             <div class="badge">${workerTitle}</div>
@@ -222,29 +219,45 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
             </div>
 
             <div class="instruction">
-              <strong>HƯỚNG DẪN DÀNH CHO CÔNG NHÂN:</strong>
+              <strong>HƯỚNG DẪN CHẤM CÔNG &amp; SAO LƯU:</strong>
               <ol>
                 <li>Mở Camera điện thoại hoặc Zalo quét mã QR ở trên.</li>
-                <li>Chạm vào từng ngày để chấm công đi làm (1 công / nửa ca) và giờ làm thêm OT.</li>
-                <li>Bấm <strong>"Xác nhận & Lưu"</strong>, dữ liệu tự động gửi về máy tính quản lý.</li>
+                <li>Chạm vào từng ngày trên lịch để chọn công đi làm và giờ tăng ca (OT).</li>
+                <li>Nhấn nút <strong>"Lưu Data"</strong> để sao lưu lên Cloud và gửi ngay về hệ thống công ty.</li>
               </ol>
             </div>
 
             <div class="footer">
-              Hệ thống Quản lý Chấm công & Tiền lương PNCONS • Quét nhanh - Không cần cài app
+              Hệ thống Quản lý Chấm công &amp; Tiền lương PNCONS • Quét nhanh - Không cần cài app
             </div>
           </div>
-          <script>
-            window.onload = function() {
-              window.print();
-            }
-          </script>
         </body>
       </html>
     `;
 
-    printWindow.document.write(html);
-    printWindow.document.close();
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+        }, 1500);
+      }, 300);
+    }
   };
 
   const handleTestInsideApp = () => {
@@ -252,10 +265,6 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
       onClose();
       onOpenMobileView(shareMode === 'SPECIFIC' && activeWorker ? activeWorker.code : undefined);
     }
-  };
-
-  const handleOpenNewTab = () => {
-    window.open(shareUrl, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -293,12 +302,13 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
           <div className="flex items-start gap-3 p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 leading-relaxed">
             <Cloud className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-semibold text-blue-800">Cơ chế đồng bộ tự động 100%: </span>
-              Khi công nhân mở link và chấm công trên smartphone, dữ liệu sẽ được lưu tự động và đưa ngay về phần mềm qua{' '}
+              <span className="font-semibold text-blue-800">Chấm công bằng điện thoại &amp; Sao lưu Cloud: </span>
+              Khi nhân viên mở link trên smartphone, chọn ngày đi làm và nhấn nút{' '}
+              <strong className="text-emerald-700">&ldquo;Lưu Data&rdquo;</strong>, dữ liệu chấm công cá nhân được sao lưu trực tiếp lên{' '}
               <strong className="text-blue-900">
                 {isSupabaseConfigured() ? 'Supabase Cloud Realtime' : 'Bộ nhớ đồng bộ trực tuyến'}
-              </strong>
-              . Bạn có thể theo dõi số công và giờ tăng ca thay đổi ngay trên màn hình.
+              </strong>{' '}
+              và tự động cập nhật ngay vào Bản Chấm Công &amp; Bản Lương trên máy tính quản lý.
             </div>
           </div>
 

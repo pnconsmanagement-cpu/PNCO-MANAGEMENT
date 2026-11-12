@@ -4,7 +4,6 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { MetricCards } from './components/MetricCards';
 import { TabType, NavigationTabs } from './components/NavigationTabs';
-import { PayslipTab } from './components/PayslipTab';
 import { DepartmentSummaryTab } from './components/DepartmentSummaryTab';
 import { PayrollTableTab } from './components/PayrollTableTab';
 import { AttendanceTab } from './components/AttendanceTab';
@@ -40,6 +39,8 @@ import {
   syncProjectsToSupabase,
   syncSalaryAdvancesToSupabase,
   syncPayrollRecordsToSupabase,
+  syncSingleEmployeeToSupabase,
+  syncSingleSeasonalWorkerToSupabase,
   deleteBatchSeasonalWorkersFromSupabase,
   clearAllSeasonalWorkersFromSupabase,
   deleteEmployeeFromSupabase,
@@ -81,9 +82,11 @@ import {
   isLegacy19MockEmployeeList,
 } from './utils/payrollCalculator';
 import { ensureEmployeeContract } from './utils/contractHelper';
+import { updateWorkerMonthlyAttendance } from './utils/seasonalAttendanceHelper';
 import {
   fetchServerData,
   saveAllToServer,
+  saveAttendanceToServer,
   subscribeToSync,
   getLastSyncedTime as getServerLastSyncedTime,
 } from './services/backendSyncService';
@@ -2876,7 +2879,9 @@ export default function App() {
   };
 
   const handleAuditSelectEmployee = (_code: string) => {
-    setActiveTab('PAYSLIP');
+    setActiveTab('PERMANENT_EMPLOYEES');
+    setPermanentSubTab('PAYROLL');
+    setEmployeeSubTab('PERMANENT');
   };
 
   // Handlers for Projects (chỉ cập nhật trên giao diện, chờ nhấn "Lưu Data")
@@ -3359,25 +3364,228 @@ export default function App() {
         config={config}
         initialWorkerCode={activeMobileWorkerCode}
         isAdminPreview={isAdminPreview}
-        onSaveData={handleManualForceSync}
+        onSaveWorkerAttendance={async (updatedWorker, targetYear, targetMonth) => {
+          beginSyncTask(false);
+          try {
+            autoApplyUrlConfig();
+            if (!isSupabaseConfigured()) {
+              const srv = await fetchServerData(false);
+              const cfgAny = srv?.config as any;
+              if (cfgAny?.supabaseUrl && cfgAny?.supabaseAnonKey) {
+                setSupabaseConfig(cfgAny.supabaseUrl, cfgAny.supabaseAnonKey);
+              }
+            }
+
+            const nowTs = Date.now();
+            const mStr = String(targetMonth).padStart(2, '0');
+            const targetMonthKey = `${targetYear}-${mStr}`;
+            const targetPeriodCode = `${mStr}/${targetYear}`;
+            const curActiveM = activeMonthRef.current || configRef.current.month || realDateInfo.realMonth;
+            const curActiveY = activeYearRef.current || configRef.current.year || realDateInfo.realYear;
+            const curActiveMStr = String(curActiveM).padStart(2, '0');
+            const stdDays = configRef.current.standardWorkDays || 26;
+
+            const matchedPerm = employeesRef.current.find(
+              (e) =>
+                e.code === updatedWorker.code ||
+                String(e.id) === String(updatedWorker.id) ||
+                `PERM_${e.id}` === String(updatedWorker.id)
+            );
+
+            let cloudSaved = false;
+
+            if (matchedPerm) {
+              const incomingRec = updatedWorker.monthlyAttendance?.[targetMonthKey];
+              const mergedMonthly = {
+                ...(matchedPerm.monthlyAttendance || {}),
+                ...(incomingRec ? { [targetMonthKey]: incomingRec } : {}),
+              };
+              const empForTargetMonth = syncEmployeeForMonth(
+                {
+                  ...matchedPerm,
+                  monthlyAttendance: mergedMonthly,
+                  updatedAt: nowTs,
+                },
+                targetMonth,
+                targetYear,
+                stdDays
+              );
+              const empForActiveView = syncEmployeeForMonth(
+                {
+                  ...matchedPerm,
+                  monthlyAttendance: mergedMonthly,
+                  updatedAt: nowTs,
+                },
+                curActiveM,
+                curActiveY,
+                stdDays
+              );
+
+              const nextEmployees = employeesRef.current.map((item) =>
+                item.id === matchedPerm.id || item.code === matchedPerm.code
+                  ? empForActiveView
+                  : item
+              );
+              employeesRef.current = nextEmployees;
+              setEmployees(nextEmployees);
+              try {
+                localStorage.setItem('payroll_employees', JSON.stringify(nextEmployees));
+                localStorage.setItem(
+                  `payroll_month_${curActiveY}_${curActiveMStr}`,
+                  JSON.stringify(nextEmployees)
+                );
+              } catch {}
+
+              const [, sbRes] = await Promise.all([
+                saveAttendanceToServer({
+                  ...updatedWorker,
+                  id: matchedPerm.id,
+                  code: matchedPerm.code,
+                  actualWorkDays: empForTargetMonth.actualWorkDays,
+                  overtimeHours: empForTargetMonth.overtimeHours,
+                  monthlyAttendance: mergedMonthly,
+                }),
+                isSupabaseConfigured()
+                  ? syncSingleEmployeeToSupabase(empForTargetMonth, targetPeriodCode)
+                  : Promise.resolve({ success: false, message: '' }),
+              ]);
+              cloudSaved = Boolean(sbRes.success);
+            } else {
+              const matchedSea = seasonalWorkersRef.current.find(
+                (w) =>
+                  w.code === updatedWorker.code || String(w.id) === String(updatedWorker.id)
+              );
+              const incomingDays = updatedWorker.monthlyAttendance?.[targetMonthKey]?.days || {};
+              const authoritativeWorker = matchedSea
+                ? updateWorkerMonthlyAttendance(
+                    matchedSea,
+                    targetYear,
+                    targetMonth,
+                    incomingDays,
+                    isAdminPreview ? 'MANUAL_USER' : 'WORKER'
+                  )
+                : updatedWorker;
+
+              const workerWithStamp: SeasonalWorker = {
+                ...authoritativeWorker,
+                updatedAt: nowTs,
+              };
+              const workerForActiveView = syncSeasonalWorkerForMonth(
+                workerWithStamp,
+                curActiveM,
+                curActiveY
+              );
+
+              if (matchedSea) {
+                const nextSeasonal = seasonalWorkersRef.current.map((item) =>
+                  item.id === matchedSea.id || item.code === matchedSea.code
+                    ? workerForActiveView
+                    : item
+                );
+                seasonalWorkersRef.current = nextSeasonal;
+                setSeasonalWorkers(nextSeasonal);
+                try {
+                  localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeasonal));
+                } catch {}
+              } else if (!(updatedWorker as any).__isUrlFallback) {
+                const nextSeasonal = [...seasonalWorkersRef.current, workerForActiveView];
+                seasonalWorkersRef.current = nextSeasonal;
+                setSeasonalWorkers(nextSeasonal);
+                try {
+                  localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeasonal));
+                } catch {}
+              }
+
+              const [, sbRes] = await Promise.all([
+                saveAttendanceToServer(workerWithStamp),
+                isSupabaseConfigured()
+                  ? syncSingleSeasonalWorkerToSupabase(workerWithStamp, targetPeriodCode)
+                  : Promise.resolve({ success: false, message: '' }),
+              ]);
+              cloudSaved = Boolean(sbRes.success);
+            }
+
+            markSnapshotAsSaved(
+              configRef.current,
+              employeesRef.current,
+              seasonalWorkersRef.current,
+              salaryAdvancesRef.current
+            );
+            lastCloudPartsRef.current = {
+              ...lastCloudPartsRef.current,
+              emp: serializeEmployeesSnapshot(employeesRef.current),
+              sea: serializeSeasonalSnapshot(seasonalWorkersRef.current),
+            };
+            hasUnsavedChangesRef.current = false;
+            setHasUnsavedChanges(false);
+            const savedAt = new Date().toLocaleTimeString('vi-VN');
+            setLastSyncedText(getLastSyncedTime() || savedAt);
+            notifyCrossTab();
+            endSyncTask(cloudSaved || !isSupabaseConfigured() ? 'synced' : 'error');
+            return { cloudSaved, savedAt };
+          } catch (err) {
+            endSyncTask('error');
+            throw err;
+          }
+        }}
         onUpdateWorker={(updatedWorker) => {
-          const matchedPerm = employees.find(
-            (e) => e.code === updatedWorker.code || String(e.id) === String(updatedWorker.id)
+          if ((updatedWorker as any).__isUrlFallback) return;
+          const matchedPerm = employeesRef.current.find(
+            (e) =>
+              e.code === updatedWorker.code ||
+              String(e.id) === String(updatedWorker.id) ||
+              `PERM_${e.id}` === String(updatedWorker.id)
           );
           if (matchedPerm) {
-            handleUpdateEmployee({
-              ...matchedPerm,
-              actualWorkDays: updatedWorker.actualWorkDays,
-              overtimeHours: updatedWorker.overtimeHours,
-              selectedForAttendance:
-                (updatedWorker.actualWorkDays || 0) > 0 || (updatedWorker.overtimeHours || 0) > 0,
-              monthlyAttendance: updatedWorker.monthlyAttendance,
-              periodRecords: updatedWorker.periodRecords,
-              payrollCycleType: updatedWorker.payrollCycleType,
-              currentPeriodKey: updatedWorker.currentPeriodKey,
-            });
+            const curM = configRef.current.month || realDateInfo.realMonth;
+            const curY = configRef.current.year || realDateInfo.realYear;
+            const stdDays = configRef.current.standardWorkDays || 26;
+            const mergedMonthly = {
+              ...(matchedPerm.monthlyAttendance || {}),
+              ...(updatedWorker.monthlyAttendance || {}),
+            };
+            const syncedPerm = syncEmployeeForMonth(
+              {
+                ...matchedPerm,
+                monthlyAttendance: mergedMonthly,
+              },
+              curM,
+              curY,
+              stdDays
+            );
+            handleUpdateEmployee(syncedPerm);
           } else {
-            handleUpdateSeasonalWorker(updatedWorker);
+            const matchedSea = seasonalWorkersRef.current.find(
+              (w) => w.code === updatedWorker.code || String(w.id) === String(updatedWorker.id)
+            );
+            if (matchedSea) {
+              handleUpdateSeasonalWorker({
+                ...matchedSea,
+                ...updatedWorker,
+                id: matchedSea.id,
+                code: matchedSea.code,
+                dailyRate:
+                  Number(updatedWorker.dailyRate || 0) > 0
+                    ? updatedWorker.dailyRate
+                    : matchedSea.dailyRate,
+                bankAccount: updatedWorker.bankAccount || matchedSea.bankAccount,
+                bankName: updatedWorker.bankName || matchedSea.bankName,
+                mealAllowance: matchedSea.mealAllowance,
+                travelSafetyAllowance: matchedSea.travelSafetyAllowance,
+                otherBonus: matchedSea.otherBonus,
+                advancePayment: matchedSea.advancePayment,
+                periodRecords: {
+                  ...(matchedSea.periodRecords || {}),
+                  ...(updatedWorker.periodRecords || {}),
+                },
+                monthlyAttendance: {
+                  ...(matchedSea.monthlyAttendance || {}),
+                  ...(updatedWorker.monthlyAttendance || {}),
+                },
+              });
+            } else {
+              handleUpdateSeasonalWorker(updatedWorker);
+            }
           }
         }}
         onExitMobileView={() => {
@@ -4011,49 +4219,12 @@ export default function App() {
                 />
               )}
 
-              {/* Tab 5: Phiếu Lương */}
-              {activeTab === 'PAYSLIP' && (
-                <PayslipTab
-                  employees={syncedEmployees}
-                  config={config}
-                  onChangeMonthYear={handleChangeMonthYear}
-                  onUpdateEmployeeContact={(empId, updates) => {
-                    markUnsaved();
-                    setEmployees((prev) => {
-                      const next = prev.map((e) =>
-                        e.id === empId || e.code === empId
-                          ? {
-                              ...e,
-                              ...(updates.email !== undefined ? { email: updates.email } : {}),
-                              ...(updates.phone !== undefined ? { phone: updates.phone } : {}),
-                            }
-                          : e
-                      );
-                      employeesRef.current = next;
-                      return next;
-                    });
-                  }}
-                  onUpdateEmployeeEmail={(empId, newEmail) => {
-                    markUnsaved();
-                    setEmployees((prev) => {
-                      const next = prev.map((e) =>
-                        e.id === empId || e.code === empId ? { ...e, email: newEmail } : e
-                      );
-                      employeesRef.current = next;
-                      return next;
-                    });
-                  }}
-                  onOpenZaloSettings={() => setIsZaloSettingsOpen(true)}
-                  onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
-                />
-              )}
-
               {/* Tab: Tổng Hợp Theo Bộ Phận */}
               {activeTab === 'DEPARTMENT' && (
                 <DepartmentSummaryTab employees={syncedEmployees} />
               )}
 
-              {/* Tab 6: Kiểm Tra Dữ Liệu */}
+              {/* Tab 5: Kiểm Tra Dữ Liệu */}
               {activeTab === 'DATA_AUDIT' && (
                 <DataAuditTab
                   employees={syncedEmployees}

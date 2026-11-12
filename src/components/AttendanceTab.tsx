@@ -63,7 +63,7 @@ interface AttendanceTabProps {
   cloudSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error';
 }
 
-type DayStatusType = 'FULL' | 'HALF' | 'ABSENT' | 'LEAVE' | 'LATE' | 'NONE';
+type DayStatusType = 'FULL' | 'HALF' | 'ABSENT' | 'LEAVE' | 'LATE' | 'OT_ONLY' | 'NONE';
 
 interface DayMeta {
   day: number;
@@ -128,11 +128,10 @@ function calculateRowTotalsFromDays(daysMap: { [dayNumber: number]: DailyAttenda
 
   Object.values(daysMap || {}).forEach((d) => {
     if (!d) return;
-    const status = d.statusType;
+    const rawStatus = d.statusType;
     const units = Number(d.workUnits || 0);
     const ot = Number(d.otHours || 0);
-
-    totalOT += ot;
+    const status = rawStatus === 'ABSENT' && ot > 0 ? 'OT_ONLY' : rawStatus;
 
     if (status === 'LEAVE') {
       totalNP += 1;
@@ -141,8 +140,14 @@ function calculateRowTotalsFromDays(daysMap: { [dayNumber: number]: DailyAttenda
     } else if (status === 'LATE') {
       totalDM += 1;
       totalCong += units > 0 ? units : 1;
-    } else if (units > 0) {
-      totalCong += units;
+      totalOT += ot;
+    } else if (status === 'OT_ONLY') {
+      totalOT += ot;
+    } else {
+      if (units > 0) {
+        totalCong += units;
+      }
+      totalOT += ot;
     }
   });
 
@@ -565,7 +570,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     return {};
   };
 
-  // Thay đổi trạng thái ngày (Đủ công, Nửa công, Vắng mặt, Nghỉ phép, Đi muộn, Xóa trống)
+  // Thay đổi trạng thái ngày (Đủ công, Nửa công, Vắng mặt, Nghỉ phép, Đi muộn, Chỉ tăng ca, Xóa trống)
   const handleSelectDayStatus = (workerCode: string, day: number, dateStr: string, status: DayStatusType) => {
     const baseMap = getCurrentDaysMapForWorker(workerCode);
     const prev = baseMap[day];
@@ -575,12 +580,21 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     } else {
       const workUnits =
         status === 'FULL' || status === 'LATE' ? 1 : status === 'HALF' ? 0.5 : 0;
+      const otHours =
+        status === 'ABSENT' || status === 'LEAVE'
+          ? 0
+          : status === 'OT_ONLY'
+          ? Math.max(prev?.otHours || 0, 4)
+          : prev?.otHours || 0;
       baseMap[day] = {
         day,
         dateStr,
         workUnits,
         statusType: status,
-        otHours: prev?.otHours || 0,
+        otHours,
+        otMultiplier: prev?.otMultiplier || (status === 'OT_ONLY' ? 2.0 : 1.5),
+        location: prev?.location,
+        note: prev?.note,
         updatedAt: new Date().toISOString(),
       };
     }
@@ -592,17 +606,31 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     const baseMap = getCurrentDaysMapForWorker(workerCode);
     const prev = baseMap[day];
     const validOt = Math.max(0, Math.min(24, Number(otHours) || 0));
+    const dateObj = new Date(currentYear, currentMonth - 1, day, 12, 0, 0);
+    const isSunday = dateObj.getDay() === 0;
 
-    // Nếu ngày đó chưa được chấm công mà nhập OT -> mặc định là Đi làm đủ công (1.0)
-    const statusType = prev?.statusType || (validOt > 0 ? 'FULL' : undefined);
+    // Nếu ngày Chủ Nhật chưa chấm công mà nhập OT -> mặc định Chỉ tăng ca Chủ Nhật (OT_ONLY, hệ số 2.0)
+    // Nếu ngày thường chưa chấm công mà nhập OT -> mặc định Đủ công (1.0)
+    const statusType =
+      prev?.statusType && prev.statusType !== 'ABSENT' && prev.statusType !== 'LEAVE'
+        ? prev.statusType
+        : validOt > 0
+        ? isSunday
+          ? 'OT_ONLY'
+          : 'FULL'
+        : undefined;
     const workUnits =
-      prev?.workUnits !== undefined
+      statusType === 'OT_ONLY'
+        ? 0
+        : prev?.workUnits !== undefined && prev?.statusType !== 'ABSENT' && prev?.statusType !== 'LEAVE'
         ? prev.workUnits
-        : statusType === 'FULL'
+        : statusType === 'FULL' || statusType === 'LATE'
         ? 1
+        : statusType === 'HALF'
+        ? 0.5
         : 0;
 
-    if (!statusType && validOt === 0) {
+    if ((!statusType || statusType === 'OT_ONLY') && validOt === 0 && workUnits === 0) {
       delete baseMap[day];
     } else {
       baseMap[day] = {
@@ -611,6 +639,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         workUnits,
         statusType,
         otHours: validOt,
+        otMultiplier: prev?.otMultiplier || (isSunday ? 2.0 : 1.5),
+        location: prev?.location,
+        note: prev?.note,
         updatedAt: new Date().toISOString(),
       };
     }
@@ -1163,9 +1194,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                       {/* Các ô ngày 1 -> 30/31 (Icon nhỏ gọn giống mẫu Timeline) */}
                       {daysInMonthMeta.map((dm) => {
                         const dRec = worker.daysMap[dm.day];
+                        const rawOt = Number(dRec?.otHours || 0);
                         const status: DayStatusType = dRec
                           ? dRec.statusType === 'LEAVE'
                             ? 'LEAVE'
+                            : dRec.statusType === 'OT_ONLY' || (dRec.statusType === 'ABSENT' && rawOt > 0)
+                            ? 'OT_ONLY'
                             : dRec.statusType === 'ABSENT'
                             ? 'ABSENT'
                             : dRec.statusType === 'LATE'
@@ -1174,10 +1208,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                             ? 'FULL'
                             : dRec.workUnits === 0.5
                             ? 'HALF'
+                            : rawOt > 0
+                            ? 'OT_ONLY'
                             : 'NONE'
                           : 'NONE';
 
-                        const otHours = Number(dRec?.otHours || 0);
+                        const otHours = status === 'ABSENT' || status === 'LEAVE' ? 0 : rawOt;
                         const isSelectedCell =
                           editingCell?.workerCode === worker.code &&
                           editingCell?.day === dm.day;
@@ -1205,6 +1241,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                                   ? '1.0 công'
                                   : status === 'HALF'
                                   ? '0.5 công'
+                                  : status === 'OT_ONLY'
+                                  ? 'Chỉ tăng ca (0 công chính)'
                                   : status === 'ABSENT'
                                   ? 'Vắng mặt (VM)'
                                   : status === 'LEAVE'
@@ -1220,6 +1258,8 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                               } ${
                                 status === 'FULL' || status === 'HALF'
                                   ? 'bg-[#4caf50] text-white shadow-2xs'
+                                  : status === 'OT_ONLY'
+                                  ? 'bg-orange-500 text-white shadow-2xs'
                                   : status === 'ABSENT'
                                   ? 'bg-[#ef5350] text-white shadow-2xs'
                                   : status === 'LEAVE'
@@ -1237,6 +1277,11 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                               {status === 'HALF' && (
                                 <span className="text-[11px] font-extrabold leading-none">
                                   ½
+                                </span>
+                              )}
+                              {status === 'OT_ONLY' && (
+                                <span className="text-[9px] font-black leading-none">
+                                  TC
                                 </span>
                               )}
                               {status === 'ABSENT' && (
@@ -1457,12 +1502,31 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                       editingCell.workerCode,
                       editingCell.day,
                       editingCell.dateStr,
+                      'OT_ONLY'
+                    )
+                  }
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    activeEditingDayDetail?.statusType === 'OT_ONLY'
+                      ? 'bg-orange-500 text-white border-orange-500 shadow-xs'
+                      : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'
+                  }`}
+                >
+                  <span>Chỉ TC (CN)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSelectDayStatus(
+                      editingCell.workerCode,
+                      editingCell.day,
+                      editingCell.dateStr,
                       'NONE'
                     )
                   }
-                  className="py-2 px-2 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition"
+                  className="col-span-3 py-1.5 px-2 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition"
                 >
-                  <span>Xóa trống (-)</span>
+                  <span>Xóa trống ngày này (-)</span>
                 </button>
               </div>
             </div>

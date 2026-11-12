@@ -288,35 +288,81 @@ app.post('/api/attendance/mark', (req, res) => {
     );
 
     if (empIdx >= 0) {
-      const mergedMonthly = mergeMonthlyAttendance(employees[empIdx].monthlyAttendance, worker.monthlyAttendance);
+      const existingEmp = employees[empIdx];
+      const mergedMonthly = mergeMonthlyAttendance(existingEmp.monthlyAttendance, worker.monthlyAttendance);
       employees[empIdx] = {
-        ...employees[empIdx],
-        actualWorkDays: worker.actualWorkDays !== undefined ? worker.actualWorkDays : employees[empIdx].actualWorkDays,
-        overtimeHours: worker.overtimeHours !== undefined ? worker.overtimeHours : employees[empIdx].overtimeHours,
-        periodRecords: {
-          ...(employees[empIdx].periodRecords || {}),
-          ...(worker.periodRecords || {}),
-        },
+        ...existingEmp,
+        actualWorkDays: worker.actualWorkDays !== undefined ? worker.actualWorkDays : existingEmp.actualWorkDays,
+        overtimeHours: worker.overtimeHours !== undefined ? worker.overtimeHours : existingEmp.overtimeHours,
+        selectedForAttendance:
+          (Number(worker.actualWorkDays ?? existingEmp.actualWorkDays ?? 0) > 0) ||
+          (Number(worker.overtimeHours ?? existingEmp.overtimeHours ?? 0) > 0),
         monthlyAttendance: mergedMonthly,
+        updatedAt: Date.now(),
       };
     }
 
     if (seaIdx >= 0) {
-      const mergedMonthly = mergeMonthlyAttendance(workers[seaIdx].monthlyAttendance, worker.monthlyAttendance);
+      const existingSea = workers[seaIdx];
+      const mergedMonthly = mergeMonthlyAttendance(existingSea.monthlyAttendance, worker.monthlyAttendance);
       const hasBankEdit = Boolean(worker.bankUpdatedAt);
+      const isPlaceholderPayload = Boolean(worker.__isUrlFallback) || (Number(worker.dailyRate || 0) === 0 && Number(existingSea.dailyRate || 0) > 0);
+      const effectiveRate = Number(worker.dailyRate || 0) > 0 ? Number(worker.dailyRate) : Number(existingSea.dailyRate || 0);
+      const actDays = worker.actualWorkDays !== undefined ? Number(worker.actualWorkDays || 0) : Number(existingSea.actualWorkDays || 0);
+      const otHrs = worker.overtimeHours !== undefined ? Number(worker.overtimeHours || 0) : Number(existingSea.overtimeHours || 0);
+      const mealAll = isPlaceholderPayload ? Number(existingSea.mealAllowance || 0) : Number(worker.mealAllowance ?? existingSea.mealAllowance ?? 0);
+      const travelAll = isPlaceholderPayload ? Number(existingSea.travelSafetyAllowance || 0) : Number(worker.travelSafetyAllowance ?? existingSea.travelSafetyAllowance ?? 0);
+      const bonusAll = isPlaceholderPayload ? Number(existingSea.otherBonus || 0) : Number(worker.otherBonus ?? existingSea.otherBonus ?? 0);
+      const advPay = isPlaceholderPayload ? Number(existingSea.advancePayment || 0) : Number(worker.advancePayment ?? existingSea.advancePayment ?? 0);
+      const hasPart = actDays > 0 || otHrs > 0;
+      const salDays = hasPart ? Math.round(effectiveRate * actDays) : 0;
+      const otPay = hasPart
+        ? (Number(worker.overtimePay || 0) > 0 && Number(worker.dailyRate || 0) > 0
+            ? Number(worker.overtimePay)
+            : Math.round((effectiveRate / 8) * otHrs * 1.5))
+        : 0;
+      const totInc = hasPart ? salDays + otPay + mealAll + travelAll + bonusAll : 0;
+      const hasTaxCmt = existingSea.hasTaxCommitment ?? worker.hasTaxCommitment ?? true;
+      const tax = hasPart && !hasTaxCmt && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+      const totDed = tax + advPay;
+
       workers[seaIdx] = {
-        ...workers[seaIdx],
-        ...worker,
-        bankAccount: hasBankEdit ? (worker.bankAccount || '') : (worker.bankAccount || workers[seaIdx].bankAccount || ''),
-        bankName: hasBankEdit ? (worker.bankName || '') : (worker.bankName || workers[seaIdx].bankName || 'Vietcombank'),
-        paymentMethod: hasBankEdit ? (worker.paymentMethod || 'BANK') : (worker.paymentMethod || workers[seaIdx].paymentMethod || 'BANK'),
+        ...existingSea,
+        ...(isPlaceholderPayload ? {} : worker),
+        id: existingSea.id,
+        code: existingSea.code,
+        fullName: existingSea.fullName || worker.fullName,
+        trade: existingSea.trade || worker.trade,
+        project: worker.project || existingSea.project,
+        teamName: existingSea.teamName || worker.teamName,
+        phone: existingSea.phone || worker.phone || '',
+        idCard: existingSea.idCard || worker.idCard || '',
+        dailyRate: effectiveRate,
+        actualWorkDays: actDays,
+        overtimeHours: otHrs,
+        salaryByDays: salDays,
+        overtimePay: otPay,
+        mealAllowance: mealAll,
+        travelSafetyAllowance: travelAll,
+        otherBonus: bonusAll,
+        totalIncome: totInc,
+        hasTaxCommitment: hasTaxCmt,
+        personalIncomeTax: tax,
+        advancePayment: advPay,
+        totalDeductions: totDed,
+        netSalary: hasPart ? Math.max(0, totInc - totDed) : 0,
+        selectedForAttendance: hasPart,
+        bankAccount: hasBankEdit ? (worker.bankAccount || '') : (existingSea.bankAccount || worker.bankAccount || ''),
+        bankName: hasBankEdit ? (worker.bankName || '') : (existingSea.bankName || worker.bankName || 'Vietcombank'),
+        paymentMethod: hasBankEdit ? (worker.paymentMethod || 'BANK') : (existingSea.paymentMethod || worker.paymentMethod || 'BANK'),
         periodRecords: {
-          ...(workers[seaIdx].periodRecords || {}),
+          ...(existingSea.periodRecords || {}),
           ...(worker.periodRecords || {}),
         },
         monthlyAttendance: mergedMonthly,
+        updatedAt: Date.now(),
       };
-    } else if (empIdx < 0) {
+    } else if (empIdx < 0 && !worker.__isUrlFallback) {
       workers.push(worker);
     }
   } else if (workerCode && days) {
@@ -325,8 +371,17 @@ app.post('/api/attendance/mark', (req, res) => {
     let totalWorkDays = 0;
     let totalOtHours = 0;
     Object.values(days).forEach((d: any) => {
-      totalWorkDays += Number(d.workUnits || 0);
-      totalOtHours += Number(d.otHours || 0);
+      if (!d) return;
+      const st = d.statusType;
+      const units = Number(d.workUnits || 0);
+      if (st === 'LATE') {
+        totalWorkDays += units > 0 ? units : 1;
+      } else if (st !== 'ABSENT' && st !== 'LEAVE' && units > 0) {
+        totalWorkDays += units;
+      }
+      if (st !== 'ABSENT' && st !== 'LEAVE') {
+        totalOtHours += Number(d.otHours || 0);
+      }
     });
     const roundedDays = Math.round(totalWorkDays * 10) / 10;
 
@@ -348,6 +403,7 @@ app.post('/api/attendance/mark', (req, res) => {
       };
       targetWorker.actualWorkDays = roundedDays;
       targetWorker.overtimeHours = totalOtHours;
+      targetWorker.updatedAt = Date.now();
       workers[seaIdx] = targetWorker;
     }
 
@@ -369,6 +425,7 @@ app.post('/api/attendance/mark', (req, res) => {
       };
       targetEmp.actualWorkDays = roundedDays;
       targetEmp.overtimeHours = totalOtHours;
+      targetEmp.updatedAt = Date.now();
       employees[empIdx] = targetEmp;
     }
   }

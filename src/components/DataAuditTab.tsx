@@ -142,7 +142,7 @@ export const DataAuditTab: React.FC<DataAuditTabProps> = ({
                 onClick={() => onSelectEmployeeForPayslip(item.employee.code)}
                 className="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-50 rounded text-slate-700 font-medium shrink-0 flex items-center gap-1 cursor-pointer"
               >
-                <span>Xem phiếu</span>
+                <span>Xem bảng lương</span>
                 <ArrowRight className="w-3 h-3" />
               </button>
             </div>

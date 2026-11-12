@@ -62,14 +62,17 @@ export function calculateDaysSummary(daysMap?: { [dayNumber: number]: DailyAtten
   let totalDM = 0;
   let totalNP = 0;
   let totalOT = 0;
+  let totalWeightedOT = 0;
 
   Object.values(daysMap || {}).forEach((d) => {
     if (!d) return;
-    const status = d.statusType;
+    const rawStatus = d.statusType;
     const units = Number(d.workUnits || 0);
     const ot = Number(d.otHours || 0);
+    const mult = Number(d.otMultiplier || 1.5) > 0 ? Number(d.otMultiplier || 1.5) : 1.5;
 
-    totalOT += ot;
+    // Nếu trước đó chấm nhầm Vắng mặt nhưng có nhập giờ OT > 0 -> coi là ngày Chỉ tăng ca (OT_ONLY), không tính Vắng mặt
+    const status = rawStatus === 'ABSENT' && ot > 0 ? 'OT_ONLY' : rawStatus;
 
     if (status === 'LEAVE') {
       totalNP += 1;
@@ -78,8 +81,17 @@ export function calculateDaysSummary(daysMap?: { [dayNumber: number]: DailyAtten
     } else if (status === 'LATE') {
       totalDM += 1;
       totalCong += units > 0 ? units : 1;
-    } else if (units > 0) {
-      totalCong += units;
+      totalOT += ot;
+      totalWeightedOT += ot * mult;
+    } else if (status === 'OT_ONLY') {
+      totalOT += ot;
+      totalWeightedOT += ot * mult;
+    } else {
+      if (units > 0) {
+        totalCong += units;
+      }
+      totalOT += ot;
+      totalWeightedOT += ot * mult;
     }
   });
 
@@ -89,6 +101,7 @@ export function calculateDaysSummary(daysMap?: { [dayNumber: number]: DailyAtten
     totalDM,
     totalNP,
     totalOT: Math.round(totalOT * 10) / 10,
+    totalWeightedOT: Math.round(totalWeightedOT * 100) / 100,
   };
 }
 
@@ -608,7 +621,7 @@ export function syncEmployeeForMonth(
     }
 
     const summary = calculateDaysSummary(daysMap);
-    return recomputeEmployeePayroll({
+    const baseSynced = recomputeEmployeePayroll({
       ...withHistory,
       standardWorkDays: withHistory.standardWorkDays || standardWorkDays,
       actualWorkDays: summary.totalCong,
@@ -626,6 +639,28 @@ export function syncEmployeeForMonth(
         },
       },
     });
+
+    // Nếu nhân viên có giờ tăng ca với hệ số x2.0 (Chủ nhật) / x3.0 (Ngày lễ), tính đúng tiền tăng ca theo hệ số
+    if (baseSynced.selectedForAttendance && summary.totalWeightedOT > 0) {
+      const stdDays = baseSynced.standardWorkDays || standardWorkDays || 26;
+      const effDaily =
+        baseSynced.salaryType === 'DAILY'
+          ? (baseSynced.dailyRate || baseSynced.baseSalary || 0)
+          : ((baseSynced.baseSalary || 0) / stdDays);
+      const weightedOtPay = Math.round((effDaily / 8) * summary.totalWeightedOT);
+      if (weightedOtPay !== baseSynced.overtimePay) {
+        const diff = weightedOtPay - (baseSynced.overtimePay || 0);
+        const nextTotalIncome = (baseSynced.totalIncome || 0) + diff;
+        const nextNetSalary = Math.max(0, nextTotalIncome - (baseSynced.totalDeductions || 0));
+        return {
+          ...baseSynced,
+          overtimePay: weightedOtPay,
+          totalIncome: nextTotalIncome,
+          netSalary: nextNetSalary,
+        };
+      }
+    }
+    return baseSynced;
   }
 
   // Nếu tháng đang xem chưa có bản ghi chấm công trong monthlyAttendance -> mặc định 0 công, Chưa chấm công!

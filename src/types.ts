@@ -128,8 +128,8 @@ export interface SeasonalWorker {
 export interface DailyAttendanceDetail {
   day: number; // 1 -> 31
   dateStr: string; // '01/09/2026'
-  workUnits: number; // 1 = cả ngày, 0.5 = nửa ngày, 0 = nghỉ
-  statusType?: 'FULL' | 'HALF' | 'ABSENT' | 'LATE' | 'LEAVE'; // Đủ công, Nửa công, Vắng mặt, Đi muộn, Nghỉ phép
+  workUnits: number; // 1 = cả ngày, 0.5 = nửa ngày, 0 = nghỉ / chỉ tăng ca
+  statusType?: 'FULL' | 'HALF' | 'ABSENT' | 'LATE' | 'LEAVE' | 'OT_ONLY'; // Đủ công, Nửa công, Vắng mặt, Đi muộn, Nghỉ phép, Chỉ tăng ca
   otHours: number; // số giờ tăng ca (0, 1, 2, 3...)
   otMultiplier?: number; // Hệ số tăng ca (1.5, 2.0, 3.0)
   location?: string; // Vị trí làm việc (vd: Công trình chính, Khu vực hoàn thiện...)
@@ -146,7 +146,7 @@ export interface MonthlyAttendanceRecord {
   totalOtHours: number;
   days: { [dayNumber: number]: DailyAttendanceDetail };
   lastSubmittedAt?: string;
-  submittedBy?: string; // 'WORKER' | 'FOREMAN' | 'ADMIN'
+  submittedBy?: 'WORKER' | 'FOREMAN' | 'ADMIN' | 'MANUAL_USER' | string;
 }
 
 export type SeasonalCycleType = '1_WEEK' | '2_WEEKS' | '1_MONTH' | 'TEAM';

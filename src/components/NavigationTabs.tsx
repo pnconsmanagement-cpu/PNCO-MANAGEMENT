@@ -61,8 +61,7 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
     { id: 'SEASONAL_WORKERS', label: '2. NHÂN VIÊN THỜI VỤ', icon: HardHat, badge: seasonalCount, badgeColor: 'bg-amber-500 text-slate-950 font-black' },
     { id: 'PROJECTS', label: '3. DỰ ÁN CÔNG TRÌNH', icon: Building, badge: projectCount },
     { id: 'FINANCIAL_REPORT', label: '4. BÁO CÁO TÀI CHÍNH', icon: TrendingUp },
-    { id: 'PAYSLIP', label: '5. PHIẾU LƯƠNG', icon: FileText },
-    { id: 'DATA_AUDIT', label: '6. KIỂM TRA DỮ LIỆU', icon: ShieldAlert, badge: auditIssuesCount },
+    { id: 'DATA_AUDIT', label: '5. KIỂM TRA DỮ LIỆU', icon: ShieldAlert, badge: auditIssuesCount },
   ];
 
   return (

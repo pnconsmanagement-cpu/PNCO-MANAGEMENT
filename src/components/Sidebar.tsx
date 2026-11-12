@@ -151,12 +151,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: PieChart,
     },
     {
-      id: 'PAYSLIP',
-      label: '9. Phiếu Lương In/Gửi',
-      sublabel: 'Mẫu 02-LĐTL & Zalo',
-      icon: FileText,
-    },
-    {
       id: 'DEPARTMENT',
       label: 'Tổng Hợp Bộ Phận',
       sublabel: 'Cơ cấu chi phí nội bộ',
@@ -501,14 +495,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               icon: PieChart,
             },
             {
-              id: 'PAYSLIP' as TabType,
-              label: '5. Phiếu Lương In/Gửi',
-              sublabel: 'Mẫu 02-LĐTL & Zalo',
-              icon: FileText,
-            },
-            {
               id: 'DATA_AUDIT' as TabType,
-              label: '6. Kiểm Tra Dữ Liệu',
+              label: '5. Kiểm Tra Dữ Liệu',
               sublabel: 'Rà soát tài khoản & lương',
               icon: ShieldAlert,
               badge: auditIssuesCount,

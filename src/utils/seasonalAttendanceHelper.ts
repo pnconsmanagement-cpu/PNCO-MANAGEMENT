@@ -189,7 +189,7 @@ export function updateWorkerMonthlyAttendance(
   year: number,
   month: number,
   days: { [dayNumber: number]: DailyAttendanceDetail },
-  submittedBy: 'WORKER' | 'FOREMAN' | 'ADMIN' = 'WORKER'
+  submittedBy: 'WORKER' | 'FOREMAN' | 'ADMIN' | 'MANUAL_USER' = 'WORKER'
 ): SeasonalWorker {
   const mStr = String(month).padStart(2, '0');
   const monthKey = `${year}-${mStr}`;
@@ -197,6 +197,7 @@ export function updateWorkerMonthlyAttendance(
   const cleanDays: { [dayNumber: number]: DailyAttendanceDetail } = {};
   let totalWorkDays = 0;
   let totalOtHours = 0;
+  let totalWeightedOtHours = 0;
 
   Object.entries(days || {}).forEach(([k, d]) => {
     const dayNum = Number(k);
@@ -205,23 +206,49 @@ export function updateWorkerMonthlyAttendance(
       Number(d.workUnits || 0) === 0 &&
       Number(d.otHours || 0) === 0 &&
       (!d.statusType ||
+        d.statusType === 'OT_ONLY' ||
         (d.statusType === 'ABSENT' &&
           (d.note === 'Nghỉ ca' || d.note === 'Nghỉ Chủ Nhật' || d.note === 'Chưa chấm công')));
     if (isFakeDefault) return;
 
-    cleanDays[dayNum] = d;
     const st = d.statusType;
-    const units = Number(d.workUnits || 0);
-    if (st === 'LATE') {
-      totalWorkDays += units > 0 ? units : 1;
-    } else if (st !== 'ABSENT' && st !== 'LEAVE' && units > 0) {
-      totalWorkDays += units;
-    }
-    totalOtHours += Number(d.otHours || 0);
+    const rawUnits = Number(d.workUnits || 0);
+    const rawOt = Number(d.otHours || 0);
+    const mult = Number(d.otMultiplier || 1.5) > 0 ? Number(d.otMultiplier || 1.5) : 1.5;
+
+    // Nếu là Chủ Nhật có giờ tăng ca mà trước đó bị chọn nhầm ABSENT -> chuẩn hóa sang OT_ONLY (0 công chính, giữ giờ tăng ca)
+    const dateObj = new Date(year, month - 1, dayNum, 12, 0, 0);
+    const isSunday = dateObj.getDay() === 0;
+    const normalizedStatus =
+      st === 'ABSENT' && isSunday && rawOt > 0 ? 'OT_ONLY' : st;
+
+    const effectiveOt =
+      normalizedStatus === 'ABSENT' || normalizedStatus === 'LEAVE' ? 0 : rawOt;
+    const effectiveUnits =
+      normalizedStatus === 'LATE'
+        ? rawUnits > 0
+          ? rawUnits
+          : 1
+        : normalizedStatus === 'ABSENT' || normalizedStatus === 'LEAVE' || normalizedStatus === 'OT_ONLY'
+        ? 0
+        : rawUnits;
+
+    cleanDays[dayNum] = {
+      ...d,
+      statusType: normalizedStatus,
+      workUnits: effectiveUnits,
+      otHours: effectiveOt,
+      otMultiplier: mult,
+    };
+
+    totalWorkDays += effectiveUnits;
+    totalOtHours += effectiveOt;
+    totalWeightedOtHours += effectiveOt * mult;
   });
 
   // Làm tròn công đến 1 chữ số thập phân (vd: 24.5)
   totalWorkDays = Math.round(totalWorkDays * 10) / 10;
+  totalOtHours = Math.round(totalOtHours * 10) / 10;
   const isMonthParticipating = totalWorkDays > 0 || totalOtHours > 0;
 
   const record: MonthlyAttendanceRecord = {
@@ -252,6 +279,7 @@ export function updateWorkerMonthlyAttendance(
   allPeriods.forEach((period) => {
     let pWorkDays = 0;
     let pOtHours = 0;
+    let pWeightedOtHours = 0;
 
     const timesheet: WeeklyDayAttendance[] = period.dates.map((dateStr) => {
       const parts = dateStr.split('/');
@@ -259,13 +287,21 @@ export function updateWorkerMonthlyAttendance(
       const itemMonth = parts.length > 1 ? parseInt(parts[1], 10) : month;
       const { dayOfWeek, dayName, isSunday } = getDayOfWeekInfo(dateStr, year, month);
       const d = itemMonth === month ? cleanDays[dayNum] : undefined;
+      const st = d?.statusType;
       const workUnits =
-        d && d.statusType !== 'ABSENT' && d.statusType !== 'LEAVE'
-          ? Number(d.workUnits || 0)
+        d && st !== 'ABSENT' && st !== 'LEAVE' && st !== 'OT_ONLY'
+          ? st === 'LATE'
+            ? Number(d.workUnits || 0) > 0
+              ? Number(d.workUnits)
+              : 1
+            : Number(d.workUnits || 0)
           : 0;
-      const otHours = d ? Number(d.otHours || 0) : 0;
+      const otHours =
+        d && st !== 'ABSENT' && st !== 'LEAVE' ? Number(d.otHours || 0) : 0;
+      const otMult = d && Number(d.otMultiplier || 1.5) > 0 ? Number(d.otMultiplier || 1.5) : 1.5;
       pWorkDays += workUnits;
       pOtHours += otHours;
+      pWeightedOtHours += otHours * otMult;
       const shiftType = d?.shiftType || 'DAY';
       const note =
         d?.note ||
@@ -273,6 +309,10 @@ export function updateWorkerMonthlyAttendance(
           ? isSunday
             ? 'Làm ca Chủ Nhật'
             : 'Thi công tại công trường'
+          : otHours > 0
+          ? isSunday
+            ? 'Tăng ca Chủ Nhật'
+            : 'Tăng ca ngoài giờ'
           : isSunday
           ? 'Nghỉ Chủ Nhật'
           : 'Nghỉ ca');
@@ -289,11 +329,14 @@ export function updateWorkerMonthlyAttendance(
     });
 
     const roundedPeriodDays = Math.round(pWorkDays * 10) / 10;
-    const isPeriodRecorded = roundedPeriodDays > 0 || pOtHours > 0;
+    const roundedPeriodOt = Math.round(pOtHours * 10) / 10;
+    const isPeriodRecorded = roundedPeriodDays > 0 || roundedPeriodOt > 0;
     const periodDailyRate = getUnifiedWorkerDailyRate(worker);
     const salaryByDays = isPeriodRecorded ? Math.round(periodDailyRate * roundedPeriodDays) : 0;
     const hourlyRate = periodDailyRate / 8;
-    const overtimePay = isPeriodRecorded ? Math.round(hourlyRate * pOtHours * 1.5) : 0;
+    const overtimePay = isPeriodRecorded
+      ? Math.round(hourlyRate * (pWeightedOtHours > 0 ? pWeightedOtHours : roundedPeriodOt * 1.5))
+      : 0;
     const mealAllowance = isPeriodRecorded ? Math.max(0, worker.mealAllowance || 0) : 0;
     const travelSafetyAllowance = isPeriodRecorded ? Math.max(0, worker.travelSafetyAllowance || 0) : 0;
     const otherBonus = isPeriodRecorded ? Math.max(0, worker.otherBonus || 0) : 0;
@@ -316,7 +359,7 @@ export function updateWorkerMonthlyAttendance(
       dailyRate: periodDailyRate,
       actualWorkDays: roundedPeriodDays,
       salaryByDays,
-      overtimeHours: pOtHours,
+      overtimeHours: roundedPeriodOt,
       overtimePay,
       mealAllowance,
       travelSafetyAllowance,
@@ -337,7 +380,7 @@ export function updateWorkerMonthlyAttendance(
   const unifiedDailyRate = getUnifiedWorkerDailyRate(worker);
 
   // Cập nhật công nhân và tính toán lại lương theo Thông tư 111
-  const updatedWorker = recomputeSeasonalWorkerPayroll({
+  const baseRecomputed = recomputeSeasonalWorkerPayroll({
     ...worker,
     dailyRate: unifiedDailyRate,
     actualWorkDays: totalWorkDays,
@@ -349,6 +392,33 @@ export function updateWorkerMonthlyAttendance(
     attendanceYear: year,
   });
 
+  // Nếu có giờ tăng ca với hệ số x2.0 (Chủ nhật) / x3.0 (Ngày lễ), cập nhật chính xác tiền tăng ca & thực lĩnh
+  let updatedWorker = baseRecomputed;
+  if (isMonthParticipating && totalWeightedOtHours > 0 && unifiedDailyRate > 0) {
+    const weightedOtPay = Math.round((unifiedDailyRate / 8) * totalWeightedOtHours);
+    if (weightedOtPay !== baseRecomputed.overtimePay) {
+      const nextTotalIncome =
+        (baseRecomputed.salaryByDays || 0) +
+        weightedOtPay +
+        Math.max(0, baseRecomputed.mealAllowance || 0) +
+        Math.max(0, baseRecomputed.travelSafetyAllowance || 0) +
+        Math.max(0, baseRecomputed.otherBonus || 0);
+      const nextTax =
+        !baseRecomputed.hasTaxCommitment && nextTotalIncome >= 2000000
+          ? Math.round(nextTotalIncome * 0.1)
+          : 0;
+      const nextDed = nextTax + Math.max(0, baseRecomputed.advancePayment || 0);
+      updatedWorker = {
+        ...baseRecomputed,
+        overtimePay: weightedOtPay,
+        totalIncome: nextTotalIncome,
+        personalIncomeTax: nextTax,
+        totalDeductions: nextDed,
+        netSalary: Math.max(0, nextTotalIncome - nextDed),
+      };
+    }
+  }
+
   // Nếu có weeklyTimesheet đang mở, đồng bộ lại các ngày trong tuần tương ứng (bao gồm cả khi ngày đó đã bị xóa)
   if (updatedWorker.weeklyTimesheet && updatedWorker.weeklyTimesheet.length > 0) {
     const updatedTimesheet: WeeklyDayAttendance[] = updatedWorker.weeklyTimesheet.map((dayItem) => {
@@ -359,10 +429,18 @@ export function updateWorkerMonthlyAttendance(
         if (itemMonth === month && !isNaN(dayNum)) {
           const d = cleanDays[dayNum];
           if (d) {
+            const st = d.statusType;
             return {
               ...dayItem,
-              workUnits: d.statusType !== 'ABSENT' && d.statusType !== 'LEAVE' ? d.workUnits : 0,
-              otHours: d.otHours,
+              workUnits:
+                st !== 'ABSENT' && st !== 'LEAVE' && st !== 'OT_ONLY'
+                  ? st === 'LATE'
+                    ? d.workUnits > 0
+                      ? d.workUnits
+                      : 1
+                    : d.workUnits
+                  : 0,
+              otHours: st !== 'ABSENT' && st !== 'LEAVE' ? d.otHours : 0,
               note: d.note,
               shiftType: d.shiftType,
             };
@@ -530,10 +608,10 @@ Dự án: ${worker.project || 'Công trình PNCONS'}
 Công ty gửi đường link Bảng chấm công trên điện thoại tháng ${mStr}/${year}:
 👉 ${shareUrl}
 
-* Hướng dẫn:
+* Hướng dẫn chấm công & sao lưu:
 1. Nhấp vào link trên điện thoại (không cần cài đặt app).
-2. Chạm vào từng ngày để chấm công đi làm (1 công / nửa ca) và nhập giờ tăng ca (OT).
-3. Bấm "Xác nhận & Lưu", dữ liệu sẽ được tự động gửi về hệ thống quản lý công trường.
+2. Chạm vào từng ngày trên lịch để chọn công đi làm (Đủ công / Nửa công / Tăng ca) và vị trí dự án.
+3. Sau khi chấm xong, BẮT BUỘC bấm nút "Lưu Data" để sao lưu lên Cloud và đồng bộ về hệ thống công ty.
 
 Trân trọng!`;
 }
