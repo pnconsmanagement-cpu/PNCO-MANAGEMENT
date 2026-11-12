@@ -1,10 +1,13 @@
-import { CompanyConfig, Employee, SeasonalWorker } from '../types';
+import { CompanyConfig, Employee, SeasonalWorker, Project, TeamWorker, SalaryAdvance } from '../types';
 
 export interface ServerSyncData {
   lastUpdated: number;
   config: CompanyConfig | null;
   employees: Employee[];
   seasonalWorkers: SeasonalWorker[];
+  projects?: Project[];
+  teamWorkers?: TeamWorker[];
+  salaryAdvances?: SalaryAdvance[];
 }
 
 let lastSyncedTimestamp = 0;
@@ -81,7 +84,10 @@ export async function fetchServerData(updateLocalTimestamp: boolean = true): Pro
 export async function saveAllToServer(
   config: CompanyConfig,
   employees: Employee[],
-  seasonalWorkers: SeasonalWorker[]
+  seasonalWorkers: SeasonalWorker[],
+  projects?: Project[],
+  teamWorkers?: TeamWorker[],
+  salaryAdvances?: SalaryAdvance[]
 ): Promise<boolean> {
   try {
     const baseUrl = getApiBaseUrl();
@@ -101,7 +107,14 @@ export async function saveAllToServer(
     const res = await fetch(`${baseUrl}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: enrichedConfig, employees, seasonalWorkers }),
+      body: JSON.stringify({
+        config: enrichedConfig,
+        employees,
+        seasonalWorkers,
+        ...(projects !== undefined ? { projects } : {}),
+        ...(teamWorkers !== undefined ? { teamWorkers } : {}),
+        ...(salaryAdvances !== undefined ? { salaryAdvances } : {}),
+      }),
     });
     if (!res.ok) return false;
     const result = await res.json();

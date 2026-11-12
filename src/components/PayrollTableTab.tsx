@@ -22,8 +22,13 @@ import {
   X,
   Save,
   CheckCircle2,
+  Cloud,
+  RefreshCw,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, SeasonalCycleType } from '../types';
+import { isSupabaseConfigured, getShareableConfigUrl } from '../services/supabaseService';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
 import { recomputeEmployeePayroll, syncEmployeeForMonth, getRealCurrentDateInfo } from '../utils/payrollCalculator';
 import {
@@ -56,6 +61,9 @@ interface PayrollTableTabProps {
   onDeleteEmployee: (id: string) => void;
   onUpdateSeasonalWorker?: (worker: SeasonalWorker) => void;
   onSavePayrollToCloud?: () => Promise<void> | void;
+  onReloadFromCloud?: () => Promise<void> | void;
+  onOpenSupabaseModal?: () => void;
+  cloudSyncStatus?: 'synced' | 'syncing' | 'error' | 'idle';
   hasUnsavedChanges?: boolean;
   forcedCategory?: 'PERMANENT' | 'SEASONAL' | 'TEAM' | 'ALL';
 }
@@ -71,6 +79,9 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onDeleteEmployee,
   onUpdateSeasonalWorker,
   onSavePayrollToCloud,
+  onReloadFromCloud,
+  onOpenSupabaseModal,
+  cloudSyncStatus = 'idle',
   hasUnsavedChanges = false,
   forcedCategory,
 }) => {
@@ -330,7 +341,42 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
 
   // Trạng thái lưu bản lương & đồng bộ Supabase
   const [isSavingPayroll, setIsSavingPayroll] = useState(false);
+  const [isReloadingPayroll, setIsReloadingPayroll] = useState(false);
+  const [copiedSyncLink, setCopiedSyncLink] = useState(false);
   const [savePayrollNotice, setSavePayrollNotice] = useState<string | null>(null);
+  const supabaseReady = isSupabaseConfigured();
+
+  const handleReloadFromCloudClick = async () => {
+    if (!onReloadFromCloud || hasUnsavedChanges) return;
+    setIsReloadingPayroll(true);
+    try {
+      await Promise.resolve(onReloadFromCloud());
+      setSavePayrollNotice(
+        `✓ Đã tải & đồng bộ Bản Lương mới nhất từ Supabase Cloud!`
+      );
+      setTimeout(() => {
+        setSavePayrollNotice(null);
+      }, 4500);
+    } finally {
+      setIsReloadingPayroll(false);
+    }
+  };
+
+  const handleCopySyncLink = () => {
+    const shareUrl = getShareableConfigUrl();
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedSyncLink(true);
+    setSavePayrollNotice(
+      '✓ Đã copy Link Đồng Bộ! Mở link này trên máy tính / trình duyệt khác sẽ tự động kết nối Cloud & tải ngay toàn bộ Bản Lương.'
+    );
+    setTimeout(() => {
+      setCopiedSyncLink(false);
+    }, 3000);
+    setTimeout(() => {
+      setSavePayrollNotice(null);
+    }, 6000);
+  };
 
   const handleSavePayrollTable = async () => {
     setIsSavingPayroll(true);
@@ -360,17 +406,16 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         });
       }
       if (onSavePayrollToCloud) {
-        await Promise.race([
-          Promise.resolve(onSavePayrollToCloud()),
-          new Promise((resolve) => setTimeout(resolve, 6000)),
-        ]);
+        await Promise.resolve(onSavePayrollToCloud());
       }
       setSavePayrollNotice(
-        `✓ Đã lưu Data Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} thành công!`
+        isSupabaseConfigured()
+          ? `✓ Đã lưu Data & đồng bộ Bản Lương kỳ ${String(currentMonth).padStart(2, '0')}/${currentYear} lên Supabase Cloud thành công!`
+          : `⚠ Đã lưu trên trình duyệt này (Chưa kết nối Supabase Cloud — nhấn "Kết nối Cloud" bên cạnh để đồng bộ sang máy khác)!`
       );
       setTimeout(() => {
         setSavePayrollNotice(null);
-      }, 4500);
+      }, 5500);
     } finally {
       setIsSavingPayroll(false);
     }
@@ -1148,23 +1193,69 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <button
                   type="button"
                   onClick={handleSavePayrollTable}
-                  disabled={isSavingPayroll}
+                  disabled={isSavingPayroll || cloudSyncStatus === 'syncing'}
                   className={`px-3.5 py-1.5 disabled:opacity-60 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs ${
                     hasUnsavedChanges
                       ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
                       : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                   }`}
-                  title="Nhấn nút Lưu Data để lưu toàn bộ Bản Lương vừa nhập"
+                  title="Nhấn nút Lưu Data để lưu toàn bộ Bản Lương vừa nhập và đẩy lên Supabase Cloud"
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>
-                    {isSavingPayroll
+                    {isSavingPayroll || cloudSyncStatus === 'syncing'
                       ? 'Đang lưu Data...'
                       : hasUnsavedChanges
                       ? 'Lưu Data (Chưa lưu)'
                       : 'Lưu Data'}
                   </span>
                 </button>
+
+                {supabaseReady ? (
+                  <>
+                    {onReloadFromCloud && (
+                      <button
+                        type="button"
+                        onClick={handleReloadFromCloudClick}
+                        disabled={isReloadingPayroll || hasUnsavedChanges || cloudSyncStatus === 'syncing'}
+                        className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-[#0f3d64] border border-sky-300 disabled:opacity-50 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        title={
+                          hasUnsavedChanges
+                            ? 'Đang có dữ liệu chưa lưu — vui lòng nhấn Lưu Data trước khi tải từ Cloud'
+                            : 'Kéo dữ liệu Bản Lương mới nhất vừa lưu từ máy khác trên Supabase Cloud về'
+                        }
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isReloadingPayroll ? 'animate-spin' : ''}`} />
+                        <span>{isReloadingPayroll ? 'Đang tải...' : 'Đồng bộ Cloud'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleCopySyncLink}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      title="Copy Link Đồng Bộ có gắn sẵn cấu hình Cloud để mở trên máy tính / trình duyệt khác tự động nhận ngay Bản Lương"
+                    >
+                      {copiedSyncLink ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                      )}
+                      <span>{copiedSyncLink ? 'Đã copy Link!' : 'Link Đồng Bộ'}</span>
+                    </button>
+                  </>
+                ) : (
+                  onOpenSupabaseModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenSupabaseModal}
+                      className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      title="Kết nối Supabase Cloud để tự động tải và đồng bộ Bản Lương giữa các máy tính"
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>Kết nối Cloud</span>
+                    </button>
+                  )
+                )}
 
                 <button
                   id="btn-export-excel"
@@ -1176,6 +1267,25 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 </button>
               </div>
             </div>
+
+            {!supabaseReady && onOpenSupabaseModal && (
+              <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    <strong>Trình duyệt này chưa kết nối Supabase Cloud</strong> nên chưa nhận được Bản Lương từ máy chính. Nhấn{' '}
+                    <strong>Kết nối Cloud</strong> (hoặc mở <strong>Link Đồng Bộ</strong> copy từ máy chính) để tự động tải toàn bộ Bản Lương về ngay.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenSupabaseModal}
+                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-xs cursor-pointer shrink-0"
+                >
+                  Kết nối & Tải Bản Lương ngay
+                </button>
+              </div>
+            )}
 
             {savePayrollNotice && (
               <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between shadow-2xs">
@@ -1546,23 +1656,69 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               <button
                 type="button"
                 onClick={handleSavePayrollTable}
-                disabled={isSavingPayroll}
+                disabled={isSavingPayroll || cloudSyncStatus === 'syncing'}
                 className={`px-3 py-1 rounded text-xs font-black flex items-center gap-1.5 transition cursor-pointer disabled:opacity-60 ${
                   hasUnsavedChanges
                     ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-400/40'
                     : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                 }`}
-                title="Nhấn nút Lưu Data để lưu toàn bộ thông tin Bản Lương vừa nhập"
+                title="Nhấn nút Lưu Data để lưu toàn bộ thông tin Bản Lương vừa nhập và đồng bộ Cloud"
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>
-                  {isSavingPayroll
+                  {isSavingPayroll || cloudSyncStatus === 'syncing'
                     ? 'Đang lưu Data...'
                     : hasUnsavedChanges
                     ? 'Lưu Data (Chưa lưu)'
                     : 'Lưu Data'}
                 </span>
               </button>
+            )}
+
+            {supabaseReady ? (
+              <>
+                {onReloadFromCloud && (
+                  <button
+                    type="button"
+                    onClick={handleReloadFromCloudClick}
+                    disabled={isReloadingPayroll || hasUnsavedChanges || cloudSyncStatus === 'syncing'}
+                    className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-[#0f3d64] border border-sky-300 disabled:opacity-50 rounded text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                    title={
+                      hasUnsavedChanges
+                        ? 'Đang có dữ liệu chưa lưu — vui lòng nhấn Lưu Data trước khi tải từ Cloud'
+                        : 'Kéo dữ liệu Bản Lương mới nhất từ Supabase Cloud về'
+                    }
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isReloadingPayroll ? 'animate-spin' : ''}`} />
+                    <span>{isReloadingPayroll ? 'Đang tải...' : 'Đồng bộ Cloud'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopySyncLink}
+                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                  title="Copy Link Đồng Bộ có gắn sẵn cấu hình Cloud để mở trên máy tính / trình duyệt khác tự động nhận ngay Bản Lương"
+                >
+                  {copiedSyncLink ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                  )}
+                  <span>{copiedSyncLink ? 'Đã copy Link!' : 'Link Đồng Bộ'}</span>
+                </button>
+              </>
+            ) : (
+              onOpenSupabaseModal && (
+                <button
+                  type="button"
+                  onClick={onOpenSupabaseModal}
+                  className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  title="Kết nối Supabase Cloud để tự động tải và đồng bộ Bản Lương giữa các máy tính"
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Kết nối Cloud</span>
+                </button>
+              )
             )}
 
             <button
@@ -1574,6 +1730,25 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               <span>Xuất Excel (.xlsx)</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {forcedCategory !== 'SEASONAL' && !supabaseReady && onOpenSupabaseModal && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Trình duyệt này chưa kết nối Supabase Cloud</strong> nên chưa nhận được Bản Lương từ máy chính. Nhấn{' '}
+              <strong>Kết nối Cloud</strong> (hoặc mở <strong>Link Đồng Bộ</strong> copy từ máy chính) để tự động tải toàn bộ Bản Lương về ngay.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenSupabaseModal}
+            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-xs cursor-pointer shrink-0"
+          >
+            Kết nối & Tải Bản Lương ngay
+          </button>
         </div>
       )}
 

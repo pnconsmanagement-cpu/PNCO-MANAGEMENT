@@ -883,6 +883,9 @@ export default function App() {
           Number(r.otherBonus || 0),
           Number(r.advancePayment || 0),
           String(r.cycleType || ''),
+          String(r.paymentDate || ''),
+          String(r.project || ''),
+          Boolean(r.selectedForAttendance),
         ];
       });
   };
@@ -1178,14 +1181,16 @@ export default function App() {
     };
 
     const deletedSeaSet = getDeletedKeys(DELETED_SEA_STORAGE_KEY);
+    const hasCloudList = Array.isArray(cloudList) && cloudList.length > 0;
     localList.forEach((rawW) => {
       if (!rawW) return;
       if (deletedSeaSet.has(String(rawW.id)) || (rawW.code && deletedSeaSet.has(String(rawW.code)))) return;
+      if (hasCloudList && isUnmodifiedMockSeasonalWorker(rawW)) return;
       const w = materializeSeasonalMonthlyAttendance(rawW, periodCodeStr);
       const key = getUniqueWorkerMapKey(w, localMap);
       localMap.set(key, w);
-      // Chỉ giữ sẵn những công nhân thực tế của người dùng (không giữ 12 công nhân mẫu mặc định nếu Cloud đã có danh sách riêng)
-      if (!isUnmodifiedMockSeasonalWorker(w)) {
+      // Khi Cloud chưa có dữ liệu thì giữ danh sách thực tế ở máy; khi Cloud đã có danh sách chuẩn thì lấy danh sách từ Cloud làm chuẩn để đồng bộ xóa/thêm
+      if (!hasCloudList && !isUnmodifiedMockSeasonalWorker(w)) {
         resultMap.set(key, w);
       }
     });
@@ -1206,7 +1211,12 @@ export default function App() {
       }
       const key = findMatchingKeyInMap(cw, localMap);
       cloudKeys.add(key);
-      const existing = localMap.get(key);
+      const candidateExisting = localMap.get(key);
+      const existing =
+        candidateExisting &&
+        normalizeEmpName(candidateExisting.fullName) === normalizeEmpName(cw.fullName)
+          ? candidateExisting
+          : undefined;
 
       if (existing) {
         const mergedMonthly: Record<string, any> = { ...(existing.monthlyAttendance || {}) };
@@ -1428,25 +1438,19 @@ export default function App() {
             ? Number(existing.mealAllowance || 0)
             : cwAllowTime > exAllowTime
             ? Number(cw.mealAllowance || 0)
-            : maxAllowTime > 0
-            ? Number(cw.mealAllowance ?? existing.mealAllowance ?? 0)
-            : 0;
+            : Number(cw.mealAllowance ?? existing.mealAllowance ?? 0);
         const resolvedTravelAllowance =
           exAllowTime > cwAllowTime
             ? Number(existing.travelSafetyAllowance || 0)
             : cwAllowTime > exAllowTime
             ? Number(cw.travelSafetyAllowance || 0)
-            : maxAllowTime > 0
-            ? Number(cw.travelSafetyAllowance ?? existing.travelSafetyAllowance ?? 0)
-            : 0;
+            : Number(cw.travelSafetyAllowance ?? existing.travelSafetyAllowance ?? 0);
         const resolvedOtherBonus =
           exAllowTime > cwAllowTime
             ? Number(existing.otherBonus || 0)
             : cwAllowTime > exAllowTime
             ? Number(cw.otherBonus || 0)
-            : maxAllowTime > 0
-            ? Number(cw.otherBonus ?? existing.otherBonus ?? 0)
-            : 0;
+            : Number(cw.otherBonus ?? existing.otherBonus ?? 0);
 
         const baseMerged = localIsNewer ? { ...cw, ...existing } : { ...existing, ...cw };
 
@@ -1560,15 +1564,28 @@ export default function App() {
         setProjects(cloudProj);
         localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
       }
-      if (cloudTeams && cloudTeams.length > 0) {
+      if (cloudTeams !== null) {
         teamWorkersRef.current = cloudTeams;
         setTeamWorkers(cloudTeams);
         localStorage.setItem('payroll_team_workers', JSON.stringify(cloudTeams));
       }
-      if (cloudAdvs && cloudAdvs.length > 0) {
+      if (cloudAdvs !== null) {
         salaryAdvancesRef.current = cloudAdvs;
         setSalaryAdvances(cloudAdvs);
         localStorage.setItem('payroll_salary_advances', JSON.stringify(cloudAdvs));
+      }
+
+      if (cloudEmp && cloudEmp.length > 0) {
+        removeDeletedKeys(
+          DELETED_EMP_STORAGE_KEY,
+          cloudEmp.flatMap((e) => [e.id, e.code])
+        );
+      }
+      if (cloudSea && cloudSea.length > 0) {
+        removeDeletedKeys(
+          DELETED_SEA_STORAGE_KEY,
+          cloudSea.flatMap((w) => [w.id, w.code])
+        );
       }
 
       const appliedCfg = cloudCfg
@@ -1599,17 +1616,15 @@ export default function App() {
 
       const currentMemorySnapshot = serializeDataSnapshot(latestConfig, latestEmployees, latestSeasonal);
       const newSnapshot = serializeDataSnapshot(appliedCfg, appliedEmp, appliedSea);
-      if (newSnapshot && newSnapshot === currentMemorySnapshot) {
+      if (options?.silent && newSnapshot && newSnapshot === currentMemorySnapshot) {
         markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
         setCloudSyncStatus((prev) => (prev === 'syncing' ? prev : 'synced'));
         return;
       }
 
-      const prevParts = { ...lastSavedPartsRef.current };
       markSnapshotAsSaved(appliedCfg, appliedEmp, appliedSea);
-      const nextParts = lastSavedPartsRef.current;
 
-      if (cloudCfg && nextParts.cfg !== prevParts.cfg) {
+      if (cloudCfg) {
         configRef.current = appliedCfg;
         setConfig(appliedCfg);
         localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
@@ -1620,7 +1635,7 @@ export default function App() {
         localStorage.setItem('payroll_employees', JSON.stringify(appliedEmp));
         localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(appliedEmp));
       }
-      if (cloudSea && cloudSea.length > 0 && nextParts.sea !== prevParts.sea) {
+      if (cloudSea && cloudSea.length > 0) {
         seasonalWorkersRef.current = appliedSea;
         setSeasonalWorkers(appliedSea);
         localStorage.setItem('payroll_seasonal_workers', JSON.stringify(appliedSea));
@@ -1701,6 +1716,21 @@ export default function App() {
             setSeasonalWorkers(nextSeas);
             localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeas));
           }
+          if (Array.isArray(serverData.projects) && serverData.projects.length > 0) {
+            projectsRef.current = serverData.projects;
+            setProjects(serverData.projects);
+            localStorage.setItem('payroll_projects', JSON.stringify(serverData.projects));
+          }
+          if (Array.isArray(serverData.teamWorkers)) {
+            teamWorkersRef.current = serverData.teamWorkers;
+            setTeamWorkers(serverData.teamWorkers);
+            localStorage.setItem('payroll_team_workers', JSON.stringify(serverData.teamWorkers));
+          }
+          if (Array.isArray(serverData.salaryAdvances)) {
+            salaryAdvancesRef.current = serverData.salaryAdvances;
+            setSalaryAdvances(serverData.salaryAdvances);
+            localStorage.setItem('payroll_salary_advances', JSON.stringify(serverData.salaryAdvances));
+          }
           setCloudSyncStatus('synced');
           setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
         }
@@ -1768,6 +1798,21 @@ export default function App() {
         setSeasonalWorkers(nextSeas);
         localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextSeas));
       }
+      if (Array.isArray(serverData.projects) && serverData.projects.length > 0) {
+        projectsRef.current = serverData.projects;
+        setProjects(serverData.projects);
+        localStorage.setItem('payroll_projects', JSON.stringify(serverData.projects));
+      }
+      if (Array.isArray(serverData.teamWorkers)) {
+        teamWorkersRef.current = serverData.teamWorkers;
+        setTeamWorkers(serverData.teamWorkers);
+        localStorage.setItem('payroll_team_workers', JSON.stringify(serverData.teamWorkers));
+      }
+      if (Array.isArray(serverData.salaryAdvances)) {
+        salaryAdvancesRef.current = serverData.salaryAdvances;
+        setSalaryAdvances(serverData.salaryAdvances);
+        localStorage.setItem('payroll_salary_advances', JSON.stringify(serverData.salaryAdvances));
+      }
       setCloudSyncStatus('synced');
       setLastSyncedText(getServerLastSyncedTime() || getLastSyncedTime());
     });
@@ -1803,15 +1848,27 @@ export default function App() {
           setProjects(cloudProj);
           localStorage.setItem('payroll_projects', JSON.stringify(cloudProj));
         }
-        if (cloudTeams && cloudTeams.length > 0) {
+        if (cloudTeams !== null) {
           teamWorkersRef.current = cloudTeams;
           setTeamWorkers(cloudTeams);
           localStorage.setItem('payroll_team_workers', JSON.stringify(cloudTeams));
         }
-        if (cloudAdvs && cloudAdvs.length > 0) {
+        if (cloudAdvs !== null) {
           salaryAdvancesRef.current = cloudAdvs;
           setSalaryAdvances(cloudAdvs);
           localStorage.setItem('payroll_salary_advances', JSON.stringify(cloudAdvs));
+        }
+        if (cloudEmp && cloudEmp.length > 0) {
+          removeDeletedKeys(
+            DELETED_EMP_STORAGE_KEY,
+            cloudEmp.flatMap((e) => [e.id, e.code])
+          );
+        }
+        if (cloudSea && cloudSea.length > 0) {
+          removeDeletedKeys(
+            DELETED_SEA_STORAGE_KEY,
+            cloudSea.flatMap((w) => [w.id, w.code])
+          );
         }
 
         const appliedCfg = cloudCfg
@@ -1916,7 +1973,7 @@ export default function App() {
       }
       unsubscribe();
     };
-  }, []);
+  }, [isSupabaseOpen]);
 
   // =========================================================================
   // CÁC HÀM CẬP NHẬT TRONG BỘ NHỚ TẠM (CHỈ LƯU KHI NHẤN NÚT "LƯU DATA")
@@ -2354,7 +2411,14 @@ export default function App() {
       markSnapshotAsSaved(cfgToSync, latestEmps, latestSeas);
 
       // 3. Lưu lên Máy chủ Backend
-      await saveAllToServer(cfgToSync, latestEmps, latestSeas);
+      await saveAllToServer(
+        cfgToSync,
+        latestEmps,
+        latestSeas,
+        latestProjects,
+        latestTeams,
+        latestAdvances
+      );
 
       // 4. Nếu đã cấu hình Supabase Cloud -> Thực thi các thao tác xóa chờ sẵn & đồng bộ toàn bộ bảng lên Cloud
       let cloudSyncErrorMsg: string | null = null;
@@ -3221,6 +3285,9 @@ export default function App() {
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onSavePayrollToCloud={handleManualForceSync}
+                      onReloadFromCloud={() => reloadLatestFromCloud()}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                      cloudSyncStatus={cloudSyncStatus}
                       hasUnsavedChanges={hasUnsavedChanges}
                       forcedCategory="PERMANENT"
                     />
@@ -3451,6 +3518,9 @@ export default function App() {
                       onDeleteEmployee={handleDeleteEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       onSavePayrollToCloud={handleManualForceSync}
+                      onReloadFromCloud={() => reloadLatestFromCloud()}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                      cloudSyncStatus={cloudSyncStatus}
                       hasUnsavedChanges={hasUnsavedChanges}
                       forcedCategory="SEASONAL"
                     />
@@ -3567,6 +3637,9 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
                   onSavePayrollToCloud={handleManualForceSync}
+                  onReloadFromCloud={() => reloadLatestFromCloud()}
+                  onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                  cloudSyncStatus={cloudSyncStatus}
                   hasUnsavedChanges={hasUnsavedChanges}
                   forcedCategory="PERMANENT"
                 />
@@ -3584,6 +3657,9 @@ export default function App() {
                   onDeleteEmployee={handleDeleteEmployee}
                   onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                   onSavePayrollToCloud={handleManualForceSync}
+                  onReloadFromCloud={() => reloadLatestFromCloud()}
+                  onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
+                  cloudSyncStatus={cloudSyncStatus}
                   hasUnsavedChanges={hasUnsavedChanges}
                   forcedCategory="SEASONAL"
                 />
@@ -3714,45 +3790,110 @@ export default function App() {
           projects: newProjs,
           salaryAdvances: newAdvs,
         }) => {
-          const appliedCfg = newCfg || configRef.current;
-          const appliedEmps = newEmps && newEmps.length > 0 ? newEmps : employeesRef.current;
-          const appliedSeas = newSeas && newSeas.length > 0 ? newSeas : seasonalWorkersRef.current;
-          markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
+          const curM = activeMonthRef.current;
+          const curY = activeYearRef.current;
+          const curMStr = curM < 10 ? `0${curM}` : `${curM}`;
 
-          if (newCfg) {
-            configRef.current = newCfg;
-            setConfig(newCfg);
-            localStorage.setItem('payroll_company_config', JSON.stringify(newCfg));
-          }
           if (newEmps && newEmps.length > 0) {
-            employeesRef.current = newEmps;
-            setEmployees(newEmps);
-            localStorage.setItem('payroll_employees', JSON.stringify(newEmps));
+            removeDeletedKeys(
+              DELETED_EMP_STORAGE_KEY,
+              newEmps.flatMap((e) => [e.id, e.code])
+            );
           }
           if (newSeas && newSeas.length > 0) {
-            seasonalWorkersRef.current = newSeas;
-            setSeasonalWorkers(newSeas);
-            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(newSeas));
+            removeDeletedKeys(
+              DELETED_SEA_STORAGE_KEY,
+              newSeas.flatMap((w) => [w.id, w.code])
+            );
           }
-          if (newTeams && newTeams.length > 0) {
-            teamWorkersRef.current = newTeams;
-            setTeamWorkers(newTeams);
-            localStorage.setItem('payroll_team_workers', JSON.stringify(newTeams));
+
+          const appliedCfg = newCfg
+            ? mergeRemoteConfigPreservingPeriod(configRef.current, newCfg)
+            : configRef.current;
+          const stdDays = appliedCfg.standardWorkDays || 26;
+
+          const appliedEmps =
+            newEmps && newEmps.length > 0
+              ? newEmps.map((emp) =>
+                  syncEmployeeForMonth(
+                    ensureEmployeeHistoricalMonths(ensureEmployeeContract(emp)),
+                    curM,
+                    curY,
+                    stdDays
+                  )
+                )
+              : employeesRef.current;
+
+          const appliedSeas =
+            newSeas && newSeas.length > 0
+              ? cleanSeasonalList(newSeas, curM, curY)
+              : seasonalWorkersRef.current;
+
+          const appliedTeams = newTeams !== undefined ? newTeams : teamWorkersRef.current;
+          const appliedProjs =
+            newProjs && newProjs.length > 0 ? newProjs : projectsRef.current;
+          const appliedAdvs = newAdvs !== undefined ? newAdvs : salaryAdvancesRef.current;
+
+          markSnapshotAsSaved(appliedCfg, appliedEmps, appliedSeas);
+
+          configRef.current = appliedCfg;
+          setConfig(appliedCfg);
+          localStorage.setItem('payroll_company_config', JSON.stringify(appliedCfg));
+
+          if (newEmps && newEmps.length > 0) {
+            employeesRef.current = appliedEmps;
+            setEmployees(appliedEmps);
+            localStorage.setItem('payroll_employees', JSON.stringify(appliedEmps));
+            localStorage.setItem(`payroll_month_${curY}_${curMStr}`, JSON.stringify(appliedEmps));
+          }
+          if (newSeas && newSeas.length > 0) {
+            seasonalWorkersRef.current = appliedSeas;
+            setSeasonalWorkers(appliedSeas);
+            localStorage.setItem('payroll_seasonal_workers', JSON.stringify(appliedSeas));
+          }
+          if (newTeams !== undefined) {
+            teamWorkersRef.current = appliedTeams;
+            setTeamWorkers(appliedTeams);
+            localStorage.setItem('payroll_team_workers', JSON.stringify(appliedTeams));
           }
           if (newProjs && newProjs.length > 0) {
-            projectsRef.current = newProjs;
-            setProjects(newProjs);
-            localStorage.setItem('payroll_projects', JSON.stringify(newProjs));
+            projectsRef.current = appliedProjs;
+            setProjects(appliedProjs);
+            localStorage.setItem('payroll_projects', JSON.stringify(appliedProjs));
           }
-          if (newAdvs && newAdvs.length > 0) {
-            salaryAdvancesRef.current = newAdvs;
-            setSalaryAdvances(newAdvs);
-            localStorage.setItem('payroll_salary_advances', JSON.stringify(newAdvs));
+          if (newAdvs !== undefined) {
+            salaryAdvancesRef.current = appliedAdvs;
+            setSalaryAdvances(appliedAdvs);
+            localStorage.setItem('payroll_salary_advances', JSON.stringify(appliedAdvs));
           }
+
+          saveAllToServer(
+            appliedCfg,
+            appliedEmps,
+            appliedSeas,
+            appliedProjs,
+            appliedTeams,
+            appliedAdvs
+          ).catch(() => {});
+
+          pendingDeletedSeaRef.current = {
+            ids: [],
+            codes: [],
+            removedKeys: [],
+            clearAll: false,
+            resetDeleted: false,
+          };
+          pendingDeletedEmpRef.current = {
+            items: [],
+            deletedStorageKeys: [],
+            removedKeys: [],
+            resetDeleted: false,
+          };
           hasUnsavedChangesRef.current = false;
           setHasUnsavedChanges(false);
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());
+          notifyCrossTab();
         }}
         onSyncSuccess={() => {
           lastWriteCompletedAtRef.current = Date.now();
@@ -3761,6 +3902,7 @@ export default function App() {
           setHasUnsavedChanges(false);
           setCloudSyncStatus('synced');
           setLastSyncedText(getLastSyncedTime());
+          notifyCrossTab();
         }}
       />
     </div>

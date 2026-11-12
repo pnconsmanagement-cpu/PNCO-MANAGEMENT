@@ -121,8 +121,12 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     return health;
   };
 
+  const [confirmClearConfig, setConfirmClearConfig] = useState(false);
+
   /**
-   * Lưu cấu hình, kiểm tra kết nối và TỰ ĐỘNG ĐỒNG BỘ DỮ LIỆU NGAY LẬP TỨC
+   * Lưu cấu hình, kiểm tra kết nối và ĐỒNG BỘ THÔNG MINH:
+   * - Nếu trên Supabase Cloud ĐÃ CÓ DỮ LIỆU -> Tự động KÉO dữ liệu từ Cloud về máy này (tuyệt đối không lấy dữ liệu mẫu ghi đè mất dữ liệu thật trên Cloud!).
+   * - Nếu Supabase Cloud ĐANG TRỐNG (0 nhân viên & 0 thời vụ) -> Tự động ĐẨY dữ liệu hiện tại lên Cloud để khởi tạo.
    */
   const handleSaveAndSyncNow = async () => {
     const rawUrl = urlInput.trim().replace(/\/+$/, '');
@@ -144,14 +148,23 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     }
 
     if (!rawUrl.startsWith('https://')) {
-      alert('Supabase Project URL phải bắt đầu bằng https:// (Ví dụ: https://xfoanlqycihmoxyweyqr.supabase.co)');
+      setHealthResult({
+        connected: false,
+        message: 'Supabase Project URL phải bắt đầu bằng https:// (Ví dụ: https://xxxx.supabase.co)',
+        url: rawUrl,
+        tables: {
+          company_config: { exists: false, count: 0 },
+          employees: { exists: false, count: 0 },
+          seasonal_workers: { exists: false, count: 0 },
+        },
+        missingTables: [],
+      });
       return;
     }
 
     setSupabaseConfig(rawUrl, rawKey);
     setIsConfigured(true);
     setUrlInput(rawUrl);
-    saveAllToServer(config, employees, seasonalWorkers).catch(() => {});
 
     setIsTesting(true);
     setSaveSuccessMsg('Đang kiểm tra kết nối tới cơ sở dữ liệu Supabase...');
@@ -161,32 +174,78 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     setIsTesting(false);
 
     if (health.connected) {
-      // Tự động đẩy toàn bộ dữ liệu lên Cloud luôn!
-      setIsSyncing(true);
-      setSaveSuccessMsg('Kết nối thành công! Đang tự động đồng bộ toàn bộ dữ liệu lên Supabase...');
+      const cloudHasData =
+        (health.tables.employees?.count || 0) > 0 ||
+        (health.tables.seasonal_workers?.count || 0) > 0;
 
-      try {
-        const report = await syncAllDataToSupabase(
-          config,
-          employees,
-          seasonalWorkers,
-          teamWorkers,
-          projects,
-          salaryAdvances
-        );
-        setSyncReport(report);
-        setLastSynced(getLastSyncedTime());
+      if (cloudHasData) {
+        // Cloud đã có dữ liệu -> TỰ ĐỘNG TẢI VỀ MÁY NÀY để đồng bộ Bản Lương & Nhân Sự ngay lập tức!
+        setIsSyncing(true);
+        setSaveSuccessMsg('Kết nối thành công! Phát hiện dữ liệu trên Cloud — đang tự động đồng bộ về máy...');
+        try {
+          const [cloudCfg, cloudEmp, cloudSea, cloudTeam, cloudProj, cloudAdv] = await Promise.all([
+            loadCompanyConfigFromSupabase(),
+            loadEmployeesFromSupabase(config.periodCode),
+            loadSeasonalWorkersFromSupabase(config.periodCode),
+            fetchTeamWorkersFromSupabase(config.periodCode),
+            fetchProjectsFromSupabase(),
+            fetchSalaryAdvancesFromSupabase(config.periodCode),
+          ]);
 
-        if (report.success) {
-          setSaveSuccessMsg(`Đã đồng bộ 100% lên Supabase Cloud (${report.employees.count} NV • ${report.seasonalWorkers.count} Thợ • ${teamWorkers.length} Tổ đội • ${projects.length} Dự án)!`);
-          if (onSyncSuccess) onSyncSuccess();
-        } else {
-          setSaveSuccessMsg('Có bảng chưa đồng bộ hoàn tất, vui lòng xem chi tiết bên dưới.');
+          if (onDataLoadedFromCloud) {
+            onDataLoadedFromCloud({
+              config: cloudCfg || undefined,
+              employees: cloudEmp || undefined,
+              seasonalWorkers: cloudSea || undefined,
+              teamWorkers: cloudTeam !== null ? cloudTeam : undefined,
+              projects: cloudProj || undefined,
+              salaryAdvances: cloudAdv !== null ? cloudAdv : undefined,
+            });
+          }
+
+          setLastSynced(getLastSyncedTime());
+          setSaveSuccessMsg(
+            `✓ Đã kết nối & đồng bộ thành công từ Supabase Cloud (${cloudEmp?.length || 0} NV chính thức • ${cloudSea?.length || 0} NV thời vụ • ${cloudProj?.length || 0} dự án)!`
+          );
+          setLoadStatus(
+            `Đã tải từ Cloud: ${cloudEmp?.length || 0} NV chính thức, ${cloudSea?.length || 0} công nhân thời vụ, ${cloudProj?.length || 0} dự án!`
+          );
+        } catch (err: any) {
+          setSaveSuccessMsg(`Lỗi khi tải dữ liệu từ Cloud: ${err.message || String(err)}`);
+        } finally {
+          setIsSyncing(false);
         }
-      } catch (err: any) {
-        setSaveSuccessMsg(`Lỗi khi đẩy dữ liệu: ${err.message || String(err)}`);
-      } finally {
-        setIsSyncing(false);
+      } else {
+        // Cloud mới tạo đang rỗng -> Đẩy dữ liệu hiện tại lên Cloud
+        setIsSyncing(true);
+        setSaveSuccessMsg('Kết nối thành công! Cloud đang trống — đang khởi tạo dữ liệu lên Supabase...');
+
+        try {
+          const report = await syncAllDataToSupabase(
+            config,
+            employees,
+            seasonalWorkers,
+            teamWorkers,
+            projects,
+            salaryAdvances
+          );
+          setSyncReport(report);
+          setLastSynced(getLastSyncedTime());
+          saveAllToServer(config, employees, seasonalWorkers, projects, teamWorkers, salaryAdvances).catch(() => {});
+
+          if (report.success) {
+            setSaveSuccessMsg(
+              `✓ Đã khởi tạo & đồng bộ 100% lên Supabase Cloud (${report.employees.count} NV • ${report.seasonalWorkers.count} Thợ • ${projects.length} Dự án)!`
+            );
+            if (onSyncSuccess) onSyncSuccess();
+          } else {
+            setSaveSuccessMsg('Có bảng chưa đồng bộ hoàn tất, vui lòng xem chi tiết bên dưới.');
+          }
+        } catch (err: any) {
+          setSaveSuccessMsg(`Lỗi khi đẩy dữ liệu: ${err.message || String(err)}`);
+        } finally {
+          setIsSyncing(false);
+        }
       }
     } else {
       setSaveSuccessMsg(null);
@@ -232,7 +291,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
           id: `PR-SEA-${config.periodCode.replace('/', '_')}-${w.code}`,
           periodType: 'MONTH' as const,
           periodCode: config.periodCode,
-          workerType: 'SEASONAL' as const,
+          workerType: (w.payrollCycleType === 'TEAM' ? 'TEAM' : 'SEASONAL') as 'TEAM' | 'SEASONAL',
           workerId: w.id,
           workerCode: w.code,
           workerName: w.fullName,
@@ -278,12 +337,10 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         })),
       ];
 
-      // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records cho TẤT CẢ các tháng đã chấm công
+      // Tạo danh sách bản ghi chấm công đồng bộ lên attendance_records cho các thợ thời vụ chấm công theo ngày
       const attendancePayload: AttendanceRecord[] = [];
-
-      // Bảng attendance_records của Nhân viên chính thức đã được syncEmployeesToSupabase đồng bộ trực tiếp kèm dấu thời gian gốc chuẩn xác
-
       seasonalWorkers.forEach((rawW) => {
+        if (rawW.payrollCycleType === 'TEAM') return;
         const w = materializeSeasonalMonthlyAttendance(rawW, config.periodCode);
         if (w.monthlyAttendance) {
           Object.entries(w.monthlyAttendance).forEach(([, mRec]: [string, any]) => {
@@ -320,7 +377,6 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       setSyncReport(report);
       setLastSynced(getLastSyncedTime());
 
-      // Cập nhật lại số đếm trong health cho cả 8 bảng
       if (healthResult) {
         setHealthResult({
           ...healthResult,
@@ -337,10 +393,15 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         });
       }
 
-      saveAllToServer(config, employees, seasonalWorkers).catch(() => {});
-      if (onSyncSuccess) onSyncSuccess();
+      saveAllToServer(config, employees, seasonalWorkers, projects, teamWorkers, salaryAdvances).catch(() => {});
+      setSaveSuccessMsg(
+        report.success
+          ? `✓ Đã đẩy toàn bộ dữ liệu hiện tại lên Supabase Cloud (${report.employees.count} NV • ${report.seasonalWorkers.count} Thợ • ${projects.length} Dự án)!`
+          : 'Có bảng chưa đồng bộ hoàn tất, vui lòng kiểm tra chi tiết bên dưới.'
+      );
+      if (report.success && onSyncSuccess) onSyncSuccess();
     } catch (e: any) {
-      alert(`Lỗi khi đẩy dữ liệu: ${e.message || String(e)}`);
+      setSaveSuccessMsg(`Lỗi khi đẩy dữ liệu: ${e.message || String(e)}`);
     } finally {
       setIsSyncing(false);
     }
@@ -368,14 +429,14 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
           config: cloudCfg || undefined,
           employees: cloudEmp || undefined,
           seasonalWorkers: cloudSea || undefined,
-          teamWorkers: cloudTeam || undefined,
+          teamWorkers: cloudTeam !== null ? cloudTeam : undefined,
           projects: cloudProj || undefined,
-          salaryAdvances: cloudAdv || undefined,
+          salaryAdvances: cloudAdv !== null ? cloudAdv : undefined,
         });
       }
 
       setLoadStatus(
-        `Nạp thành công: ${cloudEmp?.length || 0} nhân sự chính thức, ${
+        `✓ Nạp thành công: ${cloudEmp?.length || 0} nhân sự chính thức, ${
           cloudSea?.length || 0
         } công nhân thời vụ, ${cloudTeam?.length || 0} tổ đội, ${cloudProj?.length || 0} dự án!`
       );
@@ -387,15 +448,19 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   };
 
   const handleClear = () => {
-    if (window.confirm('Bạn có chắc muốn xóa cấu hình Supabase? Ứng dụng sẽ trở về dùng LocalStorage trên máy tính này.')) {
-      clearSupabaseConfig();
-      setUrlInput('');
-      setKeyInput('');
-      setIsConfigured(false);
-      setHealthResult(null);
-      setSyncReport(null);
-      setSaveSuccessMsg('Đã hủy cấu hình Supabase. Hệ thống đang dùng lưu trữ cục bộ.');
+    if (!confirmClearConfig) {
+      setConfirmClearConfig(true);
+      setTimeout(() => setConfirmClearConfig(false), 4500);
+      return;
     }
+    setConfirmClearConfig(false);
+    clearSupabaseConfig();
+    setUrlInput('');
+    setKeyInput('');
+    setIsConfigured(false);
+    setHealthResult(null);
+    setSyncReport(null);
+    setSaveSuccessMsg('Đã hủy cấu hình Supabase trên trình duyệt này.');
   };
 
   const copySqlSchema = () => {

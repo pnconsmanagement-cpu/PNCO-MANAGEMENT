@@ -44,6 +44,9 @@ interface StoredData {
   config: any;
   employees: any[];
   seasonalWorkers: any[];
+  projects?: any[];
+  teamWorkers?: any[];
+  salaryAdvances?: any[];
 }
 
 function sanitizeSeasonalList(list: any[]): any[] {
@@ -57,7 +60,7 @@ function sanitizeSeasonalList(list: any[]): any[] {
     if (codeStr.startsWith('PNC00') || w.trade === 'Nhân viên chính thức') {
       continue;
     }
-    const key = codeStr || String(w.id || '');
+    const key = String(w.id || '') || codeStr;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     cleaned.push(w);
@@ -83,7 +86,10 @@ function readStorage(): StoredData {
           lastUpdated: isLegacy19 ? Date.now() : Number(parsed.lastUpdated) || Date.now(),
           config: parsed.config || initialCompanyConfig,
           employees: cleanedEmployees,
-          seasonalWorkers: cleanedSeasonal.length > 0 ? cleanedSeasonal : initialSeasonalWorkers,
+          seasonalWorkers: Array.isArray(parsed.seasonalWorkers) ? cleanedSeasonal : initialSeasonalWorkers,
+          ...(Array.isArray(parsed.projects) ? { projects: parsed.projects } : {}),
+          ...(Array.isArray(parsed.teamWorkers) ? { teamWorkers: parsed.teamWorkers } : {}),
+          ...(Array.isArray(parsed.salaryAdvances) ? { salaryAdvances: parsed.salaryAdvances } : {}),
         };
         if (isLegacy19) {
           writeStorage(result);
@@ -131,7 +137,7 @@ app.get('/api/sync', (req, res) => {
 
 // Full state sync (POST)
 app.post('/api/sync', (req, res) => {
-  const { config, employees, seasonalWorkers } = req.body;
+  const { config, employees, seasonalWorkers, projects, teamWorkers, salaryAdvances } = req.body;
   const current = readStorage();
 
   const mergedConfig =
@@ -157,6 +163,9 @@ app.post('/api/sync', (req, res) => {
     config: mergedConfig,
     employees: incomingEmpsValid ? employees : current.employees,
     seasonalWorkers: seasonalWorkers !== undefined ? sanitizeSeasonalList(seasonalWorkers) : current.seasonalWorkers,
+    projects: Array.isArray(projects) ? projects : current.projects,
+    teamWorkers: Array.isArray(teamWorkers) ? teamWorkers : current.teamWorkers,
+    salaryAdvances: Array.isArray(salaryAdvances) ? salaryAdvances : current.salaryAdvances,
   };
 
   writeStorage(updated);

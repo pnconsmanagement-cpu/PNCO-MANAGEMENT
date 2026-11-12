@@ -962,7 +962,17 @@ export const syncSeasonalWorkersToSupabase = async (
         existingData &&
         normalizeEmpName(existingData.fullName) === normalizeEmpName(w.fullName);
 
-      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại
+      const nowTs = Date.now();
+      const activeYmPrefix = (() => {
+        if (!periodCode) return '';
+        const parts = periodCode.split('/');
+        if (parts.length === 2) {
+          return `${parts[1]}-${parts[0].padStart(2, '0')}`;
+        }
+        return '';
+      })();
+
+      // Hợp nhất lịch sử chấm công các tháng giữa Cloud và máy hiện tại (ưu tiên dữ liệu vừa nhấn Lưu Data trên máy hiện tại)
       const cleanedExisting =
         samePerson && existingData ? materializeSeasonalMonthlyAttendance(existingData) : undefined;
       const cleanedLocal = materializeSeasonalMonthlyAttendance(w);
@@ -978,15 +988,8 @@ export const syncSeasonalWorkersToSupabase = async (
           const oldHasDays = isValidDailyAttendanceMap(oldRec.days);
           const oldIsDefault = oldRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
           const newIsDefault = newRec.lastSubmittedAt === '2026-09-01T00:00:00.000Z';
-          const oldTs = oldRec.lastSubmittedAt ? new Date(oldRec.lastSubmittedAt).getTime() : 0;
-          const newTs = newRec.lastSubmittedAt ? new Date(newRec.lastSubmittedAt).getTime() : 0;
-
           if (newIsDefault && !oldIsDefault && (oldHasDays || Number(oldRec.totalWorkDays || 0) > 0)) {
             mergedMonthlyAttendance[mKey] = oldRec;
-          } else if (!newIsDefault && oldIsDefault) {
-            mergedMonthlyAttendance[mKey] = newRec;
-          } else if (newTs > 0 && oldTs > 0) {
-            mergedMonthlyAttendance[mKey] = newTs >= oldTs ? newRec : oldRec;
           } else {
             mergedMonthlyAttendance[mKey] = newRec;
           }
@@ -999,9 +1002,14 @@ export const syncSeasonalWorkersToSupabase = async (
       Object.entries(cleanedLocal.periodRecords || {}).forEach(([pKey, locPRec]: [string, any]) => {
         if (!locPRec) return;
         const exPRec = mergedPeriodRecords[pKey];
+        const stampedLocalPRec = {
+          ...locPRec,
+          updatedAt: Number(locPRec.updatedAt || nowTs),
+        };
         if (!exPRec) {
-          mergedPeriodRecords[pKey] = locPRec;
+          mergedPeriodRecords[pKey] = stampedLocalPRec;
         } else {
+          const isCurrentActivePeriod = activeYmPrefix ? pKey.startsWith(activeYmPrefix) : true;
           const locRecorded =
             Boolean(locPRec.isRecorded) ||
             Number(locPRec.salaryByDays || 0) > 0 ||
@@ -1010,16 +1018,10 @@ export const syncSeasonalWorkersToSupabase = async (
             Boolean(exPRec.isRecorded) ||
             Number(exPRec.salaryByDays || 0) > 0 ||
             Number(exPRec.actualWorkDays || 0) > 0;
-          const locTs = Number(locPRec.updatedAt || cleanedLocal.updatedAt || 0);
-          const exTs = Number(exPRec.updatedAt || cleanedExisting?.updatedAt || 0);
-          if (locRecorded && !exRecorded) {
-            mergedPeriodRecords[pKey] = locPRec;
-          } else if (!locRecorded && exRecorded && locTs <= exTs) {
+          if (!isCurrentActivePeriod && !locRecorded && exRecorded && !locPRec.updatedAt) {
             mergedPeriodRecords[pKey] = exPRec;
-          } else if (locTs >= exTs) {
-            mergedPeriodRecords[pKey] = locPRec;
           } else {
-            mergedPeriodRecords[pKey] = exPRec;
+            mergedPeriodRecords[pKey] = stampedLocalPRec;
           }
         }
       });
@@ -1031,6 +1033,7 @@ export const syncSeasonalWorkersToSupabase = async (
           id: canonicalId,
           code: workerCode,
           sortOrder,
+          updatedAt: Number(cleanedLocal.updatedAt || nowTs),
           monthlyAttendance: mergedMonthlyAttendance,
           periodRecords: mergedPeriodRecords,
         },
@@ -1165,6 +1168,7 @@ export const syncSeasonalWorkersToSupabase = async (
 
       const attPayloads: any[] = [];
       materializedWorkers.forEach((w, idx) => {
+        if (w.payrollCycleType === 'TEAM') return;
         const workerCode = String(w.code || w.id || `PNC-TV${String(idx + 1).padStart(2, '0')}`).trim();
         if (w.monthlyAttendance) {
           Object.entries(w.monthlyAttendance).forEach(([, mRec]) => {
@@ -1193,7 +1197,9 @@ export const syncSeasonalWorkersToSupabase = async (
       if (attPayloads.length > 0) {
         const { error: attErr } = await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
         if (attErr) {
-          await client.from('attendance_records').upsert(attPayloads, { onConflict: 'worker_code,month,year' });
+          await client
+            .from('attendance_records')
+            .upsert(attPayloads, { onConflict: 'worker_code,month,year,period_key' });
         }
       }
     } catch (attErr) {
@@ -1260,30 +1266,45 @@ export const loadSeasonalWorkersFromSupabase = async (
           code: String(canonicalCode),
           fullName: w.fullName || item.name || 'Công nhân',
           trade: w.trade || item.trade || '',
+          skillLevel: w.skillLevel || item.skill_level || 'Thợ chính',
           project: w.project || item.project || '',
           teamName: w.teamName || item.team || item.team_name || '',
-          bankAccount: w.bankAccount || item.bank_account || '',
+          bankAccount: w.bankAccount ?? item.bank_account ?? '',
           bankName:
             w.bankName ||
             item.bank_name ||
             ((w.paymentMethod || item.payment_method) === 'CASH' ? 'Tiền mặt' : 'Vietcombank'),
           paymentMethod: w.paymentMethod || item.payment_method || 'BANK',
           payrollCycleType: w.payrollCycleType || item.payroll_cycle_type || '1_MONTH',
+          status: w.status || item.status || 'ACTIVE',
           phone: w.phone || item.phone || '',
           idCard: w.idCard || item.id_card || '',
           actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
           overtimeHours: Number(w.overtimeHours ?? item.overtime_hours ?? 0),
+          overtimePay: Number(w.overtimePay ?? item.overtime_pay ?? 0),
           dailyRate: Number(w.dailyRate ?? item.daily_rate ?? 0),
-          updatedAt: Number(w.updatedAt || rowUpdatedTs || 0),
+          salaryByDays: Number(w.salaryByDays ?? (w.payrollCycleType === 'TEAM' ? w.dailyRate : 0) ?? 0),
+          mealAllowance: Number(w.mealAllowance ?? item.meal_allowance ?? 0),
+          travelSafetyAllowance: Number(w.travelSafetyAllowance ?? item.travel_safety_allowance ?? 0),
+          otherBonus: Number(w.otherBonus ?? item.other_bonus ?? 0),
+          totalIncome: Number(w.totalIncome ?? item.total_income ?? 0),
+          advancePayment: Number(w.advancePayment ?? item.advance_payment ?? 0),
+          personalIncomeTax: Number(w.personalIncomeTax ?? item.personal_income_tax ?? 0),
+          totalDeductions: Number(w.totalDeductions ?? item.total_deductions ?? 0),
+          netSalary: Number(w.netSalary ?? item.net_salary ?? 0),
+          hasTaxCommitment: w.hasTaxCommitment ?? true,
+          sortOrder: typeof w.sortOrder === 'number' ? w.sortOrder : item.sort_order,
+          updatedAt: Math.max(Number(w.updatedAt || 0), rowUpdatedTs),
         };
       })
       .filter((w) => w && (w.fullName || w.code));
 
-    // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records vào monthlyAttendance của từng thợ
-    // Bảo vệ tuyệt đối: không bao giờ để bản ghi attendance_data rỗng {} ghi đè mất dữ liệu ngày công thực tế!
+    // Hợp nhất dữ liệu chi tiết từng ngày từ attendance_records (từ App Chấm Công Di Động) vào monthlyAttendance của từng thợ
+    // Bảo vệ tuyệt đối: không bao giờ để bản ghi attendance_data cũ hoặc rỗng {} ghi đè mất dữ liệu ngày công/bản lương vừa lưu!
     if (attRecords.length > 0) {
       const leakedAttIdsToDelete: string[] = [];
       list.forEach((w) => {
+        if (w.payrollCycleType === 'TEAM') return;
         const workerCode = w.code || w.id;
         const matchingAtts = attRecords.filter(
           (a) => a.worker_code === workerCode || a.worker_code === w.code || a.worker_code === w.id
@@ -1325,10 +1346,10 @@ export const loadSeasonalWorkersFromSupabase = async (
             Object.keys(att.attendance_data).length === 0 &&
             attWorkDays === 0 &&
             attOtHours === 0 &&
-            attTs > existingTs;
+            attTs > existingTs + 1500;
 
           if (attHasValidDays || attIsExplicitClear) {
-            if (!existingRec || !existingHasValidDays || (attTs > 0 && attTs >= existingTs)) {
+            if (!existingRec || (!existingHasValidDays && Number(existingRec.totalWorkDays || 0) === 0) || (attTs > 0 && attTs > existingTs + 1500)) {
               w.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
@@ -1395,11 +1416,13 @@ export const syncTeamWorkersToSupabase = async (
   if (!client) {
     return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
   }
-  if (teamWorkers.length === 0) {
-    return { success: true, count: 0, message: 'Không có tổ đội nào để đồng bộ.' };
-  }
 
   try {
+    if (teamWorkers.length === 0) {
+      await client.from('team_workers').delete().neq('id', '__KEEP_NONE__');
+      return { success: true, count: 0, message: 'Không có tổ đội nào để đồng bộ.' };
+    }
+
     const payload = teamWorkers.map((t, idx) => ({
       id: String(t.id || t.code || `TEAM_${idx + 1}`),
       code: String(t.code || `PNC-TD${String(idx + 1).padStart(2, '0')}`),
@@ -1431,6 +1454,17 @@ export const syncTeamWorkersToSupabase = async (
       team_data: t,
       updated_at: new Date().toISOString(),
     }));
+
+    try {
+      const { data: existingRows } = await client.from('team_workers').select('id');
+      if (existingRows && Array.isArray(existingRows)) {
+        const activeIds = new Set(payload.map((p) => p.id));
+        const staleIds = existingRows.map((r: any) => String(r.id)).filter((id) => !activeIds.has(id));
+        if (staleIds.length > 0) {
+          await client.from('team_workers').delete().in('id', staleIds);
+        }
+      }
+    } catch {}
 
     const { error } = await client.from('team_workers').upsert(payload, {
       onConflict: 'id',
@@ -1482,7 +1516,8 @@ export const loadTeamWorkersFromSupabase = async (
       error = allRes.error;
     }
 
-    if (error || !data || data.length === 0) return null;
+    if (error || !data) return null;
+    if (data.length === 0) return [];
 
     const list = data
       .map((item) => item.team_data as TeamWorker)
@@ -1507,9 +1542,13 @@ export const syncProjectsToSupabase = async (
 ): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
-  if (projects.length === 0) return { success: true, count: 0, message: 'Danh sách rỗng.' };
 
   try {
+    if (projects.length === 0) {
+      await client.from('projects').delete().neq('id', '__KEEP_NONE__');
+      return { success: true, count: 0, message: 'Danh sách rỗng.' };
+    }
+
     const payload = projects.map((p) => ({
       id: String(p.id || p.code),
       code: String(p.code),
@@ -1526,6 +1565,17 @@ export const syncProjectsToSupabase = async (
       description: String(p.description || ''),
       updated_at: new Date().toISOString(),
     }));
+
+    try {
+      const { data: existingRows } = await client.from('projects').select('id');
+      if (existingRows && Array.isArray(existingRows)) {
+        const activeIds = new Set(payload.map((p) => p.id));
+        const staleIds = existingRows.map((r: any) => String(r.id)).filter((id) => !activeIds.has(id));
+        if (staleIds.length > 0) {
+          await client.from('projects').delete().in('id', staleIds);
+        }
+      }
+    } catch {}
 
     const { error } = await client.from('projects').upsert(payload, { onConflict: 'id' });
     if (error) {
@@ -1578,9 +1628,13 @@ export const syncSalaryAdvancesToSupabase = async (
 ): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
-  if (advances.length === 0) return { success: true, count: 0, message: 'Danh sách rỗng.' };
 
   try {
+    if (advances.length === 0) {
+      await client.from('salary_advances').delete().neq('id', '__KEEP_NONE__');
+      return { success: true, count: 0, message: 'Danh sách rỗng.' };
+    }
+
     const payload = advances.map((a) => ({
       id: String(a.id || a.advanceCode),
       advance_code: String(a.advanceCode),
@@ -1600,6 +1654,17 @@ export const syncSalaryAdvancesToSupabase = async (
       notes: String(a.notes || ''),
       updated_at: new Date().toISOString(),
     }));
+
+    try {
+      const { data: existingRows } = await client.from('salary_advances').select('id');
+      if (existingRows && Array.isArray(existingRows)) {
+        const activeIds = new Set(payload.map((p) => p.id));
+        const staleIds = existingRows.map((r: any) => String(r.id)).filter((id) => !activeIds.has(id));
+        if (staleIds.length > 0) {
+          await client.from('salary_advances').delete().in('id', staleIds);
+        }
+      }
+    } catch {}
 
     const { error } = await client.from('salary_advances').upsert(payload, { onConflict: 'id' });
     if (error) {
@@ -1632,7 +1697,8 @@ export const loadSalaryAdvancesFromSupabase = async (
       data = allRes.data;
       error = allRes.error;
     }
-    if (error || !data || data.length === 0) return null;
+    if (error || !data) return null;
+    if (data.length === 0) return [];
 
     return data.map((d: any) => ({
       id: d.id,
@@ -1839,7 +1905,9 @@ export const syncAttendanceRecordsToSupabase = async (
 
     let { error } = await client.from('attendance_records').upsert(payload, { onConflict: 'id' });
     if (error) {
-      const retry = await client.from('attendance_records').upsert(payload, { onConflict: 'worker_code,month,year' });
+      const retry = await client
+        .from('attendance_records')
+        .upsert(payload, { onConflict: 'worker_code,month,year,period_key' });
       error = retry.error;
     }
     if (error) {
@@ -1890,7 +1958,7 @@ export const loadAttendanceRecordsFromSupabase = async (
 export const fetchAttendanceRecordsFromSupabase = loadAttendanceRecordsFromSupabase;
 
 /**
- * Thực hiện đồng bộ toàn bộ (Cấu hình + 3 nhóm nhân viên + Dự án + Tạm ứng + Bảng lương + Chấm công) một cách an toàn và chi tiết
+ * Thực hiện đồng bộ toàn bộ (Cấu hình + 3 nhóm nhân viên + Dự án + Tạm ứng + Bảng lương + Chấm công) song song tốc độ cao
  */
 export const syncAllDataToSupabase = async (
   config: CompanyConfig,
@@ -1902,34 +1970,26 @@ export const syncAllDataToSupabase = async (
   payrollRecords?: PayrollRecord[],
   attendanceRecords?: AttendanceRecord[]
 ): Promise<FullSyncResult> => {
-  const cfgRes = await syncCompanyConfigToSupabase(config);
-  const empRes = await syncEmployeesToSupabase(employees, config.periodCode);
-  const seaRes = await syncSeasonalWorkersToSupabase(seasonalWorkers, config.periodCode);
-
-  let teamRes = { success: true, count: 0, message: '' };
-  if (teamWorkers && teamWorkers.length > 0) {
-    teamRes = await syncTeamWorkersToSupabase(teamWorkers, config.periodCode);
-  }
-
-  let projRes = { success: true, count: 0, message: '' };
-  if (projects && projects.length > 0) {
-    projRes = await syncProjectsToSupabase(projects);
-  }
-
-  let advRes = { success: true, count: 0, message: '' };
-  if (salaryAdvances && salaryAdvances.length > 0) {
-    advRes = await syncSalaryAdvancesToSupabase(salaryAdvances, config.periodCode);
-  }
-
-  let payRes = { success: true, count: 0, message: '' };
-  if (payrollRecords && payrollRecords.length > 0) {
-    payRes = await syncPayrollRecordsToSupabase(payrollRecords);
-  }
-
-  let attRes = { success: true, count: 0, message: '' };
-  if (attendanceRecords && attendanceRecords.length > 0) {
-    attRes = await syncAttendanceRecordsToSupabase(attendanceRecords);
-  }
+  const [cfgRes, empRes, seaRes, teamRes, projRes, advRes, payRes, attRes] = await Promise.all([
+    syncCompanyConfigToSupabase(config),
+    syncEmployeesToSupabase(employees, config.periodCode),
+    syncSeasonalWorkersToSupabase(seasonalWorkers, config.periodCode),
+    teamWorkers !== undefined
+      ? syncTeamWorkersToSupabase(teamWorkers, config.periodCode)
+      : Promise.resolve({ success: true, count: 0, message: '' }),
+    projects !== undefined
+      ? syncProjectsToSupabase(projects)
+      : Promise.resolve({ success: true, count: 0, message: '' }),
+    salaryAdvances !== undefined
+      ? syncSalaryAdvancesToSupabase(salaryAdvances, config.periodCode)
+      : Promise.resolve({ success: true, count: 0, message: '' }),
+    payrollRecords && payrollRecords.length > 0
+      ? syncPayrollRecordsToSupabase(payrollRecords)
+      : Promise.resolve({ success: true, count: 0, message: '' }),
+    attendanceRecords && attendanceRecords.length > 0
+      ? syncAttendanceRecordsToSupabase(attendanceRecords)
+      : Promise.resolve({ success: true, count: 0, message: '' }),
+  ]);
 
   const allSuccess = cfgRes.success && empRes.success && seaRes.success;
 
@@ -2227,7 +2287,7 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
     }
 
     // 2. Đồng bộ chi tiết ngày công vào bảng attendance_records trên Supabase bằng 1 lệnh batch upsert duy nhất
-    if (mergedWorker.monthlyAttendance) {
+    if (mergedWorker.monthlyAttendance && mergedWorker.payrollCycleType !== 'TEAM') {
       const attBatch: any[] = [];
       Object.values(mergedWorker.monthlyAttendance).forEach((mRec: any) => {
         if (mRec && mRec.month && mRec.year) {
@@ -2257,7 +2317,7 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
           if (attErr) {
             await client
               .from('attendance_records')
-              .upsert(attBatch, { onConflict: 'worker_code,month,year' });
+              .upsert(attBatch, { onConflict: 'worker_code,month,year,period_key' });
           }
         } catch (e) {
           console.warn('[Supabase Sync] Upsert attendance_records warning:', e);
