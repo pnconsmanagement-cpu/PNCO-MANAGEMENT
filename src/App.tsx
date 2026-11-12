@@ -2576,8 +2576,10 @@ export default function App() {
         removedKeys: [],
         resetDeleted: false,
       };
-      hasUnsavedChangesRef.current = false;
-      setHasUnsavedChanges(false);
+      if (!cloudSyncErrorMsg) {
+        hasUnsavedChangesRef.current = false;
+        setHasUnsavedChanges(false);
+      }
 
       notifyCrossTab();
 
@@ -3623,6 +3625,7 @@ export default function App() {
                       onDeleteAdvance={handleDeleteSalaryAdvance}
                       forcedTargetType="PERMANENT"
                       onSaveData={handleManualForceSync}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
                       hasUnsavedChanges={hasUnsavedChanges}
                       isSavingData={cloudSyncStatus === 'syncing'}
                     />
@@ -3856,6 +3859,7 @@ export default function App() {
                       onDeleteAdvance={handleDeleteSalaryAdvance}
                       forcedTargetType="SEASONAL"
                       onSaveData={handleManualForceSync}
+                      onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
                       hasUnsavedChanges={hasUnsavedChanges}
                       isSavingData={cloudSyncStatus === 'syncing'}
                     />
@@ -4011,6 +4015,7 @@ export default function App() {
                   onUpdateAdvance={handleUpdateSalaryAdvance}
                   onDeleteAdvance={handleDeleteSalaryAdvance}
                   onSaveData={handleManualForceSync}
+                  onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
                   hasUnsavedChanges={hasUnsavedChanges}
                   isSavingData={cloudSyncStatus === 'syncing'}
                 />

@@ -1814,14 +1814,21 @@ export const syncSalaryAdvancesToSupabase = async (
       }
     } catch {}
 
-    let { error } = await client.from('salary_advances').upsert(payload, { onConflict: 'id' });
+    let upsertRes = await client
+      .from('salary_advances')
+      .upsert(payload, { onConflict: 'id' })
+      .select('id');
+    let error = upsertRes.error;
+    let writtenCount = upsertRes.data?.length ?? 0;
 
     if (error) {
       // Thử lại theo onConflict: 'advance_code' nếu vướng khóa UNIQUE advance_code
       const retryByCode = await client
         .from('salary_advances')
-        .upsert(payload, { onConflict: 'advance_code' });
+        .upsert(payload, { onConflict: 'advance_code' })
+        .select('id');
       error = retryByCode.error;
+      writtenCount = retryByCode.data?.length ?? writtenCount;
     }
 
     if (error) {
@@ -1841,15 +1848,41 @@ export const syncSalaryAdvancesToSupabase = async (
         status: p.status,
         period_key: p.period_key,
       }));
-      const minRes = await client.from('salary_advances').upsert(minimalPayload, { onConflict: 'id' });
+      const minRes = await client
+        .from('salary_advances')
+        .upsert(minimalPayload, { onConflict: 'id' })
+        .select('id');
       error = minRes.error;
+      writtenCount = minRes.data?.length ?? writtenCount;
+
+      if (error) {
+        // Thử ghi từng dòng để xác định hoặc vượt qua dòng bị xung đột
+        let singleOk = 0;
+        let lastSingleErr: any = null;
+        for (const item of minimalPayload) {
+          const r = await client.from('salary_advances').upsert(item, { onConflict: 'id' });
+          if (!r.error) singleOk += 1;
+          else lastSingleErr = r.error;
+        }
+        if (singleOk === minimalPayload.length) {
+          error = null;
+          writtenCount = singleOk;
+        } else if (lastSingleErr) {
+          error = lastSingleErr;
+        }
+      }
     }
 
     if (error) {
       console.error('Sync salary_advances failed:', error);
       return { success: false, count: 0, message: error.message, error: error.message };
     }
-    return { success: true, count: payload.length, message: `Đã lưu ${payload.length} phiếu ứng lên Supabase.` };
+    const finalCount = writtenCount > 0 ? writtenCount : payload.length;
+    return {
+      success: true,
+      count: finalCount,
+      message: `Đã lưu ${finalCount} phiếu ứng lên bảng salary_advances.`,
+    };
   } catch (e: any) {
     return { success: false, count: 0, message: e.message || String(e), error: e.message };
   }

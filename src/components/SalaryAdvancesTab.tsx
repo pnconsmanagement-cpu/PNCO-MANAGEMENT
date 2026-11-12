@@ -19,10 +19,16 @@ import {
   DollarSign,
   FileText,
   Edit2,
+  Cloud,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SalaryAdvance, Employee, SeasonalWorker, TeamWorker, CompanyConfig } from '../types';
 import { formatVND, numberToVietnameseWords } from '../utils/numberToVietnameseWords';
+import {
+  isSupabaseConfigured,
+  syncSalaryAdvancesToSupabase,
+  loadSalaryAdvancesFromSupabase,
+} from '../services/supabaseService';
 
 interface SalaryAdvancesTabProps {
   advances: SalaryAdvance[];
@@ -35,6 +41,7 @@ interface SalaryAdvancesTabProps {
   onDeleteAdvance: (id: string) => void;
   forcedTargetType?: 'PERMANENT' | 'SEASONAL' | 'TEAM';
   onSaveData?: () => Promise<void> | void;
+  onOpenSupabaseModal?: () => void;
   hasUnsavedChanges?: boolean;
   isSavingData?: boolean;
 }
@@ -50,6 +57,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   onDeleteAdvance,
   forcedTargetType,
   onSaveData,
+  onOpenSupabaseModal,
   hasUnsavedChanges = false,
   isSavingData = false,
 }) => {
@@ -61,6 +69,34 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [printingAdvance, setPrintingAdvance] = useState<SalaryAdvance | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [cloudConnected, setCloudConnected] = useState<boolean>(() => isSupabaseConfigured());
+  const [cloudRowCount, setCloudRowCount] = useState<number | null>(null);
+  const [cloudErrorMsg, setCloudErrorMsg] = useState<string | null>(null);
+  const [isPushingCloud, setIsPushingCloud] = useState<boolean>(false);
+
+  const refreshCloudAdvanceCount = React.useCallback(async () => {
+    const connected = isSupabaseConfigured();
+    setCloudConnected(connected);
+    if (!connected) {
+      setCloudRowCount(null);
+      return null;
+    }
+    const rows = await loadSalaryAdvancesFromSupabase();
+    if (rows !== null) {
+      setCloudRowCount(rows.length);
+      return rows.length;
+    }
+    return null;
+  }, []);
+
+  React.useEffect(() => {
+    refreshCloudAdvanceCount();
+    const onCfgChange = () => {
+      refreshCloudAdvanceCount();
+    };
+    window.addEventListener('pncons-supabase-config-changed', onCfgChange);
+    return () => window.removeEventListener('pncons-supabase-config-changed', onCfgChange);
+  }, [refreshCloudAdvanceCount]);
 
   React.useEffect(() => {
     if (forcedTargetType) {
@@ -71,7 +107,52 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const persistAdvancesListToSupabase = async (
+    targetList: SalaryAdvance[],
+    periodKeyHint?: string,
+    voucherLabel?: string
+  ) => {
+    setIsPushingCloud(true);
+    setCloudErrorMsg(null);
+    try {
+      if (onSaveData) {
+        await onSaveData();
+      }
+      const connected = isSupabaseConfigured();
+      setCloudConnected(connected);
+      if (!connected) {
+        setCloudErrorMsg(
+          'Trình duyệt hiện tại chưa kết nối Supabase Cloud nên dữ liệu chỉ mới lưu trên máy này. Hãy nhấn "Kết nối Supabase Cloud" để ghi vào bảng salary_advances!'
+        );
+        showToast('Đã lưu trên máy — Vui lòng Kết nối Supabase Cloud để đẩy lên bảng salary_advances!');
+        return;
+      }
+
+      const res = await syncSalaryAdvancesToSupabase(targetList, periodKeyHint || config.periodCode);
+      if (!res.success) {
+        const errDetail = res.error || res.message || 'Không ghi được vào bảng salary_advances';
+        setCloudErrorMsg(`Lỗi ghi bảng salary_advances: ${errDetail}`);
+        showToast(`Lỗi ghi bảng salary_advances: ${errDetail}`);
+        return;
+      }
+
+      const verifiedCount = await refreshCloudAdvanceCount();
+      const finalCount = verifiedCount !== null ? verifiedCount : res.count;
+      setCloudErrorMsg(null);
+      showToast(
+        voucherLabel
+          ? `✓ Đã ghi phiếu ${voucherLabel} vào bảng salary_advances trên Supabase (Tổng: ${finalCount} phiếu)!`
+          : `✓ Đã đồng bộ thành công ${finalCount} phiếu vào bảng salary_advances trên Supabase!`
+      );
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      setCloudErrorMsg(`Lỗi kết nối khi ghi bảng salary_advances: ${msg}`);
+    } finally {
+      setIsPushingCloud(false);
+    }
   };
 
   const [editingAdvance, setEditingAdvance] = useState<SalaryAdvance | null>(null);
@@ -212,7 +293,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleCreateAdvance = (e: React.FormEvent) => {
+  const handleCreateAdvance = async (e: React.FormEvent) => {
     e.preventDefault();
     const selectedWorker =
       availableWorkers.find((w) => w.id === formWorkerId || w.code === formWorkerId) ||
@@ -249,19 +330,18 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         periodKey: derivedPeriodKey,
         notes: formNotes,
       };
+      const nextList = advances.map((item) => (item.id === updatedAdv.id ? updatedAdv : item));
       onUpdateAdvance(updatedAdv);
-      showToast(
-        `Đã cập nhật phiếu ${updatedAdv.advanceCode} (${formatVND(updatedAdv.amount)}) — Nhấn nút "Lưu Data" để ghi lên bảng salary_advances!`
-      );
       setEditingAdvance(null);
       setIsModalOpen(false);
+      await persistAdvancesListToSupabase(nextList, derivedPeriodKey, updatedAdv.advanceCode);
       return;
     }
 
     // Sinh mã phiếu TU-YYYY-NNN không bao giờ trùng lặp với các phiếu đã có (tránh lỗi UNIQUE constraint trên Supabase)
     const existingCodes = new Set(advances.map((a) => String(a.advanceCode || '').trim()));
     const yearPrefix = formRequestDate.slice(0, 4) || String(config.year || 2026);
-    let maxSeq = advances.reduce((maxN, a) => {
+    const maxSeq = advances.reduce((maxN, a) => {
       const m = String(a.advanceCode || '').match(/(\d+)\s*$/);
       if (!m) return maxN;
       const num = parseInt(m[1], 10);
@@ -293,11 +373,10 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       notes: formNotes,
     };
 
+    const nextList = [newAdv, ...advances];
     onAddAdvance(newAdv);
-    showToast(
-      `Đã tạo phiếu ${newAdv.advanceCode} (${formatVND(newAdv.amount)}) — Nhấn nút "Lưu Data" màu vàng để ghi vào Supabase!`
-    );
     setIsModalOpen(false);
+    await persistAdvancesListToSupabase(nextList, derivedPeriodKey, newAdv.advanceCode);
   };
 
   // Thay đổi trạng thái ứng
@@ -546,31 +625,47 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {onSaveData && (
-            <button
-              type="button"
-              onClick={async () => {
-                await onSaveData();
-                showToast('Đã lưu Data Bản Ứng Lương thành công!');
-              }}
-              disabled={isSavingData}
-              className={`px-3.5 py-2 font-black text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-60 ${
-                hasUnsavedChanges
-                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-white/50'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-              }`}
-              title="Nhấn nút Lưu Data để lưu các phiếu tạm ứng vừa nhập"
-            >
-              <Save className={`w-4 h-4 ${isSavingData ? 'animate-bounce' : ''}`} />
+          {cloudConnected ? (
+            <span className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-300/40 text-emerald-100 rounded-xl text-[11px] font-bold flex items-center gap-1.5">
+              <Cloud className="w-3.5 h-3.5 text-emerald-300" />
               <span>
-                {isSavingData
-                  ? 'Đang lưu Data...'
-                  : hasUnsavedChanges
-                  ? 'Lưu Data (Chưa lưu)'
-                  : 'Lưu Data'}
+                Bảng salary_advances:{' '}
+                <strong>{cloudRowCount !== null ? `${cloudRowCount} phiếu` : 'Đã kết nối'}</strong>
               </span>
-            </button>
+            </span>
+          ) : (
+            onOpenSupabaseModal && (
+              <button
+                type="button"
+                onClick={onOpenSupabaseModal}
+                className="px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                <Cloud className="w-4 h-4" />
+                <span>Kết nối Supabase Cloud</span>
+              </button>
+            )
           )}
+
+          <button
+            type="button"
+            onClick={() => persistAdvancesListToSupabase(advances, config.periodCode)}
+            disabled={isSavingData || isPushingCloud}
+            className={`px-3.5 py-2 font-black text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-60 ${
+              hasUnsavedChanges
+                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-white/50'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+            }`}
+            title="Nhấn nút Lưu Data để ghi toàn bộ phiếu tạm ứng lên bảng salary_advances trên Supabase"
+          >
+            <Save className={`w-4 h-4 ${isSavingData || isPushingCloud ? 'animate-bounce' : ''}`} />
+            <span>
+              {isSavingData || isPushingCloud
+                ? 'Đang ghi Supabase...'
+                : hasUnsavedChanges
+                ? 'Lưu Data (Chưa lưu)'
+                : 'Lưu Data Lên Supabase'}
+            </span>
+          </button>
 
           <button
             type="button"
@@ -592,26 +687,63 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
       </div>
 
-      {hasUnsavedChanges && onSaveData && (
+      {!cloudConnected && (
+        <div className="bg-rose-50 border border-rose-300 text-rose-950 px-4 py-3 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>
+              <strong>Trình duyệt này chưa kết nối Supabase Cloud!</strong> Dữ liệu phiếu ứng đang chỉ lưu tạm trên trình duyệt nên chưa thể ghi vào bảng{' '}
+              <code className="font-mono font-bold">salary_advances</code>.
+            </span>
+          </div>
+          {onOpenSupabaseModal && (
+            <button
+              type="button"
+              onClick={onOpenSupabaseModal}
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-lg text-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+            >
+              <Cloud className="w-3.5 h-3.5" />
+              <span>Kết nối Supabase ngay</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {cloudErrorMsg && (
+        <div className="bg-rose-50 border border-rose-300 text-rose-950 px-4 py-3 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="font-semibold">{cloudErrorMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => persistAdvancesListToSupabase(advances, config.periodCode)}
+            disabled={isSavingData || isPushingCloud}
+            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-lg text-xs cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Thử ghi lại lên Supabase</span>
+          </button>
+        </div>
+      )}
+
+      {hasUnsavedChanges && (
         <div className="bg-amber-50 border border-amber-300 text-amber-950 px-4 py-2.5 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
               <strong>Có thay đổi phiếu tạm ứng chưa ghi lên Supabase Cloud!</strong> Vui lòng nhấn nút{' '}
-              <strong>Lưu Data</strong> để ghi chính thức vào bảng <code className="font-mono font-bold">salary_advances</code>.
+              <strong>Lưu Data Lên Supabase</strong> để ghi chính thức vào bảng <code className="font-mono font-bold">salary_advances</code>.
             </span>
           </div>
           <button
             type="button"
-            onClick={async () => {
-              await onSaveData();
-              showToast('Đã ghi toàn bộ phiếu tạm ứng vào bảng salary_advances trên Supabase!');
-            }}
-            disabled={isSavingData}
+            onClick={() => persistAdvancesListToSupabase(advances, config.periodCode)}
+            disabled={isSavingData || isPushingCloud}
             className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-lg text-xs cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
           >
             <Save className="w-3.5 h-3.5" />
-            <span>{isSavingData ? 'Đang ghi Supabase...' : 'Lưu lên Supabase ngay'}</span>
+            <span>{isSavingData || isPushingCloud ? 'Đang ghi Supabase...' : 'Lưu lên Supabase ngay'}</span>
           </button>
         </div>
       )}
@@ -1028,10 +1160,13 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  disabled={isPushingCloud}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{editingAdvance ? 'Cập Nhật & Đồng Bộ Bản Lương' : 'Lưu & Phê Duyệt Phiếu'}</span>
+                  <span>
+                    {editingAdvance ? 'Cập Nhật & Ghi Lên Supabase' : 'Lưu Phiếu & Ghi Lên Supabase'}
+                  </span>
                 </button>
               </div>
             </form>
