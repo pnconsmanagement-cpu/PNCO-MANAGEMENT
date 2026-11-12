@@ -181,14 +181,113 @@ export const getSupabaseConfig = (): { url: string; anonKey: string } => {
 };
 
 /**
- * Lưu thông số Supabase vào LocalStorage
+ * Bóc tách thông minh Supabase URL & Anon Key từ bất kỳ chuỗi nào người dùng dán vào:
+ * - Đường dẫn "Sao chép link Máy 2" / "Link Đồng Bộ" (#sb_url=...&sb_key=... hoặc ?sb_url=...&sb_key=...)
+ * - Nội dung file .env / Vercel Environment Variables (VITE_SUPABASE_URL=... VITE_SUPABASE_ANON_KEY=...)
+ * - Chuỗi có chứa https://<project>.supabase.co và token eyJ... / sb_publishable_...
+ */
+export const extractSupabaseCredentialsFromAnyText = (
+  rawText: string,
+  fallbackKeyText: string = ''
+): { url: string; anonKey: string } | null => {
+  const combined = `${rawText || ''}\n${fallbackKeyText || ''}`.trim();
+  if (!combined) return null;
+
+  let extractedUrl = '';
+  let extractedKey = '';
+
+  // 1. Kiểm tra dạng Link chia sẻ có sb_url / supabase_url & sb_key / supabase_key
+  try {
+    const hashIdx = combined.indexOf('#');
+    if (hashIdx !== -1) {
+      const hashPart = combined.slice(hashIdx + 1).split(/\s/)[0];
+      const hp = new URLSearchParams(hashPart);
+      extractedUrl = hp.get('sb_url') || hp.get('supabase_url') || '';
+      extractedKey = hp.get('sb_key') || hp.get('supabase_key') || '';
+    }
+    if (!extractedUrl || !extractedKey) {
+      const qIdx = combined.indexOf('?');
+      if (qIdx !== -1) {
+        const qPart = combined.slice(qIdx + 1).split('#')[0].split(/\s/)[0];
+        const sp = new URLSearchParams(qPart);
+        extractedUrl = extractedUrl || sp.get('sb_url') || sp.get('supabase_url') || '';
+        extractedKey = extractedKey || sp.get('sb_key') || sp.get('supabase_key') || '';
+      }
+    }
+    if ((!extractedUrl || !extractedKey) && (combined.includes('sb_url=') || combined.includes('supabase_url='))) {
+      const rawParams = new URLSearchParams(combined.replace(/^[#?]/, ''));
+      extractedUrl = extractedUrl || rawParams.get('sb_url') || rawParams.get('supabase_url') || '';
+      extractedKey = extractedKey || rawParams.get('sb_key') || rawParams.get('supabase_key') || '';
+    }
+  } catch {}
+
+  // 2. Bóc tách bằng Regex nếu chưa đủ (hỗ trợ cả .env, dấu nháy kép, hoặc dán rời)
+  if (!extractedUrl) {
+    const supaUrlMatch = combined.match(/https:\/\/[a-zA-Z0-9-]+\.supabase\.co/);
+    if (supaUrlMatch) {
+      extractedUrl = supaUrlMatch[0];
+    } else {
+      const cleanFirst = (rawText || '')
+        .replace(/^VITE_SUPABASE_URL\s*=\s*/i, '')
+        .replace(/^["']+|["']+$/g, '')
+        .trim()
+        .replace(/\/+$/, '');
+      if (cleanFirst.startsWith('https://') && !cleanFirst.includes('#sb_url=')) {
+        extractedUrl = cleanFirst;
+      }
+    }
+  }
+
+  if (!extractedKey) {
+    const jwtMatch = combined.match(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/);
+    const pubKeyMatch = combined.match(/sb_publishable_[A-Za-z0-9_-]{10,}/);
+    if (jwtMatch) {
+      extractedKey = jwtMatch[0];
+    } else if (pubKeyMatch) {
+      extractedKey = pubKeyMatch[0];
+    } else if (fallbackKeyText) {
+      extractedKey = fallbackKeyText
+        .replace(/^VITE_SUPABASE_ANON_KEY\s*=\s*/i, '')
+        .replace(/^["']+|["']+$/g, '')
+        .trim();
+    }
+  }
+
+  try {
+    if (extractedUrl.includes('%3A') || extractedUrl.includes('%2F')) {
+      extractedUrl = decodeURIComponent(extractedUrl);
+    }
+    if (extractedKey.includes('%')) {
+      extractedKey = decodeURIComponent(extractedKey);
+    }
+  } catch {}
+
+  const finalUrl = extractedUrl.trim().replace(/^["']+|["']+$/g, '').replace(/\/+$/, '');
+  const finalKey = extractedKey.trim().replace(/^["']+|["']+$/g, '');
+
+  if (finalUrl.startsWith('https://') && finalKey.length >= 15) {
+    return { url: finalUrl, anonKey: finalKey };
+  }
+  return null;
+};
+
+/**
+ * Lưu thông số Supabase vào LocalStorage và đồng bộ lên Backend Server để giữ cấu hình lâu dài
  */
 export const setSupabaseConfig = (url: string, anonKey: string): void => {
-  const cleanUrl = url.trim().replace(/\/+$/, '');
-  const cleanKey = anonKey.trim();
+  const cleanUrl = url.trim().replace(/^["']+|["']+$/g, '').replace(/\/+$/, '');
+  const cleanKey = anonKey.trim().replace(/^["']+|["']+$/g, '');
   localStorage.setItem('supabase_config_url', cleanUrl);
   localStorage.setItem('supabase_config_anon_key', cleanKey);
   cachedClient = null; // Reset cached client
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('pncons-supabase-config-changed'));
+    fetch('/api/supabase-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supabaseUrl: cleanUrl, supabaseAnonKey: cleanKey }),
+    }).catch(() => {});
+  }
 };
 
 /**
@@ -198,6 +297,14 @@ export const clearSupabaseConfig = (): void => {
   localStorage.removeItem('supabase_config_url');
   localStorage.removeItem('supabase_config_anon_key');
   cachedClient = null;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('pncons-supabase-config-changed'));
+    fetch('/api/supabase-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supabaseUrl: '', supabaseAnonKey: '' }),
+    }).catch(() => {});
+  }
 };
 
 /**
@@ -313,6 +420,13 @@ export const checkSupabaseConnection = async (
         .select('*', { count: 'exact', head: true });
 
       if (error) {
+        const fallback = await client.from(tableName).select('id').limit(500);
+        if (!fallback.error && Array.isArray(fallback.data)) {
+          return {
+            exists: true,
+            count: fallback.data.length,
+          };
+        }
         return {
           exists: false,
           count: 0,
@@ -354,19 +468,19 @@ export const checkSupabaseConnection = async (
     if (!advCheck.exists) missing.push('salary_advances');
     if (!attCheck.exists) missing.push('attendance_records');
 
-    const coreExist = cfgCheck.exists && empCheck.exists && seaCheck.exists;
+    const anyCoreExist = empCheck.exists || seaCheck.exists || cfgCheck.exists;
 
     let msg = '';
     if (missing.length === 0) {
       msg = `Kết nối Supabase xuất sắc! Toàn bộ 8 bảng dữ liệu đã sẵn sàng: Cấu hình, NV Chính thức (${empCheck.count}), Thời vụ (${seaCheck.count}), Tổ đội (${teamCheck.count}), Dự án (${projCheck.count}), Bảng lương (${payCheck.count}), Tạm ứng (${advCheck.count}), Chấm công (${attCheck.count}).`;
-    } else if (coreExist) {
-      msg = `Đã kết nối Supabase thành công. Một số bảng [${missing.join(', ')}] chưa được tạo, bạn có thể chạy file supabase_schema.sql trong SQL Editor.`;
+    } else if (anyCoreExist) {
+      msg = `Đã kết nối Supabase thành công (NV Chính thức: ${empCheck.count}, Thời vụ: ${seaCheck.count}). Bảng chưa tạo: [${missing.join(', ')}].`;
     } else {
-      msg = `Đã kết nối Supabase nhưng thiếu bảng chính: [${missing.join(', ')}]. Hãy chạy file supabase_schema.sql trong SQL Editor.`;
+      msg = `Chưa tìm thấy bảng dữ liệu trên Supabase [${missing.join(', ')}]. Hãy bấm "Copy toàn bộ mã SQL" bên dưới và chạy trong SQL Editor của Supabase.`;
     }
 
     return {
-      connected: coreExist,
+      connected: anyCoreExist,
       message: msg,
       url: currentUrl,
       tables: {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   PieChart,
@@ -69,6 +69,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   hasUnsavedChanges = false,
   cloudSyncStatus = 'idle',
 }) => {
+  const [sbConfigured, setSbConfigured] = useState(() => isSupabaseConfigured());
+
+  useEffect(() => {
+    const syncState = () => setSbConfigured(isSupabaseConfigured());
+    window.addEventListener('pncons-supabase-config-changed', syncState);
+    return () => window.removeEventListener('pncons-supabase-config-changed', syncState);
+  }, []);
+
   interface NavMenuItem {
     id: TabType;
     label: string;
@@ -624,7 +632,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     ? 'bg-amber-400 animate-ping'
                     : cloudSyncStatus === 'error'
                     ? 'bg-rose-400 animate-ping'
-                    : isSupabaseConfigured()
+                    : sbConfigured
                     ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
                     : 'bg-sky-400'
                 }`}
@@ -667,7 +675,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="w-full py-1 px-2 rounded text-[11px] font-semibold transition flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-slate-200 cursor-pointer"
               >
                 <Cloud className="w-3 h-3 text-emerald-300" />
-                <span>{isSupabaseConfigured() ? 'Quản lý Supabase Cloud' : 'Cấu hình kết nối Cloud'}</span>
+                <span>{sbConfigured ? 'Quản lý Supabase Cloud' : 'Cấu hình kết nối Cloud'}</span>
               </button>
             )}
           </div>

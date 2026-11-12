@@ -26,9 +26,15 @@ import {
   RefreshCw,
   Copy,
   Check,
+  Link2,
 } from 'lucide-react';
 import { CompanyConfig, Employee, SeasonalWorker, TeamWorker, SeasonalCycleType } from '../types';
-import { isSupabaseConfigured, getShareableConfigUrl } from '../services/supabaseService';
+import {
+  isSupabaseConfigured,
+  getShareableConfigUrl,
+  extractSupabaseCredentialsFromAnyText,
+  setSupabaseConfig,
+} from '../services/supabaseService';
 import { formatNumberOnly, formatVND } from '../utils/numberToVietnameseWords';
 import { recomputeEmployeePayroll, syncEmployeeForMonth, getRealCurrentDateInfo } from '../utils/payrollCalculator';
 import {
@@ -344,7 +350,51 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   const [isReloadingPayroll, setIsReloadingPayroll] = useState(false);
   const [copiedSyncLink, setCopiedSyncLink] = useState(false);
   const [savePayrollNotice, setSavePayrollNotice] = useState<string | null>(null);
-  const supabaseReady = isSupabaseConfigured();
+  const [supabaseReady, setSupabaseReady] = useState(() => isSupabaseConfigured());
+  const [quickSyncLinkInput, setQuickSyncLinkInput] = useState('');
+
+  useEffect(() => {
+    const handleCfgChanged = () => {
+      setSupabaseReady(isSupabaseConfigured());
+    };
+    window.addEventListener('pncons-supabase-config-changed', handleCfgChanged);
+    return () => {
+      window.removeEventListener('pncons-supabase-config-changed', handleCfgChanged);
+    };
+  }, []);
+
+  const handleQuickConnectFromBanner = async () => {
+    const trimmed = quickSyncLinkInput.trim();
+    if (!trimmed) {
+      if (onOpenSupabaseModal) onOpenSupabaseModal();
+      return;
+    }
+    const creds = extractSupabaseCredentialsFromAnyText(trimmed);
+    if (!creds) {
+      setSavePayrollNotice(
+        '⚠ Không nhận diện được Link Đồng Bộ. Hãy bấm "Sao chép link Máy 2" từ mục Quản lý Supabase Cloud ở tab có dữ liệu rồi dán lại, hoặc nhấn "Mở bảng cấu hình".'
+      );
+      if (onOpenSupabaseModal) onOpenSupabaseModal();
+      return;
+    }
+    setIsReloadingPayroll(true);
+    try {
+      setSupabaseConfig(creds.url, creds.anonKey);
+      setSupabaseReady(true);
+      setQuickSyncLinkInput('');
+      if (onReloadFromCloud) {
+        await Promise.resolve(onReloadFromCloud());
+      }
+      setSavePayrollNotice(
+        '✓ Đã kết nối Supabase Cloud & tải toàn bộ Bản Lương, Chấm Công và Nhân Sự về thành công!'
+      );
+      setTimeout(() => {
+        setSavePayrollNotice(null);
+      }, 6000);
+    } finally {
+      setIsReloadingPayroll(false);
+    }
+  };
 
   const handleReloadFromCloudClick = async () => {
     if (!onReloadFromCloud || hasUnsavedChanges) return;
@@ -1269,21 +1319,44 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
             </div>
 
             {!supabaseReady && onOpenSupabaseModal && (
-              <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>
-                    <strong>Trình duyệt này chưa kết nối Supabase Cloud</strong> nên chưa nhận được Bản Lương từ máy chính. Nhấn{' '}
-                    <strong>Kết nối Cloud</strong> (hoặc mở <strong>Link Đồng Bộ</strong> copy từ máy chính) để tự động tải toàn bộ Bản Lương về ngay.
-                  </span>
+              <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2.5 rounded-lg text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Trình duyệt này chưa có thông số Supabase Cloud:</strong> Sang tab đang có dữ liệu (50 nhân sự) &rarr; bấm{' '}
+                      <strong>Quản lý Supabase Cloud</strong> (góc dưới trái) &rarr; bấm <strong>Sao chép link Máy 2</strong>, rồi dán thẳng vào ô dưới đây:
+                    </span>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={onOpenSupabaseModal}
-                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-xs cursor-pointer shrink-0"
-                >
-                  Kết nối & Tải Bản Lương ngay
-                </button>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <div className="relative flex-1">
+                    <Link2 className="w-3.5 h-3.5 text-amber-600 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={quickSyncLinkInput}
+                      onChange={(e) => setQuickSyncLinkInput(e.target.value)}
+                      placeholder="Dán 'Link Máy 2' (#sb_url=...) hoặc nội dung .env vào đây để nhận Bản Lương ngay..."
+                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-amber-400 rounded font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleQuickConnectFromBanner}
+                    disabled={isReloadingPayroll}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded font-black text-xs cursor-pointer shrink-0 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReloadingPayroll ? 'animate-spin' : ''}`} />
+                    <span>{isReloadingPayroll ? 'Đang tải Bản Lương...' : 'Kết nối & Tải Bản Lương ngay'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onOpenSupabaseModal}
+                    className="px-2.5 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-400 rounded font-bold text-xs cursor-pointer shrink-0"
+                  >
+                    Mở bảng cấu hình / File .json
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1734,21 +1807,44 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       )}
 
       {forcedCategory !== 'SEASONAL' && !supabaseReady && onOpenSupabaseModal && (
-        <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>
-              <strong>Trình duyệt này chưa kết nối Supabase Cloud</strong> nên chưa nhận được Bản Lương từ máy chính. Nhấn{' '}
-              <strong>Kết nối Cloud</strong> (hoặc mở <strong>Link Đồng Bộ</strong> copy từ máy chính) để tự động tải toàn bộ Bản Lương về ngay.
-            </span>
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 px-3.5 py-2.5 rounded-lg text-xs space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>Trình duyệt này chưa có thông số Supabase Cloud:</strong> Sang tab đang có dữ liệu &rarr; bấm{' '}
+                <strong>Quản lý Supabase Cloud</strong> (góc dưới trái) &rarr; bấm <strong>Sao chép link Máy 2</strong>, rồi dán thẳng vào ô dưới đây:
+              </span>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenSupabaseModal}
-            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-xs cursor-pointer shrink-0"
-          >
-            Kết nối & Tải Bản Lương ngay
-          </button>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Link2 className="w-3.5 h-3.5 text-amber-600 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={quickSyncLinkInput}
+                onChange={(e) => setQuickSyncLinkInput(e.target.value)}
+                placeholder="Dán 'Link Máy 2' (#sb_url=...) hoặc nội dung .env vào đây để nhận Bản Lương ngay..."
+                className="w-full pl-8 pr-3 py-1.5 bg-white border border-amber-400 rounded font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleQuickConnectFromBanner}
+              disabled={isReloadingPayroll}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded font-black text-xs cursor-pointer shrink-0 flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isReloadingPayroll ? 'animate-spin' : ''}`} />
+              <span>{isReloadingPayroll ? 'Đang tải Bản Lương...' : 'Kết nối & Tải Bản Lương ngay'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSupabaseModal}
+              className="px-2.5 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-400 rounded font-bold text-xs cursor-pointer shrink-0"
+            >
+              Mở bảng cấu hình / File .json
+            </button>
+          </div>
         </div>
       )}
 

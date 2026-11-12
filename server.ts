@@ -135,6 +135,38 @@ app.get('/api/sync', (req, res) => {
   res.json(data);
 });
 
+// Persist Supabase credentials on server immediately when configured in UI
+app.post('/api/supabase-config', (req, res) => {
+  const { supabaseUrl, supabaseAnonKey } = req.body || {};
+  const current = readStorage();
+  if (supabaseUrl && supabaseAnonKey && String(supabaseUrl).startsWith('https://')) {
+    const updated: StoredData = {
+      ...current,
+      lastUpdated: Date.now(),
+      config: {
+        ...(current.config || {}),
+        supabaseUrl: String(supabaseUrl).trim().replace(/\/+$/, ''),
+        supabaseAnonKey: String(supabaseAnonKey).trim(),
+      },
+    };
+    writeStorage(updated);
+    return res.json({ ok: true, lastUpdated: updated.lastUpdated });
+  }
+  if (supabaseUrl === '' && supabaseAnonKey === '') {
+    const nextCfg = { ...(current.config || {}) };
+    delete nextCfg.supabaseUrl;
+    delete nextCfg.supabaseAnonKey;
+    const updated: StoredData = {
+      ...current,
+      lastUpdated: Date.now(),
+      config: nextCfg,
+    };
+    writeStorage(updated);
+    return res.json({ ok: true, lastUpdated: updated.lastUpdated });
+  }
+  return res.status(400).json({ ok: false });
+});
+
 // Full state sync (POST)
 app.post('/api/sync', (req, res) => {
   const { config, employees, seasonalWorkers, projects, teamWorkers, salaryAdvances } = req.body;

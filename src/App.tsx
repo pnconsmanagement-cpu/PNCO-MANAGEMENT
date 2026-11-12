@@ -754,11 +754,18 @@ export default function App() {
   const [isZaloSettingsOpen, setIsZaloSettingsOpen] = useState(false);
   const [isBatchZaloOpen, setIsBatchZaloOpen] = useState(false);
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
+  const [supabaseConfigVersion, setSupabaseConfigVersion] = useState(0);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'idle'>('idle');
   const [lastSyncedText, setLastSyncedText] = useState<string | null>(getLastSyncedTime());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveToastMessage, setSaveToastMessage] = useState<string | null>(null);
   const hasUnsavedChangesRef = useRef(false);
+
+  useEffect(() => {
+    const onCfgChange = () => setSupabaseConfigVersion((v) => v + 1);
+    window.addEventListener('pncons-supabase-config-changed', onCfgChange);
+    return () => window.removeEventListener('pncons-supabase-config-changed', onCfgChange);
+  }, []);
 
   // Theo dõi các thao tác xóa nhân sự chờ nhấn nút "Lưu Data" mới thực thi xóa vĩnh viễn
   const pendingDeletedSeaRef = useRef<{
@@ -1973,7 +1980,7 @@ export default function App() {
       }
       unsubscribe();
     };
-  }, [isSupabaseOpen]);
+  }, [isSupabaseOpen, supabaseConfigVersion]);
 
   // =========================================================================
   // CÁC HÀM CẬP NHẬT TRONG BỘ NHỚ TẠM (CHỈ LƯU KHI NHẤN NÚT "LƯU DATA")

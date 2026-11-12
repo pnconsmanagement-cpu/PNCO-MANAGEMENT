@@ -19,12 +19,18 @@ import {
   Server,
   Layers,
   ArrowRight,
+  Eye,
+  EyeOff,
+  Download,
+  Upload,
+  Link2,
 } from 'lucide-react';
 import {
   isSupabaseConfigured,
   getSupabaseConfig,
   setSupabaseConfig,
   clearSupabaseConfig,
+  extractSupabaseCredentialsFromAnyText,
   checkSupabaseConnection,
   syncAllDataToSupabase,
   loadCompanyConfigFromSupabase,
@@ -96,6 +102,10 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedAnonKey, setCopiedAnonKey] = useState(false);
+  const [showAnonKey, setShowAnonKey] = useState(false);
+  const [quickPasteInput, setQuickPasteInput] = useState('');
+  const [backupFileMsg, setBackupFileMsg] = useState<string | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -105,6 +115,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       setKeyInput(anonKey);
       setIsConfigured(isSupabaseConfigured());
       setLastSynced(getLastSyncedTime());
+      setBackupFileMsg(null);
 
       if (url && anonKey) {
         handleRunCheck(url, anonKey);
@@ -115,7 +126,17 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   const handleRunCheck = async (testUrl?: string, testKey?: string) => {
     setIsTesting(true);
     setSaveSuccessMsg(null);
-    const health = await checkSupabaseConnection(testUrl || urlInput, testKey || keyInput);
+    const extracted = extractSupabaseCredentialsFromAnyText(
+      testUrl || quickPasteInput || urlInput,
+      testKey || keyInput
+    );
+    const finalUrl = extracted ? extracted.url : testUrl || urlInput;
+    const finalKey = extracted ? extracted.anonKey : testKey || keyInput;
+    if (extracted) {
+      setUrlInput(extracted.url);
+      setKeyInput(extracted.anonKey);
+    }
+    const health = await checkSupabaseConnection(finalUrl, finalKey);
     setHealthResult(health);
     setIsTesting(false);
     return health;
@@ -123,24 +144,120 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
   const [confirmClearConfig, setConfirmClearConfig] = useState(false);
 
+  const handleExportBackupJson = () => {
+    try {
+      const sbCfg = getSupabaseConfig();
+      const payload = {
+        version: '2.4',
+        exportedAt: new Date().toISOString(),
+        supabaseConfig: sbCfg.url && sbCfg.anonKey ? sbCfg : undefined,
+        config,
+        employees,
+        seasonalWorkers,
+        teamWorkers,
+        projects,
+        salaryAdvances,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const periodSlug = (config.periodCode || '11_2026').replace(/\//g, '_');
+      a.href = downloadUrl;
+      a.download = `PNCONS_Backup_DayDu_${periodSlug}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+      setBackupFileMsg(
+        `✓ Đã xuất file sao lưu đầy đủ (${employees.length} NV chính thức • ${seasonalWorkers.length} NV thời vụ • ${projects.length} dự án)! Hãy qua tab/máy cần nhận chọn "Nhập File Backup (.json)".`
+      );
+    } catch (err: any) {
+      setBackupFileMsg(`Lỗi khi xuất file: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleImportBackupJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '{}'));
+        if (!parsed || typeof parsed !== 'object') {
+          setBackupFileMsg('File không hợp lệ. Vui lòng chọn đúng file .json xuất từ hệ thống PNCONS.');
+          return;
+        }
+        const impEmps = Array.isArray(parsed.employees) ? parsed.employees : undefined;
+        const impSeas = Array.isArray(parsed.seasonalWorkers) ? parsed.seasonalWorkers : undefined;
+        const impTeams = Array.isArray(parsed.teamWorkers) ? parsed.teamWorkers : undefined;
+        const impProjs = Array.isArray(parsed.projects) ? parsed.projects : undefined;
+        const impAdvs = Array.isArray(parsed.salaryAdvances) ? parsed.salaryAdvances : undefined;
+        const impCfg = parsed.config && typeof parsed.config === 'object' ? parsed.config : undefined;
+
+        const sbUrl = parsed.supabaseConfig?.url || impCfg?.supabaseUrl;
+        const sbKey = parsed.supabaseConfig?.anonKey || impCfg?.supabaseAnonKey;
+        if (sbUrl && sbKey) {
+          setSupabaseConfig(sbUrl, sbKey);
+          setUrlInput(sbUrl);
+          setKeyInput(sbKey);
+          setIsConfigured(true);
+        }
+
+        if (onDataLoadedFromCloud) {
+          onDataLoadedFromCloud({
+            config: impCfg,
+            employees: impEmps,
+            seasonalWorkers: impSeas,
+            teamWorkers: impTeams,
+            projects: impProjs,
+            salaryAdvances: impAdvs,
+          });
+        }
+        setBackupFileMsg(
+          `✓ Đã khôi phục & đồng bộ thành công từ file (${impEmps?.length || 0} NV chính thức • ${impSeas?.length || 0} NV thời vụ • ${impProjs?.length || 0} dự án)!`
+        );
+      } catch (err: any) {
+        setBackupFileMsg(`Không đọc được file .json: ${err.message || String(err)}`);
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
   /**
    * Lưu cấu hình, kiểm tra kết nối và ĐỒNG BỘ THÔNG MINH:
    * - Nếu trên Supabase Cloud ĐÃ CÓ DỮ LIỆU -> Tự động KÉO dữ liệu từ Cloud về máy này (tuyệt đối không lấy dữ liệu mẫu ghi đè mất dữ liệu thật trên Cloud!).
    * - Nếu Supabase Cloud ĐANG TRỐNG (0 nhân viên & 0 thời vụ) -> Tự động ĐẨY dữ liệu hiện tại lên Cloud để khởi tạo.
    */
-  const handleSaveAndSyncNow = async () => {
-    const rawUrl = urlInput.trim().replace(/\/+$/, '');
-    const rawKey = keyInput.trim();
+  const handleSaveAndSyncNow = async (overrideRawText?: string) => {
+    const candidateSource =
+      typeof overrideRawText === 'string' && overrideRawText.trim()
+        ? overrideRawText
+        : quickPasteInput.trim()
+        ? quickPasteInput
+        : urlInput;
+    const extracted = extractSupabaseCredentialsFromAnyText(candidateSource, keyInput);
+
+    const rawUrl = (extracted ? extracted.url : urlInput).trim().replace(/\/+$/, '');
+    const rawKey = (extracted ? extracted.anonKey : keyInput).trim();
 
     if (!rawUrl || !rawKey) {
       setHealthResult({
         connected: false,
-        message: 'Vui lòng điền đầy đủ cả Supabase Project URL và Anon Public Key.',
+        message:
+          'Vui lòng dán "Link Máy 2" vào ô kết nối nhanh phía trên, hoặc điền đầy đủ cả Supabase Project URL và Anon Public Key.',
         url: rawUrl,
         tables: {
           company_config: { exists: false, count: 0 },
           employees: { exists: false, count: 0 },
           seasonal_workers: { exists: false, count: 0 },
+          team_workers: { exists: false, count: 0 },
+          projects: { exists: false, count: 0 },
+          payroll_records: { exists: false, count: 0 },
+          salary_advances: { exists: false, count: 0 },
+          attendance_records: { exists: false, count: 0 },
         },
         missingTables: [],
       });
@@ -156,6 +273,11 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
           company_config: { exists: false, count: 0 },
           employees: { exists: false, count: 0 },
           seasonal_workers: { exists: false, count: 0 },
+          team_workers: { exists: false, count: 0 },
+          projects: { exists: false, count: 0 },
+          payroll_records: { exists: false, count: 0 },
+          salary_advances: { exists: false, count: 0 },
+          attendance_records: { exists: false, count: 0 },
         },
         missingTables: [],
       });
@@ -165,6 +287,8 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     setSupabaseConfig(rawUrl, rawKey);
     setIsConfigured(true);
     setUrlInput(rawUrl);
+    setKeyInput(rawKey);
+    setQuickPasteInput('');
 
     setIsTesting(true);
     setSaveSuccessMsg('Đang kiểm tra kết nối tới cơ sở dữ liệu Supabase...');
@@ -768,12 +892,94 @@ $$;`;
 
         {/* Body */}
         <div className="p-5 overflow-y-auto space-y-4 text-sm text-slate-700">
+          {/* KẾT NỐI NHANH 1 BƯỚC TỪ LINK MÁY 2 HOẶC FILE BACKUP */}
+          <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl space-y-2.5">
+            <div className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
+              <Link2 className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>Kết nối nhanh 1 bước từ Tab / Máy đang có dữ liệu (Không cần tìm lại URL & Key):</span>
+            </div>
+            <p className="text-[11px] text-amber-900 leading-relaxed">
+              Ở tab đang có dữ liệu (50 nhân sự): bấm <strong>Quản lý Supabase Cloud</strong> (góc dưới trái) &rarr; bấm{' '}
+              <strong>Sao chép link Máy 2</strong>, rồi dán thẳng vào ô dưới đây:
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={quickPasteInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setQuickPasteInput(val);
+                  const extracted = extractSupabaseCredentialsFromAnyText(val, keyInput);
+                  if (extracted) {
+                    setUrlInput(extracted.url);
+                    setKeyInput(extracted.anonKey);
+                  }
+                }}
+                placeholder="Dán 'Link Máy 2' (#sb_url=...) hoặc nội dung .env vào đây..."
+                className="flex-1 px-3 py-2 text-xs font-mono bg-white border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition"
+              />
+              <button
+                type="button"
+                onClick={() => handleSaveAndSyncNow(quickPasteInput)}
+                disabled={isTesting || isSyncing || !quickPasteInput.trim()}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                {isTesting || isSyncing ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+                <span>Dán & Đồng Bộ Ngay</span>
+              </button>
+            </div>
+          </div>
+
+          {/* SAO LƯU / KHÔI PHỤC BẰNG FILE JSON TRỰC TIẾP */}
+          <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-bold text-indigo-950 text-xs flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Chuyển / Sao lưu trực tiếp bằng File (.json) — Hoạt động cả khi chưa cấu hình Cloud</span>
+                </div>
+                <p className="text-[11px] text-indigo-800 mt-0.5">
+                  Xuất toàn bộ Nhân viên, Thời vụ, Tổ đội, Bản Lương, Chấm Công & Dự Án ra 1 file rồi nhập sang máy/tab khác tức thì.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportBackupJson}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Xuất File Backup (.json)</span>
+                </button>
+                <label className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs">
+                  <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Nhập File Backup (.json)</span>
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleImportBackupJson}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+            {backupFileMsg && (
+              <div className="p-2.5 bg-white border border-indigo-300 text-indigo-950 rounded-lg text-xs font-semibold">
+                {backupFileMsg}
+              </div>
+            )}
+          </div>
+
           {/* Form Nhập Thông Tin Kết Nối */}
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <label className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-emerald-600" />
-                <span>Nhập thông tin dự án Supabase của bạn</span>
+                <span>Hoặc nhập thông tin dự án Supabase thủ công</span>
               </label>
               <a
                 href="https://supabase.com/dashboard"
@@ -795,8 +1001,17 @@ $$;`;
               <input
                 type="text"
                 value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="https://xfoanlqycihmoxyweyqr.supabase.co"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const extracted = extractSupabaseCredentialsFromAnyText(val, keyInput);
+                  if (extracted && (val.includes('sb_key=') || val.includes('supabase_key=') || val.includes('eyJ'))) {
+                    setUrlInput(extracted.url);
+                    setKeyInput(extracted.anonKey);
+                  } else {
+                    setUrlInput(val);
+                  }
+                }}
+                placeholder="https://xfoanlqycihmoxyweyqr.supabase.co (hoặc dán luôn Link Máy 2 vào đây)"
                 className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
               />
               <p className="text-[11px] text-slate-600 mt-1">
@@ -806,12 +1021,38 @@ $$;`;
 
             {/* 2. Supabase Anon Key Input */}
             <div>
-              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 mb-1">
-                <Key className="w-3.5 h-3.5 text-amber-600" />
-                <span>2. Supabase Anon Public Key (VITE_SUPABASE_ANON_KEY)</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-amber-600" />
+                  <span>2. Supabase Anon Public Key (VITE_SUPABASE_ANON_KEY)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  {keyInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(keyInput);
+                        setCopiedAnonKey(true);
+                        setTimeout(() => setCopiedAnonKey(false), 2500);
+                      }}
+                      className="text-[11px] font-semibold text-sky-700 hover:text-sky-900 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedAnonKey ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedAnonKey ? 'Đã copy Key' : 'Copy Key'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowAnonKey((v) => !v)}
+                    className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
+                  >
+                    {showAnonKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{showAnonKey ? 'Ẩn Key' : 'Hiện Key'}</span>
+                  </button>
+                </div>
+              </div>
               <input
-                type="password"
+                type={showAnonKey ? 'text' : 'password'}
                 value={keyInput}
                 onChange={(e) => setKeyInput(e.target.value)}
                 placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
@@ -826,7 +1067,7 @@ $$;`;
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <button
                 type="button"
-                onClick={handleSaveAndSyncNow}
+                onClick={() => handleSaveAndSyncNow()}
                 disabled={isTesting || isSyncing}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
               >
