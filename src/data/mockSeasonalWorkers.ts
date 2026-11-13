@@ -4,9 +4,10 @@ import {
   SeasonalCycleType,
   SeasonalPeriodRecord,
   PayrollPeriodOption,
+  TeamPaymentVoucher,
 } from '../types';
 
-export type { PayrollPeriodOption };
+export type { PayrollPeriodOption, TeamPaymentVoucher };
 
 export interface MonthWeekOption {
   id: string; // 'W1' | 'W2' | 'W3' | 'W4' | 'W5'
@@ -365,7 +366,240 @@ export function createDefaultWeeklyTimesheet(workDays: number = 6, otHours: numb
  * - Nếu không có Cam kết 08/CK-TNCN và tổng thu nhập từ 2.000.000đ trở lên: Khấu trừ 10%
  * - Nếu đã ký Cam kết 08/CK-TNCN: Tạm thời không khấu trừ thuế 10%
  */
+export function normalizeSingleTeamVoucher(
+  v: Partial<TeamPaymentVoucher>,
+  fallbackWorker: Partial<SeasonalWorker>,
+  orderIndex: number
+): TeamPaymentVoucher {
+  const sal = Math.max(0, Math.round(Number(v.salaryByDays ?? 0)));
+  const bonus = Math.max(0, Math.round(Number(v.otherBonus ?? 0)));
+  const adv = Math.max(0, Math.round(Number(v.advancePayment ?? 0)));
+  const totInc = sal + bonus;
+  const hasTax = v.hasTaxCommitment ?? fallbackWorker.hasTaxCommitment ?? true;
+  const tax = !hasTax && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+  const totDed = tax + adv;
+  const net = Math.max(0, totInc - totDed);
+  return {
+    id:
+      v.id ||
+      `TVOUCHER_${Date.now()}_${orderIndex}_${Math.random().toString(36).slice(2, 7)}`,
+    ...(v.batchCode ? { batchCode: String(v.batchCode).trim() } : {}),
+    ...(v.batchTitle ? { batchTitle: String(v.batchTitle).trim() } : {}),
+    orderIndex,
+    paymentDate: String(v.paymentDate || fallbackWorker.paymentDate || '').trim(),
+    project: String(v.project || fallbackWorker.project || '').trim(),
+    salaryByDays: sal,
+    otherBonus: bonus,
+    advancePayment: adv,
+    hasTaxCommitment: hasTax,
+    personalIncomeTax: tax,
+    totalIncome: totInc,
+    totalDeductions: totDed,
+    netSalary: net,
+    notes: v.notes,
+    updatedAt: v.updatedAt || Date.now(),
+  };
+}
+
+export function extractTeamPeriodVouchers(
+  rec: SeasonalPeriodRecord | undefined,
+  fallbackWorker: Partial<SeasonalWorker>
+): TeamPaymentVoucher[] {
+  if (!rec) return [];
+  if (Array.isArray(rec.teamVouchers)) {
+    if (rec.teamVouchers.length === 0) return [];
+    return rec.teamVouchers.map((v, idx) =>
+      normalizeSingleTeamVoucher(v, fallbackWorker, idx + 1)
+    );
+  }
+  const hasLegacyActivity =
+    Boolean(rec.isRecorded) ||
+    Number(rec.salaryByDays || 0) > 0 ||
+    Number(rec.actualWorkDays || 0) > 0;
+  if (!hasLegacyActivity) return [];
+
+  const legacySalary =
+    rec.salaryByDays !== undefined &&
+    rec.salaryByDays > 0 &&
+    (!rec.actualWorkDays || rec.actualWorkDays === 1)
+      ? Number(rec.salaryByDays)
+      : Number(rec.salaryByDays || rec.dailyRate || 0);
+  const legacyBonus =
+    Number(rec.mealAllowance || 0) +
+    Number(rec.travelSafetyAllowance || 0) +
+    Number(rec.otherBonus || 0);
+  return [
+    normalizeSingleTeamVoucher(
+      {
+        id: `LEGACY_${rec.periodKey || 'TEAM_M1'}`,
+        orderIndex: 1,
+        paymentDate: rec.paymentDate || fallbackWorker.paymentDate || '',
+        project: rec.project || fallbackWorker.project || '',
+        salaryByDays: legacySalary,
+        otherBonus: legacyBonus,
+        advancePayment: Number(rec.advancePayment || 0),
+        hasTaxCommitment: rec.hasTaxCommitment ?? fallbackWorker.hasTaxCommitment ?? true,
+        notes: rec.notes,
+        updatedAt: rec.updatedAt || 0,
+      },
+      fallbackWorker,
+      1
+    ),
+  ];
+}
+
+export function getTeamWorkerVouchersForMonth(
+  worker: SeasonalWorker | undefined,
+  month: number,
+  year: number
+): TeamPaymentVoucher[] {
+  if (!worker) return [];
+  const monthKey = `${year}-${String(month).padStart(2, '0')}_MONTH`;
+  const rec = worker.periodRecords?.[monthKey];
+  return extractTeamPeriodVouchers(rec, worker);
+}
+
+export function buildTeamPeriodRecordFromVouchers(
+  rawWorker: SeasonalWorker,
+  period: PayrollPeriodOption,
+  rawVouchers: Partial<TeamPaymentVoucher>[]
+): SeasonalWorker {
+  const worker = sanitizeSeasonalWorkerAttendance(rawWorker);
+  const pKey = period.periodKey;
+  const emptySheet = createEmptyTimesheetForPeriod(period);
+  const normalizedVouchers = rawVouchers.map((v, idx) =>
+    normalizeSingleTeamVoucher(v, worker, idx + 1)
+  );
+  const hasVouchers = normalizedVouchers.length > 0;
+  const sumSalaryByDays = normalizedVouchers.reduce((s, v) => s + (v.salaryByDays || 0), 0);
+  const sumOtherBonus = normalizedVouchers.reduce((s, v) => s + (v.otherBonus || 0), 0);
+  const sumTotalIncome = normalizedVouchers.reduce((s, v) => s + (v.totalIncome || 0), 0);
+  const sumTax = normalizedVouchers.reduce((s, v) => s + (v.personalIncomeTax || 0), 0);
+  const sumAdvance = normalizedVouchers.reduce((s, v) => s + (v.advancePayment || 0), 0);
+  const sumDeductions = normalizedVouchers.reduce((s, v) => s + (v.totalDeductions || 0), 0);
+  const sumNet = normalizedVouchers.reduce((s, v) => s + (v.netSalary || 0), 0);
+  const latestVoucher = hasVouchers
+    ? normalizedVouchers[normalizedVouchers.length - 1]
+    : undefined;
+  const nowTs = Date.now();
+
+  const periodRecord: SeasonalPeriodRecord = {
+    periodKey: pKey,
+    periodLabel: period.label,
+    cycleType: 'TEAM',
+    isRecorded: hasVouchers,
+    dailyRate: sumSalaryByDays,
+    project: latestVoucher?.project || worker.project,
+    paymentDate: latestVoucher?.paymentDate || worker.paymentDate,
+    actualWorkDays: hasVouchers ? 1 : 0,
+    salaryByDays: sumSalaryByDays,
+    overtimeHours: 0,
+    overtimePay: 0,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: sumOtherBonus,
+    totalIncome: sumTotalIncome,
+    hasTaxCommitment: worker.hasTaxCommitment ?? true,
+    personalIncomeTax: sumTax,
+    advancePayment: sumAdvance,
+    totalDeductions: sumDeductions,
+    netSalary: sumNet,
+    weeklyTimesheet: emptySheet,
+    notes: latestVoucher?.notes ?? worker.notes,
+    teamVouchers: normalizedVouchers,
+    updatedAt: nowTs,
+  };
+
+  return {
+    ...worker,
+    payrollCycleType: 'TEAM',
+    project: latestVoucher?.project || worker.project,
+    paymentDate: latestVoucher?.paymentDate || worker.paymentDate,
+    dailyRate: sumSalaryByDays,
+    actualWorkDays: hasVouchers ? 1 : 0,
+    salaryByDays: sumSalaryByDays,
+    overtimeHours: 0,
+    overtimePay: 0,
+    mealAllowance: 0,
+    travelSafetyAllowance: 0,
+    otherBonus: sumOtherBonus,
+    totalIncome: sumTotalIncome,
+    personalIncomeTax: sumTax,
+    advancePayment: sumAdvance,
+    totalDeductions: sumDeductions,
+    netSalary: sumNet,
+    selectedForAttendance: hasVouchers,
+    currentPeriodKey: pKey,
+    currentWeekId: period.id,
+    currentWeekLabel: period.label,
+    weeklyTimesheet: emptySheet,
+    teamVouchers: normalizedVouchers,
+    periodRecords: {
+      ...(worker.periodRecords || {}),
+      [pKey]: periodRecord,
+    },
+    updatedAt: nowTs,
+  };
+}
+
 export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): SeasonalWorker {
+  const isTeamCycle = worker.payrollCycleType === 'TEAM';
+
+  // Nếu là tổng hợp tháng của nhân sự Tổ Đội có danh sách teamVouchers (không phải 1 dòng đợt lẻ activeVoucherId)
+  if (isTeamCycle && !worker.activeVoucherId && Array.isArray(worker.teamVouchers)) {
+    if (worker.teamVouchers.length === 0) {
+      const adv = Math.max(0, worker.advancePayment || 0);
+      return {
+        ...worker,
+        dailyRate: 0,
+        actualWorkDays: 0,
+        salaryByDays: 0,
+        overtimeHours: 0,
+        overtimePay: 0,
+        mealAllowance: 0,
+        travelSafetyAllowance: 0,
+        otherBonus: 0,
+        totalIncome: 0,
+        personalIncomeTax: 0,
+        advancePayment: adv,
+        totalDeductions: adv,
+        netSalary: 0,
+        selectedForAttendance: false,
+      };
+    }
+    const normalized = worker.teamVouchers.map((v, idx) =>
+      normalizeSingleTeamVoucher(v, worker, idx + 1)
+    );
+    const sumSal = normalized.reduce((s, v) => s + (v.salaryByDays || 0), 0);
+    const sumBonus = normalized.reduce((s, v) => s + (v.otherBonus || 0), 0);
+    const sumInc = normalized.reduce((s, v) => s + (v.totalIncome || 0), 0);
+    const sumTax = normalized.reduce((s, v) => s + (v.personalIncomeTax || 0), 0);
+    const sumVoucherAdv = normalized.reduce((s, v) => s + (v.advancePayment || 0), 0);
+    const effectiveAdv = Math.max(sumVoucherAdv, Math.max(0, worker.advancePayment || 0));
+    const totalDed = sumTax + effectiveAdv;
+    const latest = normalized[normalized.length - 1];
+    return {
+      ...worker,
+      project: latest?.project || worker.project,
+      paymentDate: latest?.paymentDate || worker.paymentDate,
+      dailyRate: sumSal,
+      actualWorkDays: 1,
+      salaryByDays: sumSal,
+      overtimeHours: 0,
+      overtimePay: 0,
+      mealAllowance: 0,
+      travelSafetyAllowance: 0,
+      otherBonus: sumBonus,
+      totalIncome: sumInc,
+      personalIncomeTax: sumTax,
+      advancePayment: effectiveAdv,
+      totalDeductions: totalDed,
+      netSalary: Math.max(0, sumInc - totalDed),
+      teamVouchers: normalized,
+      selectedForAttendance: true,
+    };
+  }
+
   const dailyRate = Math.max(0, worker.dailyRate || 0);
   const actualWorkDays = Math.max(0, worker.actualWorkDays || 0);
   const overtimeHours = Math.max(0, worker.overtimeHours || 0);
@@ -374,7 +608,6 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
   const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
   const otherBonus = Math.max(0, worker.otherBonus || 0);
 
-  const isTeamCycle = worker.payrollCycleType === 'TEAM';
   const directTeamSalary =
     isTeamCycle && typeof worker.salaryByDays === 'number' && worker.salaryByDays > 0 && dailyRate === 0
       ? Math.round(worker.salaryByDays)
@@ -616,6 +849,41 @@ function syncPeriodRecordsDailyRate(
     const rec = records[key];
     if (!rec) return;
     if (rec.cycleType === 'TEAM' || isTeamWorker) {
+      if (Array.isArray(rec.teamVouchers)) {
+        const vouchers = rec.teamVouchers.map((v, idx) =>
+          normalizeSingleTeamVoucher(v, { hasTaxCommitment: rec.hasTaxCommitment ?? true }, idx + 1)
+        );
+        const hasV = vouchers.length > 0;
+        const sSal = vouchers.reduce((s, v) => s + (v.salaryByDays || 0), 0);
+        const sBon = vouchers.reduce((s, v) => s + (v.otherBonus || 0), 0);
+        const sInc = vouchers.reduce((s, v) => s + (v.totalIncome || 0), 0);
+        const sTax = vouchers.reduce((s, v) => s + (v.personalIncomeTax || 0), 0);
+        const sAdv = vouchers.reduce((s, v) => s + (v.advancePayment || 0), 0);
+        const sDed = vouchers.reduce((s, v) => s + (v.totalDeductions || 0), 0);
+        const sNet = vouchers.reduce((s, v) => s + (v.netSalary || 0), 0);
+        const latestV = hasV ? vouchers[vouchers.length - 1] : undefined;
+        result[key] = {
+          ...rec,
+          cycleType: 'TEAM',
+          isRecorded: hasV,
+          project: latestV?.project || rec.project,
+          paymentDate: latestV?.paymentDate || rec.paymentDate,
+          dailyRate: sSal,
+          actualWorkDays: hasV ? 1 : 0,
+          salaryByDays: sSal,
+          overtimePay: 0,
+          mealAllowance: 0,
+          travelSafetyAllowance: 0,
+          otherBonus: sBon,
+          totalIncome: sInc,
+          personalIncomeTax: sTax,
+          advancePayment: sAdv,
+          totalDeductions: sDed,
+          netSalary: sNet,
+          teamVouchers: vouchers,
+        };
+        return;
+      }
       const teamRate =
         rec.salaryByDays !== undefined &&
         rec.salaryByDays > 0 &&
@@ -930,46 +1198,40 @@ export function syncSeasonalWorkerForMonth(
   const monthRec = worker.monthlyAttendance?.[monthKey];
   const effectiveRate = getUnifiedWorkerDailyRate(worker);
 
-  // Xử lý riêng cho nhân sự thuộc nhóm Tổ Đội (TEAM): Không lấy từ bảng chấm công 31 ngày mà lấy trực tiếp từ bản ghi lương tháng (periodRecords[monthPeriodKey])
+  // Xử lý riêng cho nhân sự thuộc nhóm Tổ Đội (TEAM): Không lấy từ bảng chấm công 31 ngày mà lấy trực tiếp từ bản ghi lương tháng (periodRecords[monthPeriodKey]) và danh sách các đợt chi (teamVouchers)
   if (worker.payrollCycleType === 'TEAM') {
     const teamRec = worker.periodRecords?.[monthPeriodKey];
     const mPeriodOption = getMonthlyPeriodForMonth(year, month)[0];
     const emptySheet = createEmptyTimesheetForPeriod(mPeriodOption);
-    if (
-      teamRec &&
-      (teamRec.isRecorded ||
-        Number(teamRec.actualWorkDays || 0) > 0 ||
-        Number(teamRec.salaryByDays || 0) > 0)
-    ) {
-      const teamRate =
-        teamRec.salaryByDays !== undefined && teamRec.salaryByDays > 0 && (!teamRec.actualWorkDays || teamRec.actualWorkDays === 1)
-          ? teamRec.salaryByDays
-          : teamRec.dailyRate !== undefined && teamRec.dailyRate >= 0
-          ? teamRec.dailyRate
-          : effectiveRate;
-      const teamWorkDays =
-        Number(teamRec.actualWorkDays || 0) > 0 ? Number(teamRec.actualWorkDays) : 1;
+    const vouchers = extractTeamPeriodVouchers(teamRec, worker);
+
+    if (vouchers.length > 0) {
+      const sumSalary = vouchers.reduce((s, v) => s + (v.salaryByDays || 0), 0);
+      const sumBonus = vouchers.reduce((s, v) => s + (v.otherBonus || 0), 0);
+      const sumAdvance = vouchers.reduce((s, v) => s + (v.advancePayment || 0), 0);
+      const latestVoucher = vouchers[vouchers.length - 1];
       return recomputeSeasonalWorkerPayroll({
         ...worker,
-        project: teamRec.project || worker.project,
-        paymentDate: teamRec.paymentDate || worker.paymentDate,
-        dailyRate: teamRate,
-        salaryByDays: teamRec.salaryByDays || Math.round(teamRate * teamWorkDays),
+        project: latestVoucher.project || teamRec?.project || worker.project,
+        paymentDate: latestVoucher.paymentDate || teamRec?.paymentDate || worker.paymentDate,
+        dailyRate: sumSalary,
+        salaryByDays: sumSalary,
         attendanceMonth: month,
         attendanceYear: year,
         currentPeriodKey: monthPeriodKey,
         currentWeekId: mPeriodOption.id,
         currentWeekLabel: mPeriodOption.label,
-        weeklyTimesheet: teamRec.weeklyTimesheet || emptySheet,
-        actualWorkDays: teamWorkDays,
-        overtimeHours: Number(teamRec.overtimeHours || 0),
-        mealAllowance: Number(teamRec.mealAllowance || 0),
-        travelSafetyAllowance: Number(teamRec.travelSafetyAllowance || 0),
-        otherBonus: Number(teamRec.otherBonus || 0),
-        advancePayment: Number(teamRec.advancePayment || 0),
-        hasTaxCommitment: teamRec.hasTaxCommitment ?? worker.hasTaxCommitment,
-        notes: teamRec.notes ?? worker.notes,
+        weeklyTimesheet: teamRec?.weeklyTimesheet || emptySheet,
+        actualWorkDays: 1,
+        overtimeHours: 0,
+        mealAllowance: 0,
+        travelSafetyAllowance: 0,
+        otherBonus: sumBonus,
+        advancePayment: sumAdvance,
+        hasTaxCommitment: teamRec?.hasTaxCommitment ?? worker.hasTaxCommitment,
+        notes: latestVoucher.notes ?? teamRec?.notes ?? worker.notes,
         selectedForAttendance: true,
+        teamVouchers: vouchers,
         periodRecords: worker.periodRecords,
       });
     }
@@ -990,6 +1252,7 @@ export function syncSeasonalWorkerForMonth(
       otherBonus: 0,
       advancePayment: 0,
       selectedForAttendance: false,
+      teamVouchers: [],
       periodRecords: worker.periodRecords,
     });
   }
@@ -1510,47 +1773,36 @@ export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPer
   // Đồng bộ đơn giá ngày công thống nhất giữa Hồ sơ công nhân, Danh sách nhân viên và Bản lương
   const periodDailyRate = getUnifiedWorkerDailyRate(worker);
 
-  // Nếu là nhân sự Tổ Đội (TEAM): Lấy trực tiếp từ bản ghi kỳ thanh toán (không phụ thuộc lịch chấm công 31 ngày)
+  // Nếu là nhân sự Tổ Đội (TEAM): Lấy trực tiếp từ bản ghi kỳ thanh toán & danh sách các đợt nhận (teamVouchers)
   if (worker.payrollCycleType === 'TEAM') {
     const emptySheet = createEmptyTimesheetForPeriod(period);
-    if (
-      existingRecord &&
-      (existingRecord.isRecorded ||
-        Number(existingRecord.actualWorkDays || 0) > 0 ||
-        Number(existingRecord.salaryByDays || 0) > 0)
-    ) {
-      const teamRate =
-        existingRecord.salaryByDays !== undefined &&
-        existingRecord.salaryByDays > 0 &&
-        (!existingRecord.actualWorkDays || existingRecord.actualWorkDays === 1)
-          ? existingRecord.salaryByDays
-          : existingRecord.dailyRate !== undefined && existingRecord.dailyRate >= 0
-          ? existingRecord.dailyRate
-          : periodDailyRate;
-      const teamDays =
-        Number(existingRecord.actualWorkDays || 0) > 0
-          ? Number(existingRecord.actualWorkDays)
-          : 1;
+    const vouchers = extractTeamPeriodVouchers(existingRecord, worker);
+    if (vouchers.length > 0) {
+      const sumSalary = vouchers.reduce((s, v) => s + (v.salaryByDays || 0), 0);
+      const sumBonus = vouchers.reduce((s, v) => s + (v.otherBonus || 0), 0);
+      const sumAdvance = vouchers.reduce((s, v) => s + (v.advancePayment || 0), 0);
+      const latestVoucher = vouchers[vouchers.length - 1];
       return {
         ...recomputeSeasonalWorkerPayroll({
           ...worker,
-          project: existingRecord.project || worker.project,
-          paymentDate: existingRecord.paymentDate || worker.paymentDate,
-          dailyRate: teamRate,
-          salaryByDays: existingRecord.salaryByDays || Math.round(teamRate * teamDays),
+          project: latestVoucher.project || existingRecord?.project || worker.project,
+          paymentDate: latestVoucher.paymentDate || existingRecord?.paymentDate || worker.paymentDate,
+          dailyRate: sumSalary,
+          salaryByDays: sumSalary,
           currentPeriodKey: pKey,
           currentWeekId: period.id,
           currentWeekLabel: period.label,
           payrollCycleType: 'TEAM',
-          actualWorkDays: teamDays,
-          overtimeHours: Number(existingRecord.overtimeHours || 0),
-          mealAllowance: Number(existingRecord.mealAllowance || 0),
-          travelSafetyAllowance: Number(existingRecord.travelSafetyAllowance || 0),
-          otherBonus: Number(existingRecord.otherBonus || 0),
-          hasTaxCommitment: existingRecord.hasTaxCommitment ?? worker.hasTaxCommitment,
-          advancePayment: Number(existingRecord.advancePayment || 0),
-          weeklyTimesheet: existingRecord.weeklyTimesheet || emptySheet,
-          notes: existingRecord.notes ?? worker.notes,
+          actualWorkDays: 1,
+          overtimeHours: 0,
+          mealAllowance: 0,
+          travelSafetyAllowance: 0,
+          otherBonus: sumBonus,
+          hasTaxCommitment: existingRecord?.hasTaxCommitment ?? worker.hasTaxCommitment,
+          advancePayment: sumAdvance,
+          weeklyTimesheet: existingRecord?.weeklyTimesheet || emptySheet,
+          notes: latestVoucher.notes ?? existingRecord?.notes ?? worker.notes,
+          teamVouchers: vouchers,
         }),
         selectedForAttendance: true,
       };
@@ -1558,7 +1810,7 @@ export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPer
     return {
       ...recomputeSeasonalWorkerPayroll({
         ...worker,
-        dailyRate: periodDailyRate,
+        dailyRate: 0,
         currentPeriodKey: pKey,
         currentWeekId: period.id,
         currentWeekLabel: period.label,
@@ -1570,6 +1822,7 @@ export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPer
         otherBonus: 0,
         advancePayment: 0,
         weeklyTimesheet: emptySheet,
+        teamVouchers: [],
       }),
       selectedForAttendance: false,
     };

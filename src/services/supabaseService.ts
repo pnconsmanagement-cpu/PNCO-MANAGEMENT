@@ -1182,12 +1182,14 @@ export const syncSeasonalWorkersToSupabase = async (
           const locRecorded =
             Boolean(locPRec.isRecorded) ||
             Number(locPRec.salaryByDays || 0) > 0 ||
-            Number(locPRec.actualWorkDays || 0) > 0;
+            Number(locPRec.actualWorkDays || 0) > 0 ||
+            (Array.isArray(locPRec.teamVouchers) && locPRec.teamVouchers.length > 0);
           const exRecorded =
             Boolean(exPRec.isRecorded) ||
             Number(exPRec.salaryByDays || 0) > 0 ||
-            Number(exPRec.actualWorkDays || 0) > 0;
-          if (!isCurrentActivePeriod && !locRecorded && exRecorded && !locPRec.updatedAt) {
+            Number(exPRec.actualWorkDays || 0) > 0 ||
+            (Array.isArray(exPRec.teamVouchers) && exPRec.teamVouchers.length > 0);
+          if (!isCurrentActivePeriod && !locRecorded && exRecorded && !locPRec.updatedAt && !Array.isArray(locPRec.teamVouchers)) {
             mergedPeriodRecords[pKey] = exPRec;
           } else {
             mergedPeriodRecords[pKey] = stampedLocalPRec;
@@ -2009,7 +2011,8 @@ export const fetchSalaryAdvancesFromSupabase = loadSalaryAdvancesFromSupabase;
  * Đồng bộ danh sách Bản Lương Đa Chu Kỳ lên Supabase (Sheet: payroll_records - Tuần, Tháng, Quý, Năm)
  */
 export const syncPayrollRecordsToSupabase = async (
-  records: PayrollRecord[]
+  records: PayrollRecord[],
+  cleanupPeriodTag?: string
 ): Promise<{ success: boolean; count: number; message: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) return { success: false, count: 0, message: 'Chưa cấu hình Supabase Client.' };
@@ -2074,6 +2077,28 @@ export const syncPayrollRecordsToSupabase = async (
       console.error('Sync payroll_records failed:', error);
       return { success: false, count: 0, message: error.message, error: error.message };
     }
+
+    // Dọn dẹp các dòng kỳ lương Tổ Đội cũ đã bị xóa/bỏ tick trong cùng kỳ tháng để Database luôn khớp 100%
+    if (cleanupPeriodTag) {
+      try {
+        const { data: existingTeamRows } = await client
+          .from('payroll_records')
+          .select('id')
+          .eq('worker_type', 'TEAM')
+          .or(`id.like.PR-TEAMKL-${cleanupPeriodTag}-%,id.like.PR-SEA-${cleanupPeriodTag}-%`);
+        if (Array.isArray(existingTeamRows) && existingTeamRows.length > 0) {
+          const staleIds = existingTeamRows
+            .map((row: any) => String(row.id))
+            .filter((id) => !dedupMap.has(id));
+          if (staleIds.length > 0) {
+            await client.from('payroll_records').delete().in('id', staleIds);
+          }
+        }
+      } catch {
+        // Bỏ qua lỗi dọn dẹp phụ nếu có
+      }
+    }
+
     return { success: true, count: payload.length, message: `Đã lưu ${payload.length} dòng bảng lương lên Supabase.` };
   } catch (e: any) {
     return { success: false, count: 0, message: e.message || String(e), error: e.message };
@@ -2422,6 +2447,36 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
       const r = mergedPeriodRecords[k];
       if (!r) return;
       const isTeamRec = worker.payrollCycleType === 'TEAM' || r.cycleType === 'TEAM';
+      if (isTeamRec && Array.isArray(r.teamVouchers)) {
+        const vouchers = r.teamVouchers;
+        const hasV = vouchers.length > 0;
+        const sSal = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.salaryByDays || 0)), 0);
+        const sBon = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.otherBonus || 0)), 0);
+        const sAdv = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.advancePayment || 0)), 0);
+        const totInc = sSal + sBon;
+        const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+        const totDed = tax + sAdv;
+        const latestV = hasV ? vouchers[vouchers.length - 1] : undefined;
+        mergedPeriodRecords[k] = {
+          ...r,
+          cycleType: 'TEAM',
+          isRecorded: hasV,
+          project: latestV?.project || r.project,
+          paymentDate: latestV?.paymentDate || r.paymentDate,
+          dailyRate: sSal,
+          actualWorkDays: hasV ? 1 : 0,
+          salaryByDays: sSal,
+          overtimePay: 0,
+          otherBonus: sBon,
+          totalIncome: totInc,
+          personalIncomeTax: tax,
+          advancePayment: sAdv,
+          totalDeductions: totDed,
+          netSalary: Math.max(0, totInc - totDed),
+          teamVouchers: vouchers,
+        };
+        return;
+      }
       const recRate = isTeamRec
         ? Number(
             r.salaryByDays !== undefined &&

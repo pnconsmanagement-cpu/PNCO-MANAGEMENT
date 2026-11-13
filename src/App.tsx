@@ -153,32 +153,92 @@ function buildPayrollRecordsForSync(
       bankName: e.bankName,
       payrollData: e,
     })),
-    ...seas.map((w): PayrollRecord => ({
-      id: `PR-SEA-${periodTag}-${w.code || w.id}`,
-      periodType: 'MONTH',
-      periodCode,
-      workerType: w.payrollCycleType === 'TEAM' ? 'TEAM' : 'SEASONAL',
-      workerId: w.id,
-      workerCode: w.code,
-      workerName: w.fullName,
-      departmentOrProject: w.project || w.trade,
-      standardWorkDays: stdDays,
-      actualWorkDays: w.actualWorkDays || 0,
-      baseSalaryOrRate: w.dailyRate || 0,
-      salaryByDays: w.salaryByDays || 0,
-      overtimeHours: w.overtimeHours || 0,
-      overtimePay: w.overtimePay || 0,
-      allowances: (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0),
-      bonuses: w.otherBonus || 0,
-      totalIncome: w.totalIncome || 0,
-      taxDeduction: w.personalIncomeTax || 0,
-      advancePayment: w.advancePayment || 0,
-      totalDeductions: w.totalDeductions || 0,
-      netSalary: w.netSalary || 0,
-      bankAccount: w.bankAccount,
-      bankName: w.bankName,
-      payrollData: w,
-    })),
+    ...seas.flatMap((rawW): PayrollRecord[] => {
+      const w = syncSeasonalWorkerForMonth(rawW, cfg.month || 11, cfg.year || 2026);
+      // RIÊNG NHÓM TỔ ĐỘI (TEAM): Ghi chi tiết từng Kỳ Lương (KL 0001, KL 0002...) và từng công nhân vào bảng payroll_records trên Database
+      if (w.payrollCycleType === 'TEAM' && Array.isArray(w.teamVouchers) && w.teamVouchers.length > 0) {
+        return w.teamVouchers.map((v, idx): PayrollRecord => {
+          const batchTag = String(v.batchCode || v.id || idx + 1).replace(/\s+/g, '');
+          const sal = Number(v.salaryByDays || 0);
+          const bonus = Number(v.otherBonus || 0);
+          const inc = Number(v.totalIncome ?? sal + bonus);
+          const tax = Number(v.personalIncomeTax || 0);
+          const adv = Number(v.advancePayment || 0);
+          const ded = Number(v.totalDeductions ?? tax + adv);
+          const net = Number(v.netSalary ?? Math.max(0, inc - ded));
+          return {
+            id: `PR-TEAMKL-${periodTag}-${w.code || w.id}-${batchTag}_${idx + 1}`,
+            periodType: 'MONTH',
+            periodCode: v.batchCode ? `${v.batchCode} (${periodCode})` : periodCode,
+            workerType: 'TEAM',
+            workerId: w.id,
+            workerCode: w.code,
+            workerName: w.fullName,
+            departmentOrProject: v.project || w.project || w.trade,
+            standardWorkDays: 1,
+            actualWorkDays: 1,
+            baseSalaryOrRate: sal,
+            salaryByDays: sal,
+            overtimeHours: 0,
+            overtimePay: 0,
+            allowances: 0,
+            bonuses: bonus,
+            totalIncome: inc,
+            taxDeduction: tax,
+            advancePayment: adv,
+            totalDeductions: ded,
+            netSalary: net,
+            bankAccount: w.bankAccount,
+            bankName: w.bankName,
+            notes: v.batchCode
+              ? `Kỳ lương Tổ Đội ${v.batchCode} • Ngày chi: ${v.paymentDate || ''}`
+              : `Đợt ${idx + 1} • Ngày chi: ${v.paymentDate || ''}`,
+            payrollData: {
+              ...w,
+              activeVoucher: v,
+              batchCode: v.batchCode,
+            },
+          };
+        });
+      }
+
+      if (w.payrollCycleType === 'TEAM') {
+        // Công nhân Tổ Đội chưa có kỳ lương nào trong tháng này -> không tạo dòng rác 0đ trong payroll_records
+        if ((w.netSalary || 0) <= 0 && (w.salaryByDays || 0) <= 0 && (w.advancePayment || 0) <= 0) {
+          return [];
+        }
+      }
+
+      return [
+        {
+          id: `PR-SEA-${periodTag}-${w.code || w.id}`,
+          periodType: 'MONTH',
+          periodCode,
+          workerType: w.payrollCycleType === 'TEAM' ? 'TEAM' : 'SEASONAL',
+          workerId: w.id,
+          workerCode: w.code,
+          workerName: w.fullName,
+          departmentOrProject: w.project || w.trade,
+          standardWorkDays: stdDays,
+          actualWorkDays: w.actualWorkDays || 0,
+          baseSalaryOrRate: w.dailyRate || 0,
+          salaryByDays: w.salaryByDays || 0,
+          overtimeHours: w.overtimeHours || 0,
+          overtimePay: w.overtimePay || 0,
+          allowances: (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0),
+          bonuses: w.otherBonus || 0,
+          totalIncome: w.totalIncome || 0,
+          taxDeduction: w.personalIncomeTax || 0,
+          advancePayment: w.advancePayment || 0,
+          totalDeductions: w.totalDeductions || 0,
+          netSalary: w.netSalary || 0,
+          bankAccount: w.bankAccount,
+          bankName: w.bankName,
+          notes: w.notes,
+          payrollData: w,
+        },
+      ];
+    }),
     ...teams.map((t): PayrollRecord => ({
       id: `PR-TEAM-${periodTag}-${t.code || t.id}`,
       periodType: 'MONTH',
@@ -892,6 +952,17 @@ export default function App() {
       .map((pKey) => {
         const r = pRecs[pKey];
         if (!r) return [pKey];
+        const vouchersSnap = Array.isArray(r.teamVouchers)
+          ? r.teamVouchers.map((v: any) => [
+              String(v?.id || ''),
+              String(v?.batchCode || ''),
+              String(v?.paymentDate || ''),
+              String(v?.project || ''),
+              Number(v?.salaryByDays || 0),
+              Number(v?.otherBonus || 0),
+              Number(v?.advancePayment || 0),
+            ])
+          : null;
         return [
           pKey,
           Boolean(r.isRecorded),
@@ -907,6 +978,7 @@ export default function App() {
           String(r.paymentDate || ''),
           String(r.project || ''),
           Boolean(r.selectedForAttendance),
+          vouchersSnap,
         ];
       });
   };
@@ -2669,10 +2741,15 @@ export default function App() {
             })
             .catch(() => {});
 
-          // Đồng bộ bảng báo cáo tổng hợp payroll_records chạy ngầm (không chặn nút Lưu của người dùng!)
+          // Đồng bộ bảng payroll_records (bao gồm chi tiết từng Kỳ Lương Tổ Đội KL 000X) lên Supabase Database
           if (empChanged || seaChanged || teamChanged || advChanged) {
-            void syncPayrollRecordsToSupabase(
-              buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, latestTeams)
+            const pCode =
+              cfgToSync.periodCode ||
+              `${String(cfgToSync.month || 11).padStart(2, '0')}/${cfgToSync.year || 2026}`;
+            const pTag = pCode.replace('/', '_');
+            await syncPayrollRecordsToSupabase(
+              buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, latestTeams),
+              pTag
             ).catch(() => {});
           }
         }
@@ -3245,6 +3322,56 @@ export default function App() {
     );
     seasonalWorkersRef.current = syncedList;
     setSeasonalWorkers(syncedList);
+  };
+
+  // Cập nhật hàng loạt RIÊNG NHÓM TỔ ĐỘI (payrollCycleType === 'TEAM') khi lập/sửa/xóa Kỳ Lương Tổ Đội (tuyệt đối không can thiệp nhân viên khác!)
+  const handleBatchUpdateTeamSeasonalWorkers = (teamUpdates: SeasonalWorker[]) => {
+    if (!Array.isArray(teamUpdates) || teamUpdates.length === 0) return;
+    const nowTs = Date.now();
+    markUnsaved();
+    const curM = configRef.current.month || realDateInfo.realMonth;
+    const curY = configRef.current.year || realDateInfo.realYear;
+
+    const updatesById = new Map<string, SeasonalWorker>();
+    const updatesByCode = new Map<string, SeasonalWorker>();
+    teamUpdates.forEach((u) => {
+      if (u.id) updatesById.set(String(u.id), u);
+      if (u.code) updatesByCode.set(String(u.code), u);
+    });
+
+    const nextList = seasonalWorkersRef.current.map((existing) => {
+      // Tuyệt đối chỉ tác động công nhân thuộc danh sách Tổ Đội ('TEAM')
+      if (existing.payrollCycleType !== 'TEAM') {
+        return existing;
+      }
+      const matched =
+        (existing.id ? updatesById.get(String(existing.id)) : undefined) ||
+        (existing.code ? updatesByCode.get(String(existing.code)) : undefined);
+      if (!matched) {
+        return existing;
+      }
+      const mergedWorker: SeasonalWorker = {
+        ...existing,
+        ...matched,
+        payrollCycleType: 'TEAM',
+        bankAccount: matched.bankAccount !== undefined ? matched.bankAccount : existing.bankAccount || '',
+        bankName: matched.bankName !== undefined ? matched.bankName : existing.bankName || 'Vietcombank',
+        paymentMethod: matched.paymentMethod || existing.paymentMethod || 'BANK',
+        monthlyAttendance: {
+          ...(existing.monthlyAttendance || {}),
+          ...(matched.monthlyAttendance || {}),
+        },
+        periodRecords: {
+          ...(existing.periodRecords || {}),
+          ...(matched.periodRecords || {}),
+        },
+        updatedAt: nowTs,
+      };
+      return syncSeasonalWorkerForMonth(mergedWorker, curM, curY);
+    });
+
+    seasonalWorkersRef.current = nextList;
+    setSeasonalWorkers(nextList);
   };
 
   // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)
@@ -4154,12 +4281,14 @@ export default function App() {
                       employees={syncedEmployees}
                       seasonalWorkers={syncedSeasonalWorkers}
                       teamWorkers={teamWorkers}
+                      projects={projects}
                       config={config}
                       onChangeMonthYear={handleChangeMonthYear}
                       onUpdateEmployee={handleUpdateEmployee}
                       onAddEmployee={handleAddEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
+                      onBatchUpdateTeamWorkersList={handleBatchUpdateTeamSeasonalWorkers}
                       onSavePayrollToCloud={handleManualForceSync}
                       onReloadFromCloud={() => reloadLatestFromCloud()}
                       onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
@@ -4257,12 +4386,14 @@ export default function App() {
                   employees={syncedEmployees}
                   seasonalWorkers={syncedSeasonalWorkers}
                   teamWorkers={teamWorkers}
+                  projects={projects}
                   config={config}
                   onChangeMonthYear={handleChangeMonthYear}
                   onUpdateEmployee={handleUpdateEmployee}
                   onAddEmployee={handleAddEmployee}
                   onDeleteEmployee={handleDeleteEmployee}
                   onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
+                  onBatchUpdateTeamWorkersList={handleBatchUpdateTeamSeasonalWorkers}
                   onSavePayrollToCloud={handleManualForceSync}
                   onReloadFromCloud={() => reloadLatestFromCloud()}
                   onOpenSupabaseModal={() => setIsSupabaseOpen(true)}

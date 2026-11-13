@@ -292,39 +292,79 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       netSalary: monthlySeasonalWorkers.reduce((s, w) => s + Number(w.netSalary || 0), 0),
     };
 
-    // 4. HỆ LƯƠNG TỔ ĐỘI (Bản Lương Tổ Đội)
-    const activeSeasonalTeams = activeSeasonal.filter(
+    // 4. HỆ LƯƠNG TỔ ĐỘI (Bản Lương Tổ Đội — hỗ trợ nhiều đợt chi lương / nhiều dự án trong cùng tháng)
+    const rawSeasonalTeams = syncedSeasonalForSelectedMonth.filter(
       (w) =>
+        (w.status || 'ACTIVE') === 'ACTIVE' &&
         w.payrollCycleType === 'TEAM' &&
         (Boolean(w.selectedForAttendance) ||
           Number(w.actualWorkDays || 0) > 0 ||
           Number(w.totalIncome || 0) > 0)
     );
+    let teamWorkerCount = 0;
+    let teamVoucherOrderCount = 0;
+    let teamSalaryByDays = 0;
+    let teamOvertimePay = 0;
+    let teamAllowancesAndBonus = 0;
+    let teamTotalIncome = 0;
+    let teamDeductions = 0;
+    let teamNetSalary = 0;
+
+    rawSeasonalTeams.forEach((w) => {
+      if (Array.isArray(w.teamVouchers) && w.teamVouchers.length > 0) {
+        const matchedVouchers = w.teamVouchers.filter((v) =>
+          matchesProject(v.project || w.project)
+        );
+        if (matchedVouchers.length > 0) {
+          teamWorkerCount += 1;
+          teamVoucherOrderCount += matchedVouchers.length;
+          matchedVouchers.forEach((v) => {
+            const sal = Number(v.salaryByDays || 0);
+            const bon = Number(v.otherBonus || 0);
+            const inc = Number(v.totalIncome ?? sal + bon);
+            const ded = Number(v.totalDeductions ?? (v.personalIncomeTax || 0) + (v.advancePayment || 0));
+            const net = Number(v.netSalary ?? Math.max(0, inc - ded));
+            teamSalaryByDays += sal;
+            teamAllowancesAndBonus += bon;
+            teamTotalIncome += inc;
+            teamDeductions += ded;
+            teamNetSalary += net;
+          });
+        }
+      } else if (matchesProject(w.project)) {
+        teamWorkerCount += 1;
+        teamVoucherOrderCount += 1;
+        teamSalaryByDays += Number(w.salaryByDays || 0);
+        teamOvertimePay += Number(w.overtimePay || 0);
+        teamAllowancesAndBonus +=
+          Number(w.mealAllowance || 0) +
+          Number(w.travelSafetyAllowance || 0) +
+          Number(w.otherBonus || 0);
+        teamTotalIncome += Number(w.totalIncome || 0);
+        teamDeductions += Number(w.totalDeductions || 0);
+        teamNetSalary += Number(w.netSalary || 0);
+      }
+    });
+
+    const activeSeasonalTeams = { length: teamWorkerCount };
     const teamMonthRow: PeriodBreakdownRow = {
       id: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}_TEAM_MONTH`,
       systemType: 'TEAM',
       systemLabel: '4. Hệ Lương Tổ Đội',
-      periodLabel: `Bản Lương Tổ Đội (T${selectedMonth}/${selectedYear})`,
+      periodLabel:
+        teamVoucherOrderCount > teamWorkerCount
+          ? `Bản Lương Tổ Đội (T${selectedMonth}/${selectedYear} • ${teamVoucherOrderCount} lệnh chi)`
+          : `Bản Lương Tổ Đội (T${selectedMonth}/${selectedYear})`,
       dateRangeLabel: monthRangeStr,
-      workerCount: activeSeasonalTeams.length,
-      totalWorkDays: activeSeasonalTeams.length,
-      totalOtHours:
-        Math.round(
-          activeSeasonalTeams.reduce((s, w) => s + Number(w.overtimeHours || 0), 0) * 10
-        ) / 10,
-      salaryByDays: activeSeasonalTeams.reduce((s, w) => s + Number(w.salaryByDays || 0), 0),
-      overtimePay: activeSeasonalTeams.reduce((s, w) => s + Number(w.overtimePay || 0), 0),
-      allowancesAndBonus: activeSeasonalTeams.reduce(
-        (s, w) =>
-          s +
-          Number(w.mealAllowance || 0) +
-          Number(w.travelSafetyAllowance || 0) +
-          Number(w.otherBonus || 0),
-        0
-      ),
-      totalIncome: activeSeasonalTeams.reduce((s, w) => s + Number(w.totalIncome || 0), 0),
-      deductions: activeSeasonalTeams.reduce((s, w) => s + Number(w.totalDeductions || 0), 0),
-      netSalary: activeSeasonalTeams.reduce((s, w) => s + Number(w.netSalary || 0), 0),
+      workerCount: teamWorkerCount,
+      totalWorkDays: teamVoucherOrderCount,
+      totalOtHours: 0,
+      salaryByDays: teamSalaryByDays,
+      overtimePay: teamOvertimePay,
+      allowancesAndBonus: teamAllowancesAndBonus,
+      totalIncome: teamTotalIncome,
+      deductions: teamDeductions,
+      netSalary: teamNetSalary,
     };
 
     // 5. HỆ LƯƠNG NHÂN VIÊN CHÍNH THỨC (Bản Lương NV Chính Thức)
@@ -576,37 +616,71 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
         w.payrollCycleType === 'TEAM' &&
         (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
     );
-    const filteredSeasonalTeam =
-      selectedProjectFilter === 'ALL'
-        ? seasonalTeamActive
-        : seasonalTeamActive.filter(
-            (w) => w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase())
-          );
 
-    const count = filtered.length + filteredSeasonalTeam.length;
+    let seaTeamCount = 0;
+    let seaTeamBase = 0;
+    let seaTeamOt = 0;
+    let seaTeamAllow = 0;
+    let seaTeamInc = 0;
+    let seaTeamAdv = 0;
+    let seaTeamNet = 0;
+
+    seasonalTeamActive.forEach((w) => {
+      if (Array.isArray(w.teamVouchers) && w.teamVouchers.length > 0) {
+        const matchedVouchers =
+          selectedProjectFilter === 'ALL'
+            ? w.teamVouchers
+            : w.teamVouchers.filter(
+                (v) =>
+                  (v.project || w.project || '')
+                    .toLowerCase()
+                    .includes(selectedProjectFilter.toLowerCase())
+              );
+        if (matchedVouchers.length > 0) {
+          seaTeamCount += 1;
+          matchedVouchers.forEach((v) => {
+            const sal = Number(v.salaryByDays || 0);
+            const bon = Number(v.otherBonus || 0);
+            const adv = Number(v.advancePayment || 0);
+            const inc = Number(v.totalIncome ?? sal + bon);
+            const ded = Number(v.totalDeductions ?? (v.personalIncomeTax || 0) + adv);
+            seaTeamBase += sal;
+            seaTeamAllow += bon;
+            seaTeamInc += inc;
+            seaTeamAdv += adv;
+            seaTeamNet += Number(v.netSalary ?? Math.max(0, inc - ded));
+          });
+        }
+      } else if (
+        selectedProjectFilter === 'ALL' ||
+        (w.project && w.project.toLowerCase().includes(selectedProjectFilter.toLowerCase()))
+      ) {
+        seaTeamCount += 1;
+        seaTeamBase += w.salaryByDays || 0;
+        seaTeamOt += w.overtimePay || 0;
+        seaTeamAllow += (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0);
+        seaTeamInc += w.totalIncome || 0;
+        seaTeamAdv += w.advancePayment || 0;
+        seaTeamNet += w.netSalary || 0;
+      }
+    });
+
+    const count = filtered.length + seaTeamCount;
     const totalWorkers =
-      filtered.reduce((s, t) => s + (t.workerCount || 1), 0) + filteredSeasonalTeam.length;
+      filtered.reduce((s, t) => s + (t.workerCount || 1), 0) + seaTeamCount;
     const baseTotal =
-      filtered.reduce((s, t) => s + (t.salaryByDays || 0), 0) +
-      filteredSeasonalTeam.reduce((s, w) => s + (w.salaryByDays || 0), 0);
+      filtered.reduce((s, t) => s + (t.salaryByDays || 0), 0) + seaTeamBase;
     const otTotal =
-      filtered.reduce((s, t) => s + (t.overtimePay || 0), 0) +
-      filteredSeasonalTeam.reduce((s, w) => s + (w.overtimePay || 0), 0);
+      filtered.reduce((s, t) => s + (t.overtimePay || 0), 0) + seaTeamOt;
     const allowanceTotal =
       filtered.reduce((s, t) => s + (t.mealAllowance || 0) + (t.otherBonus || 0), 0) +
-      filteredSeasonalTeam.reduce(
-        (s, w) => s + (w.mealAllowance || 0) + (w.travelSafetyAllowance || 0) + (w.otherBonus || 0),
-        0
-      );
+      seaTeamAllow;
     const totalIncome =
-      filtered.reduce((s, t) => s + (t.totalIncome || 0), 0) +
-      filteredSeasonalTeam.reduce((s, w) => s + (w.totalIncome || 0), 0);
+      filtered.reduce((s, t) => s + (t.totalIncome || 0), 0) + seaTeamInc;
     const advanceTotal =
-      filtered.reduce((s, t) => s + (t.advancePayment || 0), 0) +
-      filteredSeasonalTeam.reduce((s, w) => s + (w.advancePayment || 0), 0);
+      filtered.reduce((s, t) => s + (t.advancePayment || 0), 0) + seaTeamAdv;
     const netTotal =
-      filtered.reduce((s, t) => s + (t.netSalary || 0), 0) +
-      filteredSeasonalTeam.reduce((s, w) => s + (w.netSalary || 0), 0);
+      filtered.reduce((s, t) => s + (t.netSalary || 0), 0) + seaTeamNet;
 
     return {
       count,
@@ -662,18 +736,31 @@ export const FinancialReportTab: React.FC<FinancialReportTabProps> = ({
       const pSeasonal = syncedSeasonalForSelectedMonth.filter(
         (w) => w.payrollCycleType !== 'TEAM' && matchProj(w.project)
       );
-      const pSeasonalTeams = syncedSeasonalForSelectedMonth.filter(
-        (w) =>
-          w.payrollCycleType === 'TEAM' &&
-          matchProj(w.project) &&
-          (Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
-      );
+      let seaTeamProjectIncome = 0;
+      syncedSeasonalForSelectedMonth.forEach((w) => {
+        if (
+          w.payrollCycleType !== 'TEAM' ||
+          !(Boolean(w.selectedForAttendance) || (w.actualWorkDays || 0) > 0 || (w.totalIncome || 0) > 0)
+        ) {
+          return;
+        }
+        if (Array.isArray(w.teamVouchers) && w.teamVouchers.length > 0) {
+          w.teamVouchers.forEach((v) => {
+            if (matchProj(v.project || w.project)) {
+              seaTeamProjectIncome += Number(
+                v.totalIncome ?? (v.salaryByDays || 0) + (v.otherBonus || 0)
+              );
+            }
+          });
+        } else if (matchProj(w.project)) {
+          seaTeamProjectIncome += w.totalIncome || 0;
+        }
+      });
       const pTeams = teamWorkers.filter((t) => matchProj(t.project));
 
       const seasonalMonthly = pSeasonal.reduce((s, w) => s + (w.totalIncome || 0), 0);
       const teamMonthly =
-        pTeams.reduce((s, t) => s + (t.totalIncome || 0), 0) +
-        pSeasonalTeams.reduce((s, w) => s + (w.totalIncome || 0), 0);
+        pTeams.reduce((s, t) => s + (t.totalIncome || 0), 0) + seaTeamProjectIncome;
       const engineersMonthly = 35000000; // Chi phí kỹ sư giám sát tại dự án ước tính
       const monthlyTotal = seasonalMonthly + teamMonthly + engineersMonthly;
       const actualCost =

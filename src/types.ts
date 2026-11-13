@@ -123,6 +123,31 @@ export interface SeasonalWorker {
   periodRecords?: { [periodKey: string]: SeasonalPeriodRecord };
   // Bản ghi chấm công theo lịch tháng đầy đủ (dùng cho web app chấm công di động trên điện thoại)
   monthlyAttendance?: { [monthKey: string]: MonthlyAttendanceRecord };
+  // Hỗ trợ nhiều lệnh / kỳ lương Tổ Đội trong cùng 1 tháng cho 1 nhân sự
+  teamVouchers?: TeamPaymentVoucher[];
+  activeVoucherId?: string;
+  activeVoucherIndex?: number;
+  totalVouchersInMonth?: number;
+  activeBatchCode?: string;
+}
+
+export interface TeamPaymentVoucher {
+  id: string; // Mã định danh lệnh chi (vd: "TVOUCHER-1763000000000-abc")
+  batchCode?: string; // Mã kỳ lương Tổ Đội (vd: "KL 0001", "KL 0002"...)
+  batchTitle?: string; // Ghi chú / Tên kỳ lương Tổ Đội (tùy chọn)
+  orderIndex?: number; // Thứ tự đợt nhận trong tháng: 1, 2, 3...
+  paymentDate: string; // Ngày chuyển lương đợt này (YYYY-MM-DD)
+  project: string; // Dự án nhận chi phí của đợt này
+  salaryByDays: number; // Số tiền lương nhận đợt này (VNĐ)
+  otherBonus?: number; // Phụ cấp & thưởng đợt này (VNĐ)
+  advancePayment?: number; // Khấu trừ tạm ứng ở đợt này (VNĐ)
+  hasTaxCommitment?: boolean;
+  personalIncomeTax?: number;
+  totalIncome?: number;
+  totalDeductions?: number;
+  netSalary?: number;
+  notes?: string;
+  updatedAt?: number;
 }
 
 export interface DailyAttendanceDetail {
@@ -190,6 +215,8 @@ export interface SeasonalPeriodRecord {
   netSalary: number;
   weeklyTimesheet?: WeeklyDayAttendance[];
   notes?: string;
+  teamVouchers?: TeamPaymentVoucher[]; // Danh sách các đợt chi lương Tổ Đội trong tháng
+  updatedAt?: number;
 }
 
 export interface WeeklyDayAttendance {
