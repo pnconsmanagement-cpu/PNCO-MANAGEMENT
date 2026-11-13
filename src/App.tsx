@@ -2741,13 +2741,13 @@ export default function App() {
             })
             .catch(() => {});
 
-          // Đồng bộ bảng payroll_records (bao gồm chi tiết từng Kỳ Lương Tổ Đội KL 000X) lên Supabase Database
+          // Đồng bộ bảng payroll_records (bao gồm chi tiết từng Kỳ Lương Tổ Đội KL 000X) lên Supabase Database chạy ngầm siêu tốc
           if (empChanged || seaChanged || teamChanged || advChanged) {
             const pCode =
               cfgToSync.periodCode ||
               `${String(cfgToSync.month || 11).padStart(2, '0')}/${cfgToSync.year || 2026}`;
             const pTag = pCode.replace('/', '_');
-            await syncPayrollRecordsToSupabase(
+            void syncPayrollRecordsToSupabase(
               buildPayrollRecordsForSync(cfgToSync, latestEmps, latestSeas, latestTeams),
               pTag
             ).catch(() => {});

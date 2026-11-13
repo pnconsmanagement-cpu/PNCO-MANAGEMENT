@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Building2,
   Calendar,
@@ -21,6 +21,38 @@ import {
   buildTeamPeriodRecordFromVouchers,
 } from '../data/mockSeasonalWorkers';
 
+export interface TeamPayrollPeriodWorkerRow {
+  worker: SeasonalWorker;
+  voucher: TeamPaymentVoucher;
+  voucherId: string;
+  salaryByDays: number;
+  otherBonus: number;
+  advancePayment: number;
+  personalIncomeTax: number;
+  totalIncome: number;
+  totalDeductions: number;
+  netSalary: number;
+}
+
+export interface TeamPayrollPeriodGroup {
+  groupKey: string;
+  displayCode: string;
+  rawBatchCode?: string;
+  isLegacyDateGroup: boolean;
+  paymentDate: string;
+  paymentDateDisplay: string;
+  project: string;
+  workerCount: number;
+  totalSalaryByDays: number;
+  totalBonus: number;
+  totalAdvance: number;
+  totalTax: number;
+  totalIncome: number;
+  totalNetSalary: number;
+  voucherIds: Set<string>;
+  rows: TeamPayrollPeriodWorkerRow[];
+}
+
 interface SelectedWorkerSalaryItem {
   workerKey: string;
   salaryByDays: string;
@@ -38,7 +70,7 @@ interface TeamBatchPayrollModalProps {
   availableProjectNames: string[];
   currentMonth: number;
   currentYear: number;
-  editingBatchCode?: string | null;
+  editingGroup?: TeamPayrollPeriodGroup | null;
   onSaveBatchAndSync: (
     updatedTeamWorkers: SeasonalWorker[],
     noticeMessage: string,
@@ -94,7 +126,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
   availableProjectNames,
   currentMonth,
   currentYear,
-  editingBatchCode = null,
+  editingGroup = null,
   onSaveBatchAndSync,
 }) => {
   const [selectedProject, setSelectedProject] = useState<string>('');
@@ -106,6 +138,8 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
   const [quickFillSalary, setQuickFillSalary] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const wasOpenRef = useRef<boolean>(false);
+  const prevEditingKeyRef = useRef<string | null>(null);
 
   // Danh sách dự án gộp từ Danh sách Dự án + các dự án sẵn có
   const mergedProjectOptions = useMemo(() => {
@@ -140,52 +174,47 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
     return Array.from(set);
   }, [teamWorkersList]);
 
-  // Khởi tạo dữ liệu khi mở Modal (Tạo mới hoặc Sửa kỳ lương đã có)
+  // Khởi tạo dữ liệu ĐÚNG 1 LẦN khi vừa mở Modal (không chạy lại khi dữ liệu nền đồng bộ để tránh mất tick chọn hoặc nhảy mã KL)
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      prevEditingKeyRef.current = null;
+      setIsSubmitting(false);
+      return;
+    }
+
+    const activeEditKey = editingGroup ? editingGroup.groupKey : null;
+    if (wasOpenRef.current && prevEditingKeyRef.current === activeEditKey) {
+      return;
+    }
+    wasOpenRef.current = true;
+    prevEditingKeyRef.current = activeEditKey;
+
     setErrorMsg(null);
     setSearchQuery('');
     setTradeFilter('ALL');
     setQuickFillSalary('');
 
-    if (editingBatchCode) {
-      const normalizedTarget = editingBatchCode.trim();
+    if (editingGroup) {
       const preselected: Record<string, SelectedWorkerSalaryItem> = {};
-      let detectedProject = '';
-      let detectedDate = '';
-
-      teamWorkersList.forEach((w) => {
-        const wKey = w.id || w.code;
-        const baseW =
-          allSeasonalWorkers.find(
-            (sw) => sw.payrollCycleType === 'TEAM' && (sw.id === w.id || sw.code === w.code)
-          ) || w;
-        const vouchers = getTeamWorkerVouchersForMonth(baseW, currentMonth, currentYear);
-        const matchingVoucher = vouchers.find(
-          (v) => (v.batchCode || '').trim() === normalizedTarget
-        );
-        if (matchingVoucher) {
-          if (!detectedProject && matchingVoucher.project) {
-            detectedProject = matchingVoucher.project;
-          }
-          if (!detectedDate && matchingVoucher.paymentDate) {
-            detectedDate = matchingVoucher.paymentDate;
-          }
-          preselected[wKey] = {
-            workerKey: wKey,
-            salaryByDays: String(matchingVoucher.salaryByDays || ''),
-            otherBonus: matchingVoucher.otherBonus ? String(matchingVoucher.otherBonus) : '',
-            advancePayment: matchingVoucher.advancePayment
-              ? String(matchingVoucher.advancePayment)
-              : '',
-            existingVoucherId: matchingVoucher.id,
-          };
-        }
+      editingGroup.rows.forEach((r) => {
+        const matchedTeamWorker =
+          teamWorkersList.find(
+            (tw) => tw.id === r.worker.id || tw.code === r.worker.code
+          ) || r.worker;
+        const wKey = matchedTeamWorker.id || matchedTeamWorker.code;
+        preselected[wKey] = {
+          workerKey: wKey,
+          salaryByDays: String(r.salaryByDays || ''),
+          otherBonus: r.otherBonus ? String(r.otherBonus) : '',
+          advancePayment: r.advancePayment ? String(r.advancePayment) : '',
+          existingVoucherId: r.voucherId,
+        };
       });
 
-      setBatchCode(normalizedTarget);
-      setSelectedProject(detectedProject || mergedProjectOptions[0] || 'Coherent Vsip 3');
-      setPaymentDate(detectedDate || getDefaultIsoDate(currentMonth, currentYear));
+      setBatchCode(editingGroup.rawBatchCode || editingGroup.displayCode);
+      setSelectedProject(editingGroup.project || mergedProjectOptions[0] || 'Coherent Vsip 3');
+      setPaymentDate(editingGroup.paymentDate || getDefaultIsoDate(currentMonth, currentYear));
       setSelectedMap(preselected);
     } else {
       const nextCode = generateNextTeamBatchCode(allSeasonalWorkers);
@@ -196,7 +225,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
     }
   }, [
     isOpen,
-    editingBatchCode,
+    editingGroup,
     currentMonth,
     currentYear,
     teamWorkersList,
@@ -406,7 +435,6 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
       const targetPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
       const nowTs = Date.now();
       const updatedTeamWorkers: SeasonalWorker[] = [];
-      const originalEditingCode = editingBatchCode ? editingBatchCode.trim() : null;
 
       // Chỉ duyệt qua các công nhân thuộc nhóm TỔ ĐỘI (payrollCycleType === 'TEAM')
       teamWorkersList.forEach((tWorker) => {
@@ -424,13 +452,15 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
         );
         const tickedData = selectedMap[wKey];
 
-        if (originalEditingCode) {
-          // Chế độ SỬA kỳ lương đã có:
-          // - Nếu vẫn được tick: cập nhật voucher của kỳ đó (hoặc thêm mới nếu vừa tick thêm người)
-          // - Nếu đã bỏ tick mà trước đó nằm trong kỳ này: gỡ voucher của kỳ đó khỏi công nhân
-          const hadInThisBatch = existingVouchers.some(
-            (v) => (v.batchCode || '').trim() === originalEditingCode
-          );
+        if (editingGroup) {
+          const isVoucherInEditedGroup = (v: TeamPaymentVoucher) =>
+            editingGroup.voucherIds.has(v.id) ||
+            Boolean(
+              editingGroup.rawBatchCode &&
+                (v.batchCode || '').trim() === editingGroup.rawBatchCode.trim()
+            );
+
+          const hadInThisBatch = existingVouchers.some(isVoucherInEditedGroup);
           if (!tickedData && !hadInThisBatch) {
             return; // Không liên quan tới kỳ lương đang sửa -> giữ nguyên 100%
           }
@@ -443,7 +473,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
 
             if (hadInThisBatch) {
               nextVouchers = existingVouchers.map((v) => {
-                if ((v.batchCode || '').trim() === originalEditingCode) {
+                if (isVoucherInEditedGroup(v)) {
                   return {
                     ...v,
                     batchCode: cleanedBatchCode,
@@ -475,10 +505,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
               ];
             }
           } else {
-            // Đã bỏ tick khỏi kỳ lương đang sửa
-            nextVouchers = existingVouchers.filter(
-              (v) => (v.batchCode || '').trim() !== originalEditingCode
-            );
+            nextVouchers = existingVouchers.filter((v) => !isVoucherInEditedGroup(v));
           }
 
           const rebuilt = buildTeamPeriodRecordFromVouchers(
@@ -499,7 +526,6 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
           const bonus = Math.max(0, Math.round(Number(tickedData.otherBonus) || 0));
           const adv = Math.max(0, Math.round(Number(tickedData.advancePayment) || 0));
 
-          // Nếu công nhân đã có đúng mã kỳ lương này trong tháng thì cập nhật, ngược lại thêm đợt mới
           const alreadyHasSameBatch = existingVouchers.some(
             (v) => (v.batchCode || '').trim().toUpperCase() === cleanedBatchCode
           );
@@ -554,13 +580,11 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
         summaryTotals.totalNet
       )} đ • Ngày chi: ${formatIsoToDmy(paymentDate)}) vào Database thành công!`;
 
-      await Promise.resolve(
-        onSaveBatchAndSync(updatedTeamWorkers, noticeMsg, cleanedBatchCode)
-      );
+      // Đóng cửa sổ ngay lập tức và đồng bộ Database ở nền để người dùng không phải chờ mạng
       onClose();
+      void onSaveBatchAndSync(updatedTeamWorkers, noticeMsg, cleanedBatchCode);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Có lỗi xảy ra khi lưu kỳ lương vào Database.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -582,8 +606,8 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
             <div>
               <h3 className="text-sm sm:text-base font-black uppercase tracking-wide flex items-center gap-2">
                 <span>
-                  {editingBatchCode
-                    ? `CHỈNH SỬA KỲ LƯƠNG TỔ ĐỘI: ${editingBatchCode}`
+                  {editingGroup
+                    ? `CHỈNH SỬA KỲ LƯƠNG TỔ ĐỘI: ${editingGroup.displayCode}`
                     : 'TẠO KỲ LƯƠNG DANH SÁCH TỔ ĐỘI (TICK CHỌN CÔNG NHÂN)'}
                 </span>
                 <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950">
@@ -1096,7 +1120,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                 <span>
                   {isSubmitting
                     ? 'Đang lưu vào Database...'
-                    : editingBatchCode
+                    : editingGroup
                     ? `Cập nhật Kỳ Lương (${batchCode}) & Lưu Database`
                     : `Lưu Kỳ Lương (${batchCode}) & Ghi Database`}
                 </span>

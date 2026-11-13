@@ -27,6 +27,7 @@ import {
   Copy,
   Check,
   Link2,
+  Eye,
 } from 'lucide-react';
 import {
   CompanyConfig,
@@ -65,7 +66,11 @@ import {
 } from '../utils/printPayrollReceipt';
 import { PayslipDocument } from './PayslipDocument';
 import { EmployeeModal } from './EmployeeModal';
-import { TeamBatchPayrollModal } from './TeamBatchPayrollModal';
+import {
+  TeamBatchPayrollModal,
+  TeamPayrollPeriodGroup,
+  TeamPayrollPeriodWorkerRow,
+} from './TeamBatchPayrollModal';
 
 interface PayrollTableTabProps {
   employees: Employee[];
@@ -588,15 +593,19 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     }
   };
 
-  // Modal Tạo Kỳ Lương Tổ Đội (Tick chọn nhiều công nhân + nhập lương + lưu Database theo chuẩn KL 0001+)
+  // Modal Tạo Kỳ Lương Tổ Đội & Cửa sổ Xem Danh Sách Công Nhân Theo Kỳ Lương
   const [isTeamBatchModalOpen, setIsTeamBatchModalOpen] = useState(false);
-  const [editingTeamBatchCode, setEditingTeamBatchCode] = useState<string | null>(null);
-  const [selectedTeamBatchFilter, setSelectedTeamBatchFilter] = useState<string>('ALL_BATCHES');
-  const [confirmDeleteBatchCode, setConfirmDeleteBatchCode] = useState<string | null>(null);
+  const [editingTeamPeriodGroup, setEditingTeamPeriodGroup] = useState<TeamPayrollPeriodGroup | null>(null);
+  const [viewingTeamPeriodGroupKey, setViewingTeamPeriodGroupKey] = useState<string | null>(null);
+  const [detailModalSearchTerm, setDetailModalSearchTerm] = useState<string>('');
+  const [confirmDeleteGroupKey, setConfirmDeleteGroupKey] = useState<string | null>(null);
+  const [confirmRemoveVoucherId, setConfirmRemoveVoucherId] = useState<string | null>(null);
 
   useEffect(() => {
-    setSelectedTeamBatchFilter('ALL_BATCHES');
-    setConfirmDeleteBatchCode(null);
+    setViewingTeamPeriodGroupKey(null);
+    setConfirmDeleteGroupKey(null);
+    setConfirmRemoveVoucherId(null);
+    setDetailModalSearchTerm('');
   }, [currentMonth, currentYear, seasonalCycleTab]);
 
   // Modal Tạo Phiếu Chi Lương Tổ Đội lẻ 1 nhân sự
@@ -777,99 +786,207 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     }, 0);
   }, [allTeamSeasonalWorkers, seasonalWorkers, currentMonth, currentYear]);
 
-  // Tổng hợp danh sách các Kỳ Lương Tổ Đội (KL 0001, KL 0002...) đã tạo trong tháng đang xem
-  const teamBatchesSummary = useMemo(() => {
-    const batchMap = new Map<
-      string,
-      {
-        batchCode: string;
-        project: string;
-        paymentDate: string;
-        workerCount: number;
-        totalNetSalary: number;
-      }
-    >();
-    let unbatchedCount = 0;
-    let unbatchedNetSalary = 0;
+  // Tổng hợp danh sách Thống Kê Các Kỳ Lương Tổ Đội theo ngày trong tháng đang xem
+  const teamPayrollPeriodGroups = useMemo<TeamPayrollPeriodGroup[]>(() => {
+    const groupMap = new Map<string, TeamPayrollPeriodGroup>();
+    const defaultIso = getDefaultVoucherDate(currentMonth, currentYear);
 
     allTeamSeasonalWorkers.forEach((w) => {
       const baseW = findTeamBaseWorker(w) || w;
+      const bankAcc = w.bankAccount || baseW.bankAccount || '';
+      const bankNm =
+        w.bankName ||
+        baseW.bankName ||
+        ((w.paymentMethod || baseW.paymentMethod) === 'CASH' ? 'Tiền mặt' : 'Vietcombank');
+      const payMethod = w.paymentMethod || baseW.paymentMethod || 'BANK';
       const vouchers = getTeamWorkerVouchersForMonth(baseW, currentMonth, currentYear);
+
       vouchers.forEach((v) => {
-        const net =
-          v.netSalary ??
-          Math.max(0, (v.salaryByDays || 0) + (v.otherBonus || 0) - (v.advancePayment || 0));
         const bCode = (v.batchCode || '').trim();
-        if (bCode) {
-          const existing = batchMap.get(bCode);
-          if (existing) {
-            existing.workerCount += 1;
-            existing.totalNetSalary += net;
-          } else {
-            batchMap.set(bCode, {
-              batchCode: bCode,
-              project: v.project || w.project || '',
-              paymentDate: v.paymentDate || '',
-              workerCount: 1,
-              totalNetSalary: net,
-            });
-          }
+        const payDate = normalizeToIsoDate(v.paymentDate || w.paymentDate, currentMonth, currentYear) || defaultIso;
+        const proj = (v.project || w.project || 'Coherent Vsip 3').trim();
+        const gKey = bCode ? `BATCH::${bCode}` : `DATE::${payDate}::${proj}`;
+        const payDateDmy = formatIsoToDmy(payDate);
+        const displayCode = bCode || `Kỳ ${payDateDmy}`;
+
+        const sal = Math.max(0, v.salaryByDays || 0);
+        const bon = Math.max(0, v.otherBonus || 0);
+        const adv = Math.max(0, v.advancePayment || 0);
+        const tax = Math.max(0, v.personalIncomeTax || 0);
+        const inc = v.totalIncome ?? sal + bon;
+        const ded = v.totalDeductions ?? tax + adv;
+        const net = v.netSalary ?? Math.max(0, inc - ded);
+
+        const rowItem: TeamPayrollPeriodWorkerRow = {
+          worker: {
+            ...w,
+            bankAccount: bankAcc,
+            bankName: bankNm,
+            paymentMethod: payMethod,
+            project: proj,
+            paymentDate: payDate,
+          },
+          voucher: v,
+          voucherId: v.id,
+          salaryByDays: sal,
+          otherBonus: bon,
+          advancePayment: adv,
+          personalIncomeTax: tax,
+          totalIncome: inc,
+          totalDeductions: ded,
+          netSalary: net,
+        };
+
+        const existing = groupMap.get(gKey);
+        if (existing) {
+          existing.workerCount += 1;
+          existing.totalSalaryByDays += sal;
+          existing.totalBonus += bon;
+          existing.totalAdvance += adv;
+          existing.totalTax += tax;
+          existing.totalIncome += inc;
+          existing.totalNetSalary += net;
+          existing.voucherIds.add(v.id);
+          existing.rows.push(rowItem);
         } else {
-          unbatchedCount += 1;
-          unbatchedNetSalary += net;
+          groupMap.set(gKey, {
+            groupKey: gKey,
+            displayCode,
+            rawBatchCode: bCode || undefined,
+            isLegacyDateGroup: !bCode,
+            paymentDate: payDate,
+            paymentDateDisplay: payDateDmy,
+            project: proj,
+            workerCount: 1,
+            totalSalaryByDays: sal,
+            totalBonus: bon,
+            totalAdvance: adv,
+            totalTax: tax,
+            totalIncome: inc,
+            totalNetSalary: net,
+            voucherIds: new Set([v.id]),
+            rows: [rowItem],
+          });
         }
       });
     });
 
-    const batches = Array.from(batchMap.values()).sort((a, b) =>
-      a.batchCode.localeCompare(b.batchCode, 'vi', { numeric: true })
-    );
-    return {
-      batches,
-      unbatchedCount,
-      unbatchedNetSalary,
-    };
+    // Sắp xếp danh sách công nhân bên trong mỗi kỳ theo mã CN tăng dần
+    groupMap.forEach((g) => {
+      g.rows.sort((a, b) =>
+        (a.worker.code || '').localeCompare(b.worker.code || '', 'vi', { numeric: true })
+      );
+    });
+
+    // Sắp xếp các Kỳ Lương theo Ngày kỳ lương tăng dần, sau đó theo Mã kỳ lương
+    return Array.from(groupMap.values()).sort((a, b) => {
+      if (a.paymentDate !== b.paymentDate) {
+        return a.paymentDate.localeCompare(b.paymentDate);
+      }
+      return a.displayCode.localeCompare(b.displayCode, 'vi', { numeric: true });
+    });
   }, [allTeamSeasonalWorkers, seasonalWorkers, currentMonth, currentYear]);
 
+  // Lọc bảng Thống kê Kỳ Lương theo ô tìm kiếm (tìm theo ngày kỳ lương, mã kỳ, dự án hoặc tên/mã công nhân có trong kỳ)
+  const filteredTeamPeriodGroups = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return teamPayrollPeriodGroups;
+    return teamPayrollPeriodGroups.filter((g) => {
+      if (
+        g.displayCode.toLowerCase().includes(term) ||
+        g.paymentDateDisplay.toLowerCase().includes(term) ||
+        g.paymentDate.toLowerCase().includes(term) ||
+        g.project.toLowerCase().includes(term)
+      ) {
+        return true;
+      }
+      return g.rows.some(
+        (r) =>
+          r.worker.fullName.toLowerCase().includes(term) ||
+          r.worker.code.toLowerCase().includes(term)
+      );
+    });
+  }, [teamPayrollPeriodGroups, searchTerm]);
+
+  // Kỳ lương đang được Click mở xem danh sách công nhân chi tiết
+  const activeViewingPeriodGroup = useMemo(() => {
+    if (!viewingTeamPeriodGroupKey) return null;
+    return teamPayrollPeriodGroups.find((g) => g.groupKey === viewingTeamPeriodGroupKey) || null;
+  }, [teamPayrollPeriodGroups, viewingTeamPeriodGroupKey]);
+
+  useEffect(() => {
+    if (viewingTeamPeriodGroupKey && !activeViewingPeriodGroup) {
+      setViewingTeamPeriodGroupKey(null);
+    }
+  }, [viewingTeamPeriodGroupKey, activeViewingPeriodGroup]);
+
+  const filteredDetailModalRows = useMemo(() => {
+    if (!activeViewingPeriodGroup) return [];
+    const q = detailModalSearchTerm.trim().toLowerCase();
+    if (!q) return activeViewingPeriodGroup.rows;
+    return activeViewingPeriodGroup.rows.filter(
+      (r) =>
+        r.worker.fullName.toLowerCase().includes(q) ||
+        r.worker.code.toLowerCase().includes(q) ||
+        (r.worker.trade && r.worker.trade.toLowerCase().includes(q)) ||
+        (r.worker.bankAccount && r.worker.bankAccount.toLowerCase().includes(q))
+    );
+  }, [activeViewingPeriodGroup, detailModalSearchTerm]);
+
   const handleOpenCreateTeamBatchModal = () => {
-    setEditingTeamBatchCode(null);
+    setViewingTeamPeriodGroupKey(null);
+    setEditingTeamPeriodGroup(null);
     setIsTeamBatchModalOpen(true);
   };
 
-  const handleOpenEditTeamBatchModal = (batchCodeToEdit: string) => {
-    setEditingTeamBatchCode(batchCodeToEdit);
+  const handleOpenEditTeamPeriodGroup = (group: TeamPayrollPeriodGroup) => {
+    setViewingTeamPeriodGroupKey(null);
+    setEditingTeamPeriodGroup(group);
     setIsTeamBatchModalOpen(true);
   };
 
-  const handleSaveTeamBatchAndSync = async (
+  const handleSaveTeamBatchAndSync = (
     updatedTeamWorkers: SeasonalWorker[],
     noticeMessage: string,
     savedBatchCode: string
   ) => {
+    setIsTeamBatchModalOpen(false);
+    setEditingTeamPeriodGroup(null);
     setSeasonalCycleTab('TEAM');
     if (onBatchUpdateTeamWorkersList) {
       onBatchUpdateTeamWorkersList(updatedTeamWorkers);
     } else if (onUpdateSeasonalWorker) {
       updatedTeamWorkers.forEach((uw) => onUpdateSeasonalWorker(uw));
     }
-    setSelectedTeamBatchFilter(savedBatchCode);
-    setIsSavingPayroll(true);
-    try {
-      if (onSavePayrollToCloud) {
-        await Promise.resolve(onSavePayrollToCloud());
-      }
+
+    if (onSavePayrollToCloud) {
+      setIsSavingPayroll(true);
+      setSavePayrollNotice(`⏳ Đang ghi Kỳ lương Tổ Đội [${savedBatchCode}] vào Database...`);
+      Promise.resolve(onSavePayrollToCloud())
+        .then(() => {
+          setSavePayrollNotice(noticeMessage);
+          setTimeout(() => {
+            setSavePayrollNotice(null);
+          }, 6500);
+        })
+        .catch(() => {
+          setSavePayrollNotice(
+            `⚠ Đã lưu Kỳ lương [${savedBatchCode}] trên máy — vui lòng nhấn "Lưu Data" để đồng bộ lại Cloud.`
+          );
+        })
+        .finally(() => {
+          setIsSavingPayroll(false);
+        });
+    } else {
       setSavePayrollNotice(noticeMessage);
       setTimeout(() => {
         setSavePayrollNotice(null);
       }, 6500);
-    } finally {
-      setIsSavingPayroll(false);
     }
   };
 
-  const handleDeleteTeamBatch = async (targetBatchCode: string) => {
-    const target = targetBatchCode.trim();
-    if (!target) return;
+  const handleDeleteTeamPeriodGroup = async (group: TeamPayrollPeriodGroup) => {
+    if (!group || group.voucherIds.size === 0) return;
     const mPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
     const nowTs = Date.now();
     const updatedWorkers: SeasonalWorker[] = [];
@@ -877,9 +994,9 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     allTeamSeasonalWorkers.forEach((w) => {
       const baseW = findTeamBaseWorker(w) || w;
       const vouchers = getTeamWorkerVouchersForMonth(baseW, currentMonth, currentYear);
-      const hasTarget = vouchers.some((v) => (v.batchCode || '').trim() === target);
+      const hasTarget = vouchers.some((v) => group.voucherIds.has(v.id));
       if (!hasTarget) return;
-      const remaining = vouchers.filter((v) => (v.batchCode || '').trim() !== target);
+      const remaining = vouchers.filter((v) => !group.voucherIds.has(v.id));
       const rebuilt = buildTeamPeriodRecordFromVouchers(
         { ...baseW, payrollCycleType: 'TEAM' },
         mPeriod,
@@ -893,20 +1010,22 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     });
 
     if (updatedWorkers.length > 0) {
+      if (viewingTeamPeriodGroupKey === group.groupKey) {
+        setViewingTeamPeriodGroupKey(null);
+      }
+      setConfirmDeleteGroupKey(null);
       if (onBatchUpdateTeamWorkersList) {
         onBatchUpdateTeamWorkersList(updatedWorkers);
       } else if (onUpdateSeasonalWorker) {
         updatedWorkers.forEach((uw) => onUpdateSeasonalWorker(uw));
       }
-      setSelectedTeamBatchFilter('ALL_BATCHES');
-      setConfirmDeleteBatchCode(null);
       setIsSavingPayroll(true);
       try {
         if (onSavePayrollToCloud) {
           await Promise.resolve(onSavePayrollToCloud());
         }
         setSavePayrollNotice(
-          `✓ Đã xóa Kỳ lương [${target}] (${updatedWorkers.length} công nhân) và cập nhật Database!`
+          `✓ Đã xóa Kỳ lương [${group.displayCode} - ngày ${group.paymentDateDisplay}] (${updatedWorkers.length} công nhân) và cập nhật Database!`
         );
         setTimeout(() => {
           setSavePayrollNotice(null);
@@ -915,6 +1034,75 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         setIsSavingPayroll(false);
       }
     }
+  };
+
+  const handleRemoveSingleWorkerFromPeriod = async (
+    row: TeamPayrollPeriodWorkerRow,
+    group: TeamPayrollPeriodGroup
+  ) => {
+    const baseW = findTeamBaseWorker(row.worker) || row.worker;
+    const mPeriod = getPayrollPeriods(currentYear, currentMonth, 'TEAM')[0];
+    const vouchers = getTeamWorkerVouchersForMonth(baseW, currentMonth, currentYear);
+    const remaining = vouchers.filter((v) => v.id !== row.voucherId);
+    const rebuilt = buildTeamPeriodRecordFromVouchers(
+      { ...baseW, payrollCycleType: 'TEAM' },
+      mPeriod,
+      remaining
+    );
+    const updatedWorker: SeasonalWorker = {
+      ...rebuilt,
+      payrollCycleType: 'TEAM',
+      updatedAt: Date.now(),
+    };
+
+    setConfirmRemoveVoucherId(null);
+    if (onBatchUpdateTeamWorkersList) {
+      onBatchUpdateTeamWorkersList([updatedWorker]);
+    } else if (onUpdateSeasonalWorker) {
+      onUpdateSeasonalWorker(updatedWorker);
+    }
+
+    if (onSavePayrollToCloud) {
+      setIsSavingPayroll(true);
+      try {
+        await Promise.resolve(onSavePayrollToCloud());
+        setSavePayrollNotice(
+          `✓ Đã gỡ công nhân ${row.worker.fullName} khỏi ${group.displayCode} (${group.paymentDateDisplay}) & cập nhật Database!`
+        );
+        setTimeout(() => {
+          setSavePayrollNotice(null);
+        }, 5000);
+      } finally {
+        setIsSavingPayroll(false);
+      }
+    }
+  };
+
+  const handleExportSingleTeamPeriodExcel = (group: TeamPayrollPeriodGroup) => {
+    const rows = group.rows.map((r, index) => ({
+      STT: index + 1,
+      'Mã kỳ lương': group.displayCode,
+      'Ngày kỳ lương': group.paymentDateDisplay,
+      'Dự án thi công': group.project,
+      'Mã CN': r.worker.code,
+      'Họ và tên công nhân': r.worker.fullName,
+      'Ngành nghề': r.worker.trade,
+      'Bậc thợ': r.worker.skillLevel,
+      'Tiền lương kỳ này (VNĐ)': r.salaryByDays,
+      'Phụ cấp & Thưởng': r.otherBonus,
+      'TỔNG THU NHẬP': r.totalIncome,
+      'Khấu trừ tạm ứng': r.advancePayment,
+      'Thuế TNCN': r.personalIncomeTax,
+      'THỰC LĨNH NHẬN (VNĐ)': r.netSalary,
+      'Số tài khoản': r.worker.bankAccount || '',
+      'Ngân hàng': r.worker.bankName || 'Tiền mặt',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'DanhSachCongNhanKyLuong');
+    const safeCode = group.displayCode.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeDate = group.paymentDateDisplay.replace(/\//g, '-');
+    XLSX.writeFile(wb, `KyLuongToDoi_${safeCode}_Ngay_${safeDate}.xlsx`);
   };
 
   // Dữ liệu thời vụ theo đúng Tab Chu kỳ đã khai báo (Bản Lương 1 Tuần / Bản Lương 2 Tuần / Bản Lương Tháng / Bản Lương Tổ Đội nhiều đợt)
@@ -996,11 +1184,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       });
 
       return expandedRows.filter((w) => {
-        if (selectedTeamBatchFilter === 'UNBATCHED') {
-          if (!w.activeVoucherId || Boolean(w.activeBatchCode)) return false;
-        } else if (selectedTeamBatchFilter !== 'ALL_BATCHES') {
-          if ((w.activeBatchCode || '').trim() !== selectedTeamBatchFilter.trim()) return false;
-        } else if (seasonalAttendanceOnly) {
+        if (seasonalAttendanceOnly) {
           const isParticipating = Boolean(w.selectedForAttendance) || (w.advancePayment || 0) > 0;
           if (!isParticipating) return false;
         }
@@ -1103,7 +1287,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     selectedSeasonalSubPeriodId,
     seasonalSubPeriods,
     seasonalAttendanceOnly,
-    selectedTeamBatchFilter,
     searchTerm,
   ]);
 
@@ -1302,22 +1485,60 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         : config.periodCode.replace('/', '_');
 
     if (workerCategory === 'SEASONAL') {
+      if (seasonalCycleTab === 'TEAM') {
+        const wb = XLSX.utils.book_new();
+        const summaryRows = filteredTeamPeriodGroups.map((g, idx) => ({
+          STT: idx + 1,
+          'Ngày kỳ lương': g.paymentDateDisplay,
+          'Mã kỳ lương': g.displayCode,
+          'Dự án thi công': g.project,
+          'Số công nhân nhận lương': g.workerCount,
+          'Tổng tiền lương kỳ (VNĐ)': g.totalSalaryByDays,
+          'Phụ cấp & Thưởng': g.totalBonus,
+          'TỔNG THU NHẬP': g.totalIncome,
+          'Khấu trừ tạm ứng': g.totalAdvance,
+          'Thuế TNCN': g.totalTax,
+          'TỔNG THỰC LĨNH KỲ (VNĐ)': g.totalNetSalary,
+        }));
+        const detailRows: Record<string, string | number>[] = [];
+        let detailStt = 1;
+        filteredTeamPeriodGroups.forEach((g) => {
+          g.rows.forEach((r) => {
+            detailRows.push({
+              STT: detailStt++,
+              'Ngày kỳ lương': g.paymentDateDisplay,
+              'Mã kỳ lương': g.displayCode,
+              'Dự án thi công': g.project,
+              'Mã CN': r.worker.code,
+              'Họ và tên công nhân': r.worker.fullName,
+              'Ngành nghề': r.worker.trade,
+              'Bậc thợ': r.worker.skillLevel,
+              'Tiền lương kỳ này (VNĐ)': r.salaryByDays,
+              'Phụ cấp & Thưởng': r.otherBonus,
+              'TỔNG THU NHẬP': r.totalIncome,
+              'Khấu trừ tạm ứng': r.advancePayment,
+              'Thuế TNCN': r.personalIncomeTax,
+              'THỰC LĨNH NHẬN (VNĐ)': r.netSalary,
+              'Số tài khoản': r.worker.bankAccount || '',
+              'Ngân hàng': r.worker.bankName || 'Tiền mặt',
+            });
+          });
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'ThongKeKyLuongToDoi');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows), 'ChiTietCongNhanTheoKy');
+        XLSX.writeFile(wb, `ThongKeKyLuong_ToDoi_${cycleSuffix}_${config.name.replace(/\s+/g, '_')}.xlsx`);
+        return;
+      }
+
       const rows = scaledSeasonal.map((w, index) => ({
         'STT': index + 1,
         'Chu kỳ': periodCycle === 'WEEK' ? `Tuần ${selectedWeek}` : periodCycle === 'QUARTER' ? `Quý ${selectedQuarter}` : periodCycle === 'YEAR' ? `Năm ${config.year || 2026}` : config.periodCode,
         'Mã thợ': w.code,
         'Họ và tên': w.fullName,
-        ...(seasonalCycleTab === 'TEAM'
-          ? {
-              'Mã kỳ lương': w.activeBatchCode || 'Đợt lẻ',
-              'Đợt chi': w.activeVoucherIndex ? `Đợt ${w.activeVoucherIndex}` : 'Đợt 1',
-              'Ngày chuyển': formatIsoToDmy(w.paymentDate),
-            }
-          : {}),
         'Ngành nghề': w.trade,
         'Bậc thợ': w.skillLevel,
         'Dự án/Công trình': w.project,
-        'Đơn giá ngày': seasonalCycleTab === 'TEAM' ? 'Khoán / Tổ đội' : w.dailyRate,
+        'Đơn giá ngày': w.dailyRate,
         'Ngày công thực tế': w.actualWorkDays,
         'Lương theo ngày công': w.salaryByDays,
         'Giờ tăng ca (OT)': w.overtimeHours,
@@ -1333,8 +1554,8 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, seasonalCycleTab === 'TEAM' ? 'BanLuongToDoi' : 'NhanLucThoiVu');
-      XLSX.writeFile(wb, `BangLuong_${seasonalCycleTab === 'TEAM' ? 'ToDoi' : 'ThoiVu'}_${cycleSuffix}_${config.name.replace(/\s+/g, '_')}.xlsx`);
+      XLSX.utils.book_append_sheet(wb, ws, 'NhanLucThoiVu');
+      XLSX.writeFile(wb, `BangLuong_ThoiVu_${cycleSuffix}_${config.name.replace(/\s+/g, '_')}.xlsx`);
       return;
     }
 
@@ -1485,7 +1706,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     : 'BẢN LƯƠNG THÁNG'}
                   <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950">
                     {seasonalCycleTab === 'TEAM'
-                      ? `${scaledSeasonal.length} lệnh chi (${teamSeasonalWorkersCount} công nhân)`
+                      ? `${teamPayrollPeriodGroups.length} kỳ lương (${teamSeasonalWorkersCount} công nhân)`
                       : `${scaledSeasonal.length} công nhân`}
                   </span>
                 </h2>
@@ -1587,10 +1808,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                         : 'bg-purple-200 text-purple-950'
                     }`}
                   >
-                    {teamSeasonalWorkersCount}/{allTeamSeasonalWorkers.length}
-                    {totalTeamOrdersCount > teamSeasonalWorkersCount
-                      ? ` • ${totalTeamOrdersCount} lệnh`
-                      : ''}
+                    {teamPayrollPeriodGroups.length} kỳ
                   </span>
                 </button>
               </div>
@@ -1607,48 +1825,43 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Tìm tên thợ, mã, dự án..."
+                    placeholder={
+                      seasonalCycleTab === 'TEAM'
+                        ? 'Tìm ngày kỳ lương, mã KL, dự án, tên CN...'
+                        : 'Tìm tên thợ, mã, dự án...'
+                    }
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg w-48 focus:outline-sky-600"
+                    className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg w-56 focus:outline-sky-600"
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setSeasonalAttendanceOnly(!seasonalAttendanceOnly)}
-                  className={`px-2.5 py-1.5 text-xs rounded-lg border font-bold flex items-center gap-1 transition cursor-pointer ${
-                    seasonalAttendanceOnly
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                      : 'bg-slate-100 text-slate-700 border-slate-300'
-                  }`}
-                  title="Chuyển đổi giữa hiển thị toàn bộ thợ thuộc tab này hoặc chỉ hiện thợ đã có công > 0"
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  <span>{seasonalAttendanceOnly ? '🟢 Chỉ hiện thợ đã có công' : 'Hiện tất cả thợ trong Tab'}</span>
-                </button>
+                {seasonalCycleTab !== 'TEAM' && (
+                  <button
+                    type="button"
+                    onClick={() => setSeasonalAttendanceOnly(!seasonalAttendanceOnly)}
+                    className={`px-2.5 py-1.5 text-xs rounded-lg border font-bold flex items-center gap-1 transition cursor-pointer ${
+                      seasonalAttendanceOnly
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        : 'bg-slate-100 text-slate-700 border-slate-300'
+                    }`}
+                    title="Chuyển đổi giữa hiển thị toàn bộ thợ thuộc tab này hoặc chỉ hiện thợ đã có công > 0"
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>{seasonalAttendanceOnly ? '🟢 Chỉ hiện thợ đã có công' : 'Hiện tất cả thợ trong Tab'}</span>
+                  </button>
+                )}
 
                 {seasonalCycleTab === 'TEAM' && (onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleOpenCreateTeamBatchModal}
-                      className="px-3.5 py-1.5 bg-purple-800 hover:bg-purple-900 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs ring-2 ring-purple-400/30"
-                      title="Tạo Kỳ Lương Tổ Đội (KL 0001+): Tick chọn một hoặc nhiều công nhân Tổ Đội, nhập tiền lương từng người và lưu thẳng vào Database"
-                    >
-                      <Layers className="w-4 h-4 text-amber-300" />
-                      <span>+ Tạo Kỳ Lương Tổ Đội</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenTeamVoucherModal()}
-                      className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
-                      title="Tạo nhanh 1 phiếu chi lương lẻ cho 1 công nhân Tổ Đội"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Phiếu lẻ 1 CN</span>
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={handleOpenCreateTeamBatchModal}
+                    className="px-3.5 py-1.5 bg-purple-800 hover:bg-purple-900 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs ring-2 ring-purple-400/30"
+                    title="Tạo Kỳ Lương Tổ Đội (KL 0001+): Tick chọn một hoặc nhiều công nhân Tổ Đội, nhập tiền lương từng người và lưu thẳng vào Database"
+                  >
+                    <Layers className="w-4 h-4 text-amber-300" />
+                    <span>+ Tạo Kỳ Lương Tổ Đội</span>
+                  </button>
                 )}
 
                 <button
@@ -1840,116 +2053,28 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               </div>
             )}
 
-            {/* Thanh Quản lý & Lọc theo Kỳ Lương Tổ Đội (KL 0001, KL 0002...) — CHỈ HIỆN TẠI TAB BẢN LƯƠNG TỔ ĐỘI */}
+            {/* Thanh hướng dẫn gọn cho Bảng Thống Kê Kỳ Lương Tổ Đội — CHỈ HIỆN TẠI TAB BẢN LƯƠNG TỔ ĐỘI */}
             {seasonalCycleTab === 'TEAM' && (
               <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-purple-200/80 text-xs">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-black text-purple-950 uppercase tracking-wide text-[11px] mr-1 flex items-center gap-1">
-                    <Layers className="w-3.5 h-3.5 text-purple-700" />
-                    <span>Kỳ lương Tổ Đội T{String(currentMonth).padStart(2, '0')}/{currentYear}:</span>
+                <div className="flex flex-wrap items-center gap-2 text-purple-950">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-100 border border-purple-200 font-black text-[11px] uppercase tracking-wide">
+                    <Calendar className="w-3.5 h-3.5 text-purple-700" />
+                    <span>
+                      Thống kê Kỳ Lương Tổ Đội Tháng {String(currentMonth).padStart(2, '0')}/{currentYear}:{' '}
+                      {teamPayrollPeriodGroups.length} kỳ lương ({totalTeamOrdersCount} lượt nhận lương)
+                    </span>
                   </span>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTeamBatchFilter('ALL_BATCHES')}
-                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
-                      selectedTeamBatchFilter === 'ALL_BATCHES'
-                        ? 'bg-purple-900 text-white shadow-2xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-purple-50 border border-slate-300'
-                    }`}
-                  >
-                    Tất cả ({totalTeamOrdersCount} lệnh)
-                  </button>
-
-                  {teamBatchesSummary.batches.map((b) => {
-                    const isSelected = selectedTeamBatchFilter === b.batchCode;
-                    const isConfirmingDelete = confirmDeleteBatchCode === b.batchCode;
-                    return (
-                      <div
-                        key={b.batchCode}
-                        className={`inline-flex items-center rounded-lg border transition overflow-hidden ${
-                          isSelected
-                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/30'
-                            : 'bg-white border-purple-200 hover:border-purple-400'
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTeamBatchFilter(b.batchCode)}
-                          className="px-2.5 py-1 flex items-center gap-1.5 cursor-pointer text-left"
-                          title={`Dự án: ${b.project} • Ngày chi: ${formatIsoToDmy(b.paymentDate)}`}
-                        >
-                          <span className="font-mono font-black text-amber-900 bg-amber-200/80 px-1.5 py-0.5 rounded text-[11px]">
-                            {b.batchCode}
-                          </span>
-                          <span className="font-bold text-slate-800">{b.workerCount} CN</span>
-                          <span className="font-mono font-black text-emerald-700">
-                            {formatNumberOnly(b.totalNetSalary)} đ
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditTeamBatchModal(b.batchCode)}
-                          className="px-1.5 py-1 border-l border-slate-200 text-sky-700 hover:bg-sky-50 font-bold text-[11px] cursor-pointer flex items-center gap-0.5"
-                          title={`Chỉnh sửa danh sách công nhân & tiền lương của kỳ ${b.batchCode}`}
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>Sửa</span>
-                        </button>
-
-                        {isConfirmingDelete ? (
-                          <div className="inline-flex items-center border-l border-rose-200 bg-rose-50 px-1.5 py-0.5 gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTeamBatch(b.batchCode)}
-                              className="text-[10px] font-black text-white bg-rose-600 hover:bg-rose-700 px-1.5 py-0.5 rounded cursor-pointer"
-                            >
-                              Xóa!
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteBatchCode(null)}
-                              className="text-[10px] font-bold text-slate-600 hover:text-slate-900 px-1 cursor-pointer"
-                            >
-                              Hủy
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteBatchCode(b.batchCode)}
-                            className="px-1.5 py-1 border-l border-slate-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
-                            title={`Xóa kỳ lương ${b.batchCode}`}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {teamBatchesSummary.unbatchedCount > 0 &&
-                    teamBatchesSummary.batches.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTeamBatchFilter('UNBATCHED')}
-                        className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
-                          selectedTeamBatchFilter === 'UNBATCHED'
-                            ? 'bg-slate-800 text-white shadow-2xs'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
-                        }`}
-                      >
-                        Đợt lẻ / Trước đó ({teamBatchesSummary.unbatchedCount} CN)
-                      </button>
-                    )}
+                  <span className="text-slate-600 font-medium">
+                    👉 Nhấn trực tiếp vào dòng <strong>Kỳ Lương</strong> bất kỳ bên dưới để mở danh sách chi tiết công nhân nhận lương của kỳ đó.
+                  </span>
                 </div>
-
-                {teamBatchesSummary.batches.length === 0 && (
-                  <span className="text-[11px] text-slate-500 italic">
-                    Nhấn <strong>+ Tạo Kỳ Lương Tổ Đội</strong> để lập kỳ lương (KL 0001+) tick chọn nhiều công nhân cùng lúc.
-                  </span>
-                )}
+                <div className="font-mono font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg">
+                  Tổng thực lĩnh tháng:{' '}
+                  {formatNumberOnly(
+                    teamPayrollPeriodGroups.reduce((s, g) => s + g.totalNetSalary, 0)
+                  )}{' '}
+                  đ
+                </div>
               </div>
             )}
           </div>
@@ -2738,8 +2863,237 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         </table>
         )}
 
-        {/* BẢNG LƯƠNG NHÂN LỰC THỜI VỤ */}
-        {workerCategory === 'SEASONAL' && (
+        {/* BẢNG THỐNG KÊ CÁC KỲ LƯƠNG TỔ ĐỘI THEO NGÀY (CHỈ RIÊNG TAB BẢN LƯƠNG TỔ ĐỘI — CLICK VÀO DÒNG ĐỂ XEM DANH SÁCH CÔNG NHÂN) */}
+        {workerCategory === 'SEASONAL' && seasonalCycleTab === 'TEAM' && (
+          <table className="w-full border-collapse text-left whitespace-nowrap">
+            <thead className="bg-purple-950 text-white sticky top-0 z-20 text-[11px] uppercase tracking-wider">
+              <tr>
+                <th className="p-2.5 border-r border-purple-800 text-center w-12">STT</th>
+                <th className="p-2.5 border-r border-purple-800 text-center">Ngày kỳ lương</th>
+                <th className="p-2.5 border-r border-purple-800">Mã kỳ lương</th>
+                <th className="p-2.5 border-r border-purple-800">Dự án thi công</th>
+                <th className="p-2.5 border-r border-purple-800 text-center">Quân số nhận lương</th>
+                <th className="p-2.5 border-r border-purple-800 text-right bg-purple-900">Tổng tiền lương kỳ</th>
+                <th className="p-2.5 border-r border-purple-800 text-right">Phụ cấp & Thưởng</th>
+                <th className="p-2.5 border-r border-purple-800 text-right">Khấu trừ tạm ứng</th>
+                <th className="p-2.5 border-r border-purple-800 text-right">Thuế TNCN</th>
+                <th className="p-2.5 border-r border-purple-800 text-right bg-emerald-900 font-black">
+                  TỔNG THỰC LĨNH KỲ (VNĐ)
+                </th>
+                <th className="p-2.5 text-center sticky right-0 bg-purple-950 z-30">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-xs">
+              {filteredTeamPeriodGroups.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="p-10 text-center text-slate-500">
+                    <div className="space-y-2.5 flex flex-col items-center">
+                      <Calendar className="w-8 h-8 text-purple-400" />
+                      <p className="font-black text-sm text-slate-800">
+                        Chưa có Kỳ Lương Tổ Đội nào trong Tháng {String(currentMonth).padStart(2, '0')}/{currentYear}
+                      </p>
+                      <p className="text-xs text-slate-500 max-w-lg whitespace-normal">
+                        Nhấn nút <strong>+ Tạo Kỳ Lương Tổ Đội</strong> để lập kỳ lương theo ngày, tick chọn một hoặc nhiều công nhân Tổ Đội và lưu vào Database.
+                      </p>
+                      {(onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) && (
+                        <button
+                          type="button"
+                          onClick={handleOpenCreateTeamBatchModal}
+                          className="mt-1 px-4 py-2 bg-purple-800 hover:bg-purple-900 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                        >
+                          <Layers className="w-4 h-4 text-amber-300" />
+                          <span>+ Tạo Kỳ Lương Tổ Đội (Tick chọn CN)</span>
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredTeamPeriodGroups.map((g, idx) => {
+                  const isConfirmingDelete = confirmDeleteGroupKey === g.groupKey;
+                  const sampleNames = g.rows
+                    .slice(0, 3)
+                    .map((r) => r.worker.fullName)
+                    .join(', ');
+                  const remainingCount = Math.max(0, g.workerCount - 3);
+
+                  return (
+                    <tr
+                      key={g.groupKey}
+                      onClick={() => {
+                        setDetailModalSearchTerm('');
+                        setConfirmRemoveVoucherId(null);
+                        setViewingTeamPeriodGroupKey(g.groupKey);
+                      }}
+                      className="hover:bg-purple-50/70 transition-colors cursor-pointer group"
+                      title={`Nhấn vào dòng này để xem danh sách ${g.workerCount} công nhân nhận lương của ${g.displayCode} (ngày ${g.paymentDateDisplay})`}
+                    >
+                      <td className="p-2.5 border-r border-slate-200 text-center text-slate-500 font-mono font-bold">
+                        {idx + 1}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-center">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-200 font-mono font-black text-purple-950 text-xs">
+                          <Calendar className="w-3.5 h-3.5 text-purple-600" />
+                          <span>{g.paymentDateDisplay}</span>
+                        </span>
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-1 rounded-lg font-mono font-black text-xs border ${
+                              g.isLegacyDateGroup
+                                ? 'bg-slate-100 text-slate-800 border-slate-300'
+                                : 'bg-amber-100 text-amber-950 border-amber-400'
+                            }`}
+                          >
+                            {g.displayCode}
+                          </span>
+                          <span className="text-[11px] text-purple-700 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Click xem danh sách</span>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 font-bold text-[#0f3d64]">
+                        {g.project}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-950 border border-sky-300 font-black text-xs">
+                            {g.workerCount} công nhân
+                          </span>
+                          <span className="text-[10px] text-slate-500 mt-0.5 max-w-[230px] truncate">
+                            {sampleNames}
+                            {remainingCount > 0 ? ` (+${remainingCount} người)` : ''}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900 bg-purple-50/30">
+                        {formatNumberOnly(g.totalSalaryByDays)} đ
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-semibold text-emerald-700">
+                        {g.totalBonus > 0 ? `+${formatNumberOnly(g.totalBonus)} đ` : '-'}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-semibold text-rose-700">
+                        {g.totalAdvance > 0 ? `-${formatNumberOnly(g.totalAdvance)} đ` : '-'}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono text-rose-700">
+                        {g.totalTax > 0 ? `-${formatNumberOnly(g.totalTax)} đ` : '-'}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/80 text-[13px]">
+                        {formatNumberOnly(g.totalNetSalary)} đ
+                      </td>
+                      <td
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-2 text-center sticky right-0 bg-white group-hover:bg-purple-50/90 z-10 border-l border-slate-200"
+                      >
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDetailModalSearchTerm('');
+                              setConfirmRemoveVoucherId(null);
+                              setViewingTeamPeriodGroupKey(g.groupKey);
+                            }}
+                            className="px-2.5 py-1 bg-purple-800 hover:bg-purple-900 text-white rounded-lg font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                            title={`Mở xem danh sách ${g.workerCount} công nhân nhận lương của ${g.displayCode}`}
+                          >
+                            <Eye className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Xem DS ({g.workerCount})</span>
+                          </button>
+
+                          {(onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditTeamPeriodGroup(g)}
+                              className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-lg font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer"
+                              title={`Chỉnh sửa danh sách công nhân & tiền lương của kỳ ${g.displayCode}`}
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              <span>Sửa kỳ</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleExportSingleTeamPeriodExcel(g)}
+                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer"
+                            title={`Xuất file Excel danh sách công nhân của kỳ ${g.displayCode}`}
+                          >
+                            <Download className="w-3 h-3" />
+                            <span>Excel</span>
+                          </button>
+
+                          {(onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) &&
+                            (isConfirmingDelete ? (
+                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-300 rounded-lg px-1.5 py-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTeamPeriodGroup(g)}
+                                  className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-black cursor-pointer"
+                                >
+                                  Xóa!
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteGroupKey(null)}
+                                  className="px-1 py-0.5 text-slate-600 hover:text-slate-900 text-[10px] font-bold cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteGroupKey(g.groupKey)}
+                                className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg cursor-pointer"
+                                title={`Xóa kỳ lương ${g.displayCode}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+            {filteredTeamPeriodGroups.length > 0 && (
+              <tfoot className="bg-purple-100 font-black text-slate-900 sticky bottom-0 border-t-2 border-purple-400 text-xs">
+                <tr>
+                  <td colSpan={4} className="p-2.5 text-center uppercase tracking-wide border-r border-purple-300 text-purple-950">
+                    TỔNG CỘNG THÁNG {String(currentMonth).padStart(2, '0')}/{currentYear} ({filteredTeamPeriodGroups.length} KỲ LƯƠNG)
+                  </td>
+                  <td className="p-2.5 text-center border-r border-purple-300 font-mono text-sky-950">
+                    {filteredTeamPeriodGroups.reduce((s, g) => s + g.workerCount, 0)} lượt CN
+                  </td>
+                  <td className="p-2.5 text-right border-r border-purple-300 font-mono text-purple-950">
+                    {formatNumberOnly(filteredTeamPeriodGroups.reduce((s, g) => s + g.totalSalaryByDays, 0))} đ
+                  </td>
+                  <td className="p-2.5 text-right border-r border-purple-300 font-mono text-emerald-800">
+                    {formatNumberOnly(filteredTeamPeriodGroups.reduce((s, g) => s + g.totalBonus, 0))} đ
+                  </td>
+                  <td className="p-2.5 text-right border-r border-purple-300 font-mono text-rose-800">
+                    {formatNumberOnly(filteredTeamPeriodGroups.reduce((s, g) => s + g.totalAdvance, 0))} đ
+                  </td>
+                  <td className="p-2.5 text-right border-r border-purple-300 font-mono text-rose-800">
+                    {formatNumberOnly(filteredTeamPeriodGroups.reduce((s, g) => s + g.totalTax, 0))} đ
+                  </td>
+                  <td className="p-2.5 text-right border-r border-purple-300 font-mono text-emerald-950 bg-emerald-200 font-black text-[13px]">
+                    {formatNumberOnly(filteredTeamPeriodGroups.reduce((s, g) => s + g.totalNetSalary, 0))} đ
+                  </td>
+                  <td className="p-2.5 text-center text-[11px] font-semibold text-purple-900">
+                    Click dòng để xem DS CN
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        )}
+
+        {/* BẢNG LƯƠNG NHÂN LỰC THỜI VỤ (1 TUẦN / 2 TUẦN / LƯƠNG THÁNG — GIỮ NGUYÊN 100%) */}
+        {workerCategory === 'SEASONAL' && seasonalCycleTab !== 'TEAM' && (
           <table className="w-full border-collapse text-left whitespace-nowrap">
             <thead className="bg-[#b45309] text-white sticky top-0 z-20">
               <tr>
@@ -2751,9 +3105,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                 <th className="p-2 border-r border-amber-800">Bậc thợ</th>
                 <th className="p-2 border-r border-amber-800">Dự án thi công</th>
                 <th className="p-2 border-r border-amber-800 text-right">Đơn giá ngày</th>
-                <th className="p-2 border-r border-amber-800 text-center">
-                  {seasonalCycleTab === 'TEAM' ? 'Ngày chuyển' : 'Công TT'}
-                </th>
+                <th className="p-2 border-r border-amber-800 text-center">Công TT</th>
                 <th className="p-2 border-r border-amber-800 text-right bg-[#92400e]">Lương theo công</th>
                 <th className="p-2 border-r border-amber-800 text-right bg-[#92400e]">Tăng ca (OT 1.5x)</th>
                 <th className="p-2 border-r border-amber-800 text-right">Phụ cấp & Thưởng</th>
@@ -2778,31 +3130,11 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                           ? 'Tab Bản Lương 1 Tuần'
                           : seasonalCycleTab === '2_WEEKS'
                           ? 'Tab Bản Lương 2 Tuần'
-                          : seasonalCycleTab === 'TEAM'
-                          ? `Tab Bản Lương Tổ Đội (Kỳ ${config.periodCode})`
                           : 'Tab Bản Lương Tháng'}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {seasonalCycleTab === 'TEAM' ? (
-                          <>
-                            Bấm nút <strong>+ Tạo Kỳ Lương Tổ Đội</strong> để tick chọn một hoặc nhiều công nhân trong danh sách Tổ Đội, nhập giá trị tiền lương từng người và lưu vào Database.
-                          </>
-                        ) : (
-                          <>
-                            Khi thêm nhân viên mới hoặc chọn chu kỳ lương tại mục <strong>2.1 Danh Sách Thời Vụ</strong> (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng), nhân viên sẽ tự động xuất hiện tại Tab tương ứng này.
-                          </>
-                        )}
+                        Khi thêm nhân viên mới hoặc chọn chu kỳ lương tại mục <strong>2.1 Danh Sách Thời Vụ</strong> (Lương 1 Tuần / Lương 2 Tuần / Lương Tháng), nhân viên sẽ tự động xuất hiện tại Tab tương ứng này.
                       </p>
-                      {seasonalCycleTab === 'TEAM' && (onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) && (
-                        <button
-                          type="button"
-                          onClick={handleOpenCreateTeamBatchModal}
-                          className="mt-1 px-4 py-2 bg-purple-800 hover:bg-purple-900 text-white rounded-lg text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                        >
-                          <Layers className="w-4 h-4 text-amber-300" />
-                          <span>+ Tạo Kỳ Lương Tổ Đội (Tick chọn CN)</span>
-                        </button>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -2836,37 +3168,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                           <span className="group-hover:text-amber-700 group-hover:underline truncate">
                             {w.fullName}
                           </span>
-                          {seasonalCycleTab === 'TEAM' && w.activeBatchCode && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenEditTeamBatchModal(w.activeBatchCode!);
-                              }}
-                              className="px-1.5 py-0.5 rounded text-[10px] shrink-0 border bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-400 font-mono font-black cursor-pointer"
-                              title={`Thuộc Kỳ lương ${w.activeBatchCode} — Bấm để mở/sửa kỳ lương này`}
-                            >
-                              {w.activeBatchCode}
-                            </button>
-                          )}
-                          {seasonalCycleTab === 'TEAM' && w.activeVoucherIndex && (
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] shrink-0 border ${
-                                (w.totalVouchersInMonth || 0) > 1
-                                  ? 'bg-purple-100 text-purple-900 border-purple-300 font-black'
-                                  : 'bg-slate-100 text-slate-600 border-slate-200 font-semibold'
-                              }`}
-                              title={
-                                (w.totalVouchersInMonth || 0) > 1
-                                  ? `Đợt chi lương thứ ${w.activeVoucherIndex} / ${w.totalVouchersInMonth} trong tháng này`
-                                  : 'Đợt chi lương thứ 1 trong tháng'
-                              }
-                            >
-                              {(w.totalVouchersInMonth || 0) > 1
-                                ? `Đợt ${w.activeVoucherIndex}/${w.totalVouchersInMonth}`
-                                : 'Đợt 1'}
-                            </span>
-                          )}
                         </div>
                         <Edit3 className="w-3 h-3 text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                       </div>
@@ -2929,7 +3230,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       </span>
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-slate-700 font-medium">
-                      {onUpdateSeasonalWorker && (w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') ? (
+                      {onUpdateSeasonalWorker && w.payrollCycleType === 'TEAM' ? (
                         <select
                           value={w.project || ''}
                           onChange={(e) => {
@@ -2952,7 +3253,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-slate-800">
-                      {w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM' ? (
+                      {w.payrollCycleType === 'TEAM' ? (
                         <span
                           className="text-[11px] font-sans font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200"
                           title="Nhân sự Tổ Đội không tính theo đơn giá ngày mà nhập trực tiếp tại cột Lương theo công"
@@ -2988,55 +3289,10 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                       )}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-center font-bold text-sky-900 bg-sky-50/30">
-                      {w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM' ? (
-                        onUpdateSeasonalWorker ? (
-                          <input
-                            type="date"
-                            value={w.paymentDate || getDefaultVoucherDate(currentMonth, currentYear)}
-                            onChange={(e) => {
-                              handleUpdateTeamSeasonalMonthRecord(w, {
-                                paymentDate: e.target.value,
-                                selectedForAttendance: true,
-                              });
-                            }}
-                            className="px-1.5 py-0.5 bg-white border border-slate-200 hover:border-purple-400 rounded text-[11px] font-mono font-bold text-purple-900 cursor-pointer outline-none"
-                            title="Ngày chuyển lương Tổ Đội"
-                          />
-                        ) : (
-                          <span className="text-[11px] font-mono text-purple-900">
-                            {w.paymentDate || '—'}
-                          </span>
-                        )
-                      ) : (
-                        w.actualWorkDays
-                      )}
+                      {w.actualWorkDays}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
-                      {onUpdateSeasonalWorker && (w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') ? (
-                        <div className="flex items-center justify-end">
-                          <input
-                            type="number"
-                            step="100000"
-                            min="0"
-                            placeholder="Nhập lương..."
-                            value={w.salaryByDays ? w.salaryByDays : ''}
-                            onChange={(e) => {
-                              const rawVal = e.target.value;
-                              const newSalary = rawVal === '' ? 0 : Math.max(0, Number(rawVal) || 0);
-                              handleUpdateTeamSeasonalMonthRecord(w, {
-                                salaryByDays: newSalary,
-                                dailyRate: newSalary,
-                                actualWorkDays: 1,
-                                selectedForAttendance: true,
-                              });
-                            }}
-                            className="w-36 text-right font-mono font-black text-purple-950 bg-purple-50/70 border-2 border-purple-400 hover:border-purple-600 focus:border-purple-700 focus:bg-white rounded-md px-2 py-1 text-xs outline-none transition-colors shadow-2xs"
-                            title="Nhập trực tiếp số tiền lương thanh toán cho nhân sự Tổ Đội trong tháng này (tự động đồng bộ Supabase)"
-                          />
-                        </div>
-                      ) : (
-                        formatNumberOnly(w.salaryByDays)
-                      )}
+                      {formatNumberOnly(w.salaryByDays)}
                     </td>
                     <td className="p-1.5 border-r border-slate-200 text-right font-mono text-amber-900 font-semibold bg-amber-50/30">
                       {w.overtimePay > 0 ? `${formatNumberOnly(w.overtimePay)} (${w.overtimeHours}h)` : '-'}
@@ -3150,17 +3406,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     </td>
                     <td className="p-1.5 text-center sticky right-0 bg-white hover:bg-amber-50 z-10 border-l border-slate-200">
                       <div className="flex items-center justify-center gap-1">
-                        {(w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') && onUpdateSeasonalWorker && (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenTeamVoucherModal(w)}
-                            className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-[11px] inline-flex items-center gap-0.5 transition cursor-pointer shadow-2xs"
-                            title={`Tạo thêm lệnh nhận lương đợt tiếp theo trong tháng cho ${w.fullName}`}
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Đợt</span>
-                          </button>
-                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -3174,12 +3419,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                               ? `Bản Lương 1 Tuần (Tháng ${currentMonth}/${currentYear})`
                               : seasonalCycleTab === '2_WEEKS'
                               ? `Bản Lương 2 Tuần (Tháng ${currentMonth}/${currentYear})`
-                              : seasonalCycleTab === 'TEAM'
-                              ? w.activeBatchCode
-                                ? `Bản Lương Tổ Đội - Kỳ ${w.activeBatchCode} (Ngày chi: ${formatIsoToDmy(w.paymentDate)} • Tháng ${currentMonth}/${currentYear})`
-                                : w.activeVoucherIndex && (w.totalVouchersInMonth || 0) > 1
-                                ? `Bản Lương Tổ Đội - Đợt ${w.activeVoucherIndex} (Ngày chi: ${formatIsoToDmy(w.paymentDate)} • Tháng ${currentMonth}/${currentYear})`
-                                : `Bản Lương Tổ Đội (Ngày chi: ${formatIsoToDmy(w.paymentDate)} • Tháng ${currentMonth}/${currentYear})`
                               : `Kỳ lương Tháng ${currentMonth}/${currentYear}`;
                             const printWorker = {
                               ...w,
@@ -3197,37 +3436,11 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                             printSeasonalWorkerReceipt(printWorker, printConfig, undefined, periodLabelText);
                           }}
                           className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
-                          title={`In bản lương của ${w.fullName}${w.activeVoucherIndex ? ` (Đợt ${w.activeVoucherIndex})` : ''}`}
+                          title={`In bản lương của ${w.fullName}`}
                         >
                           <Printer className="w-3.5 h-3.5" />
                           <span>In bản lương</span>
                         </button>
-                        {(w.payrollCycleType === 'TEAM' || seasonalCycleTab === 'TEAM') && onUpdateSeasonalWorker && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={handleSavePayrollTable}
-                              disabled={isSavingPayroll}
-                              className="px-2 py-1 bg-purple-700 hover:bg-purple-800 text-white rounded font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
-                              title="Lưu lại bản lương và đồng bộ lên Supabase"
-                            >
-                              <Save className="w-3 h-3" />
-                              <span>Lưu</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveTeamVoucherRow(w)}
-                              className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded cursor-pointer"
-                              title={
-                                (w.totalVouchersInMonth || 0) > 1
-                                  ? `Xóa Đợt ${w.activeVoucherIndex} này (các đợt khác của ${w.fullName} vẫn giữ nguyên)`
-                                  : 'Xóa lệnh chi lương này khỏi Bản Lương tháng'
-                              }
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -3242,8 +3455,6 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                     ? 'BẢN LƯƠNG 1 TUẦN'
                     : seasonalCycleTab === '2_WEEKS'
                     ? 'BẢN LƯƠNG 2 TUẦN'
-                    : seasonalCycleTab === 'TEAM'
-                    ? 'BẢN LƯƠNG TỔ ĐỘI'
                     : 'BẢN LƯƠNG THÁNG'}{' '}
                   ({scaledSeasonal.length} NHÂN SỰ)
                 </td>
@@ -4189,12 +4400,289 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         </div>
       )}
 
+      {/* Cửa sổ Xem Danh Sách Công Nhân Nhận Lương Của Kỳ Lương Tổ Đội (Mở khi Click vào dòng Kỳ Lương) */}
+      {activeViewingPeriodGroup && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-2xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+          onClick={() => setViewingTeamPeriodGroupKey(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-purple-300 w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Modal Chi Tiết Kỳ Lương */}
+            <div className="bg-gradient-to-r from-purple-950 via-purple-900 to-slate-900 text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-lg bg-amber-400 text-slate-950 font-mono font-black text-xs">
+                    {activeViewingPeriodGroup.displayCode}
+                  </span>
+                  <h3 className="text-sm sm:text-base font-black tracking-wide uppercase">
+                    Danh sách nhân viên nhận lương kỳ {activeViewingPeriodGroup.paymentDateDisplay}
+                  </h3>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-purple-200">
+                  <span>
+                    📅 Ngày kỳ lương: <strong className="text-white">{activeViewingPeriodGroup.paymentDateDisplay}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    🏢 Dự án thi công: <strong className="text-amber-300">{activeViewingPeriodGroup.project}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    👷 Quân số nhận lương: <strong className="text-white">{activeViewingPeriodGroup.workerCount} công nhân</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    💰 Tổng thực lĩnh kỳ:{' '}
+                    <strong className="text-emerald-300 font-mono">
+                      {formatNumberOnly(activeViewingPeriodGroup.totalNetSalary)} đ
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {(onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditTeamPeriodGroup(activeViewingPeriodGroup)}
+                    className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="Mở cửa sổ Tick thêm/bớt công nhân hoặc sửa tiền lương của kỳ này"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Sửa kỳ / Tick thêm bớt CN</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleExportSingleTeamPeriodExcel(activeViewingPeriodGroup)}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Xuất Excel kỳ này</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setViewingTeamPeriodGroupKey(null)}
+                  className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+                  title="Đóng cửa sổ danh sách"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Thanh Tìm kiếm nhanh trong kỳ */}
+            <div className="px-5 py-2.5 bg-purple-50/70 border-b border-purple-200 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={detailModalSearchTerm}
+                  onChange={(e) => setDetailModalSearchTerm(e.target.value)}
+                  placeholder="Tìm nhanh tên hoặc mã công nhân trong kỳ này..."
+                  className="w-full pl-8 pr-3 py-1.5 bg-white border border-purple-200 rounded-lg text-xs focus:outline-none focus:border-purple-600"
+                />
+              </div>
+              <div className="text-slate-600 font-semibold">
+                Hiển thị <strong className="text-purple-950">{filteredDetailModalRows.length}</strong> /{' '}
+                {activeViewingPeriodGroup.workerCount} công nhân Tổ Đội nhận lương ngày{' '}
+                <strong className="text-purple-950">{activeViewingPeriodGroup.paymentDateDisplay}</strong>
+              </div>
+            </div>
+
+            {/* Bảng Danh Sách Công Nhân Của Kỳ Lương */}
+            <div className="flex-1 overflow-auto">
+              <table className="w-full border-collapse text-left whitespace-nowrap text-xs">
+                <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-300 text-[11px] uppercase">
+                  <tr>
+                    <th className="p-2.5 border-r border-slate-200 text-center w-10">STT</th>
+                    <th className="p-2.5 border-r border-slate-200">Mã CN</th>
+                    <th className="p-2.5 border-r border-slate-200">Họ và tên công nhân Tổ Đội</th>
+                    <th className="p-2.5 border-r border-slate-200">Ngành nghề</th>
+                    <th className="p-2.5 border-r border-slate-200 text-center">Bậc thợ</th>
+                    <th className="p-2.5 border-r border-slate-200 text-right bg-purple-50 text-purple-950">
+                      Tiền lương kỳ này
+                    </th>
+                    <th className="p-2.5 border-r border-slate-200 text-right">Phụ cấp & Thưởng</th>
+                    <th className="p-2.5 border-r border-slate-200 text-right">Trừ tạm ứng</th>
+                    <th className="p-2.5 border-r border-slate-200 text-right bg-emerald-50 text-emerald-950 font-black">
+                      THỰC LĨNH NHẬN (VNĐ)
+                    </th>
+                    <th className="p-2.5 border-r border-slate-200">Số tài khoản</th>
+                    <th className="p-2.5 border-r border-slate-200">Ngân hàng</th>
+                    <th className="p-2.5 text-center">In phiếu / Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredDetailModalRows.map((row, rIdx) => {
+                    const isConfirmingRemove = confirmRemoveVoucherId === row.voucherId;
+                    return (
+                      <tr key={row.voucherId} className="hover:bg-amber-50/50 transition-colors">
+                        <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-500">
+                          {rIdx + 1}
+                        </td>
+                        <td
+                          onClick={() => handleOpenSeasonalBankModal(row.worker)}
+                          className="p-2 border-r border-slate-200 font-mono font-bold text-purple-900 cursor-pointer hover:underline"
+                          title="Nhấn để cập nhật Số tài khoản ngân hàng"
+                        >
+                          {row.worker.code}
+                        </td>
+                        <td
+                          onClick={() => handleOpenSeasonalBankModal(row.worker)}
+                          className="p-2 border-r border-slate-200 font-bold text-slate-900 cursor-pointer hover:text-purple-800"
+                          title="Nhấn để cập nhật Số tài khoản ngân hàng"
+                        >
+                          {row.worker.fullName}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-slate-700">{row.worker.trade}</td>
+                        <td className="p-2 border-r border-slate-200 text-center">
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold">
+                            {row.worker.skillLevel}
+                          </span>
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono font-black text-purple-950 bg-purple-50/40">
+                          {formatNumberOnly(row.salaryByDays)} đ
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono text-emerald-700 font-semibold">
+                          {row.otherBonus > 0 ? `+${formatNumberOnly(row.otherBonus)} đ` : '-'}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono text-rose-700 font-semibold">
+                          {row.advancePayment > 0 ? `-${formatNumberOnly(row.advancePayment)} đ` : '-'}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono font-black text-emerald-800 bg-emerald-50/70 text-[13px]">
+                          {formatNumberOnly(row.netSalary)} đ
+                        </td>
+                        <td className="p-2 border-r border-slate-200 font-mono font-bold text-blue-900">
+                          {row.worker.bankAccount || <span className="text-slate-400 font-sans font-normal">Chưa có STK</span>}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-slate-700">
+                          {row.worker.paymentMethod === 'CASH' && !row.worker.bankAccount
+                            ? 'Tiền mặt'
+                            : row.worker.bankName || 'Tiền mặt'}
+                        </td>
+                        <td className="p-2 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const printWorker: SeasonalWorker = {
+                                  ...row.worker,
+                                  dailyRate: row.salaryByDays,
+                                  actualWorkDays: 1,
+                                  salaryByDays: row.salaryByDays,
+                                  overtimeHours: 0,
+                                  overtimePay: 0,
+                                  mealAllowance: 0,
+                                  travelSafetyAllowance: 0,
+                                  otherBonus: row.otherBonus,
+                                  totalIncome: row.totalIncome,
+                                  advancePayment: row.advancePayment,
+                                  personalIncomeTax: row.personalIncomeTax,
+                                  totalDeductions: row.totalDeductions,
+                                  netSalary: row.netSalary,
+                                  attendanceMonth: currentMonth,
+                                  attendanceYear: currentYear,
+                                };
+                                const printConfig = {
+                                  ...config,
+                                  month: currentMonth,
+                                  year: currentYear,
+                                  periodCode: `${String(currentMonth).padStart(2, '0')}/${currentYear}`,
+                                  period: `Kỳ lương tháng ${String(currentMonth).padStart(2, '0')} năm ${currentYear}`,
+                                };
+                                const periodLabelText = `Bản Lương Tổ Đội - ${activeViewingPeriodGroup.displayCode} (Ngày: ${activeViewingPeriodGroup.paymentDateDisplay} • Dự án: ${activeViewingPeriodGroup.project})`;
+                                setPrintingSeasonalWorker(printWorker);
+                                printSeasonalWorkerReceipt(printWorker, printConfig, undefined, periodLabelText);
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] inline-flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                              title={`In phiếu lương kỳ ${activeViewingPeriodGroup.displayCode} cho ${row.worker.fullName}`}
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>In bản lương</span>
+                            </button>
+
+                            {(onBatchUpdateTeamWorkersList || onUpdateSeasonalWorker) &&
+                              (isConfirmingRemove ? (
+                                <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-300 rounded-lg px-1.5 py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRemoveSingleWorkerFromPeriod(row, activeViewingPeriodGroup)
+                                    }
+                                    className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-black cursor-pointer"
+                                  >
+                                    Gỡ!
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmRemoveVoucherId(null)}
+                                    className="px-1 py-0.5 text-slate-600 hover:text-slate-900 text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Hủy
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRemoveVoucherId(row.voucherId)}
+                                  className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg cursor-pointer"
+                                  title={`Gỡ ${row.worker.fullName} khỏi kỳ lương này`}
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-amber-100 font-black text-slate-900 sticky bottom-0 border-t-2 border-amber-400">
+                  <tr>
+                    <td colSpan={5} className="p-2.5 text-center uppercase tracking-wide border-r border-amber-300">
+                      TỔNG CỘNG {activeViewingPeriodGroup.displayCode} — NGÀY {activeViewingPeriodGroup.paymentDateDisplay} ({filteredDetailModalRows.length} CÔNG NHÂN)
+                    </td>
+                    <td className="p-2.5 text-right border-r border-amber-300 font-mono text-purple-950">
+                      {formatNumberOnly(filteredDetailModalRows.reduce((s, r) => s + r.salaryByDays, 0))} đ
+                    </td>
+                    <td className="p-2.5 text-right border-r border-amber-300 font-mono text-emerald-800">
+                      {formatNumberOnly(filteredDetailModalRows.reduce((s, r) => s + r.otherBonus, 0))} đ
+                    </td>
+                    <td className="p-2.5 text-right border-r border-amber-300 font-mono text-rose-800">
+                      {formatNumberOnly(filteredDetailModalRows.reduce((s, r) => s + r.advancePayment, 0))} đ
+                    </td>
+                    <td className="p-2.5 text-right border-r border-amber-300 font-mono text-emerald-950 bg-emerald-200 font-black text-[13px]">
+                      {formatNumberOnly(filteredDetailModalRows.reduce((s, r) => s + r.netSalary, 0))} đ
+                    </td>
+                    <td colSpan={3} className="p-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setViewingTeamPeriodGroupKey(null)}
+                        className="px-4 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        Đóng danh sách
+                      </button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Tạo & Chỉnh Sửa Kỳ Lương Tổ Đội (KL 0001+ • Tick chọn nhiều công nhân & Lưu Database) */}
       <TeamBatchPayrollModal
         isOpen={isTeamBatchModalOpen}
         onClose={() => {
           setIsTeamBatchModalOpen(false);
-          setEditingTeamBatchCode(null);
+          setEditingTeamPeriodGroup(null);
         }}
         teamWorkersList={allTeamSeasonalWorkers}
         allSeasonalWorkers={seasonalWorkers}
@@ -4202,7 +4690,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         availableProjectNames={availableProjectNames}
         currentMonth={currentMonth}
         currentYear={currentYear}
-        editingBatchCode={editingTeamBatchCode}
+        editingGroup={editingTeamPeriodGroup}
         onSaveBatchAndSync={handleSaveTeamBatchAndSync}
       />
 
