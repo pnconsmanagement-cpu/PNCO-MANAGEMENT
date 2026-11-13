@@ -201,11 +201,24 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     forcedTargetType || 'PERMANENT'
   );
   const [formWorkerId, setFormWorkerId] = useState('');
+  const [modalWorkerSearch, setModalWorkerSearch] = useState('');
+  const [modalSubGroupFilter, setModalSubGroupFilter] = useState('ALL');
   const [formAmount, setFormAmount] = useState<number>(3000000);
   const [formRequestDate, setFormRequestDate] = useState<string>(() => getTodayIsoDate());
   const [formReason, setFormReason] = useState('Tạm ứng tiền sinh hoạt công trường giữa kỳ');
   const [formMethod, setFormMethod] = useState<'BANK' | 'CASH'>('BANK');
   const [formNotes, setFormNotes] = useState('');
+
+  const normalizeSearchText = (str?: string): string => {
+    if (!str) return '';
+    return str
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D')
+      .toLowerCase()
+      .trim();
+  };
 
   // Danh sách worker khả dụng theo loại target - CHỈ HIỆN NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const availableWorkers = useMemo(() => {
@@ -216,7 +229,12 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           id: e.id,
           code: e.code,
           name: e.fullName,
-          sub: e.department,
+          sub: e.department || 'Văn phòng',
+          groupLabel: e.department || 'Văn phòng',
+          roleLabel: e.title || 'Nhân viên chính thức',
+          phone: e.phone || '',
+          bankAccount: e.bankAccount || '',
+          bankName: e.bankName || '',
           resolvedTargetType: 'PERMANENT' as const,
         }));
     } else if (formTargetType === 'SEASONAL') {
@@ -227,6 +245,11 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           code: w.code,
           name: w.fullName,
           sub: `${w.project || w.trade || ''}${w.payrollCycleType === 'TEAM' ? ' • Hệ Tổ đội' : ''}`,
+          groupLabel: w.project || 'Công trình',
+          roleLabel: `${w.trade || 'Thợ thời vụ'}${w.payrollCycleType === 'TEAM' ? ' (Tổ đội)' : ''}`,
+          phone: w.phone || '',
+          bankAccount: w.bankAccount || '',
+          bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
           resolvedTargetType: 'SEASONAL' as const,
         }));
     } else {
@@ -237,6 +260,11 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           code: w.code,
           name: w.fullName,
           sub: `${w.project || w.trade || 'Tổ đội'} • Bản Lương Tổ Đội`,
+          groupLabel: w.project || 'Tổ đội thi công',
+          roleLabel: `${w.trade || 'Công nhân Tổ đội'}${w.teamName ? ` • ${w.teamName}` : ''}`,
+          phone: w.phone || '',
+          bankAccount: w.bankAccount || '',
+          bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
           resolvedTargetType: 'SEASONAL' as const,
         }));
       const legacyTeams = teamWorkers
@@ -246,16 +274,52 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
           code: t.code,
           name: t.teamName,
           sub: `${t.leaderName} (${t.project})`,
+          groupLabel: t.project || 'Tổ đội khoán',
+          roleLabel: `Đội trưởng: ${t.leaderName}`,
+          phone: t.phone || '',
+          bankAccount: t.bankAccount || '',
+          bankName: t.bankName || '',
           resolvedTargetType: 'TEAM' as const,
         }));
       return [...seasonalTeams, ...legacyTeams];
     }
   }, [formTargetType, employees, seasonalWorkers, teamWorkers]);
 
+  const availableModalSubGroups = useMemo(() => {
+    const set = new Set<string>();
+    availableWorkers.forEach((w) => {
+      if (w.groupLabel && w.groupLabel.trim()) set.add(w.groupLabel.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [availableWorkers]);
+
+  const filteredModalWorkers = useMemo(() => {
+    const qNorm = normalizeSearchText(modalWorkerSearch);
+    const qRaw = modalWorkerSearch.trim().toLowerCase();
+    return availableWorkers.filter((w) => {
+      if (modalSubGroupFilter !== 'ALL' && w.groupLabel !== modalSubGroupFilter) {
+        return false;
+      }
+      if (!qNorm) return true;
+      const haystackRaw = `${w.code} ${w.name} ${w.sub} ${w.roleLabel} ${w.phone} ${w.bankAccount} ${w.bankName}`.toLowerCase();
+      if (haystackRaw.includes(qRaw)) return true;
+      const haystackNorm = normalizeSearchText(
+        `${w.code} ${w.name} ${w.sub} ${w.roleLabel} ${w.phone} ${w.bankAccount} ${w.bankName}`
+      );
+      return haystackNorm.includes(qNorm);
+    });
+  }, [availableWorkers, modalWorkerSearch, modalSubGroupFilter]);
+
+  const selectedModalWorkerObj = useMemo(() => {
+    return availableWorkers.find((w) => w.id === formWorkerId || w.code === formWorkerId) || null;
+  }, [availableWorkers, formWorkerId]);
+
   const openAddModal = () => {
     setEditingAdvance(null);
     const target = forcedTargetType || 'PERMANENT';
     setFormTargetType(target);
+    setModalWorkerSearch('');
+    setModalSubGroupFilter('ALL');
     const firstActive =
       target === 'PERMANENT'
         ? employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE')?.id
@@ -271,6 +335,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
 
   const openEditModal = (adv: SalaryAdvance) => {
     setEditingAdvance(adv);
+    setModalWorkerSearch('');
+    setModalSubGroupFilter('ALL');
     setFormTargetType(adv.targetType);
     // Tìm workerId khớp theo id hoặc code
     let matchedId = adv.workerId;
@@ -281,8 +347,13 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       const sw = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
       if (sw) matchedId = sw.id;
     } else if (adv.targetType === 'TEAM') {
-      const tw = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
-      if (tw) matchedId = tw.id;
+      const swTeam = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
+      if (swTeam) {
+        matchedId = swTeam.id;
+      } else {
+        const tw = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
+        if (tw) matchedId = tw.id;
+      }
     }
     setFormWorkerId(matchedId);
     setFormAmount(adv.amount || 0);
@@ -996,14 +1067,22 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         </div>
       </div>
 
-      {/* Modal Tạo / Sửa Phiếu Tạm Ứng */}
+      {/* Modal Tạo / Sửa Phiếu Tạm Ứng (Có Cửa Sổ Tìm & Chọn Nhân Viên Nhanh Kiểu Danh Sách Tổ Đội) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-[#09233b] text-white p-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isPushingCloud) {
+              setEditingAdvance(null);
+              setIsModalOpen(false);
+            }
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[94vh] flex flex-col border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-[#09233b] text-white px-5 py-3.5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
                 <CreditCard className="w-5 h-5 text-amber-300" />
-                <h3 className="font-bold text-sm uppercase">
+                <h3 className="font-black text-sm uppercase tracking-wide">
                   {editingAdvance ? `Sửa Phiếu Tạm Ứng (${editingAdvance.advanceCode})` : 'Lập Phiếu Tạm Ứng Tiền Lương'}
                 </h3>
               </div>
@@ -1013,76 +1092,239 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                   setEditingAdvance(null);
                   setIsModalOpen(false);
                 }}
-                className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateAdvance} className="p-5 space-y-3.5 text-xs">
+            <form onSubmit={handleCreateAdvance} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Loại đối tượng nhận tạm ứng</label>
-                <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-lg">
+                <label className="block text-slate-700 font-bold mb-1.5">Loại đối tượng nhận tạm ứng</label>
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl">
                   <button
                     type="button"
                     onClick={() => {
                       setFormTargetType('PERMANENT');
-                      setFormWorkerId(employees[0]?.id || '');
+                      setModalWorkerSearch('');
+                      setModalSubGroupFilter('ALL');
+                      const firstEmp = employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE');
+                      setFormWorkerId(firstEmp?.id || '');
                     }}
-                    className={`py-1.5 rounded-md font-bold text-center transition ${
+                    className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
                       formTargetType === 'PERMANENT' ? 'bg-[#0f3d64] text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'
                     }`}
                   >
-                    Chính thức
+                    Chính thức ({employees.filter((e) => (e.status || 'ACTIVE') === 'ACTIVE').length})
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setFormTargetType('SEASONAL');
-                      setFormWorkerId(seasonalWorkers[0]?.id || '');
+                      setModalWorkerSearch('');
+                      setModalSubGroupFilter('ALL');
+                      const firstSea = seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+                      setFormWorkerId(firstSea?.id || '');
                     }}
-                    className={`py-1.5 rounded-md font-bold text-center transition ${
+                    className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
                       formTargetType === 'SEASONAL' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'
                     }`}
                   >
-                    Thời vụ
+                    Thời vụ ({seasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE').length})
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setFormTargetType('TEAM');
+                      setModalWorkerSearch('');
+                      setModalSubGroupFilter('ALL');
                       const firstTeamWorker =
                         seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM')?.id ||
-                        teamWorkers[0]?.id ||
+                        teamWorkers.find((t) => (t.status || 'ACTIVE') === 'ACTIVE')?.id ||
                         '';
                       setFormWorkerId(firstTeamWorker);
                     }}
-                    className={`py-1.5 rounded-md font-bold text-center transition ${
+                    className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
                       formTargetType === 'TEAM' ? 'bg-indigo-700 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'
                     }`}
                   >
-                    Tổ đội
+                    Tổ đội (
+                    {seasonalWorkers.filter((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM').length +
+                      teamWorkers.filter((t) => (t.status || 'ACTIVE') === 'ACTIVE').length}
+                    )
                   </button>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Chọn nhân sự nhận tiền *</label>
-                <select
-                  required
-                  value={formWorkerId}
-                  onChange={(e) => setFormWorkerId(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium"
-                >
-                  {availableWorkers.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.code} - {w.name} {w.sub ? `(${w.sub})` : ''}
+              {/* CỬA SỔ TÌM & CHỌN NHÂN VIÊN NHANH (TƯƠNG TỰ MỤC CHỌN DANH SÁCH TỔ ĐỘI) */}
+              <div className="bg-sky-50/65 border-2 border-sky-200 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                      <Users className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-black text-slate-900 uppercase tracking-wide text-xs">
+                      Mục Tìm & Chọn Nhân Sự Nhận Tạm Ứng *
+                    </span>
+                  </div>
+
+                  {selectedModalWorkerObj ? (
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-black text-[11px] flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>
+                        Đang chọn: [{selectedModalWorkerObj.code}] {selectedModalWorkerObj.name}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px]">
+                      Chưa chọn nhân sự
+                    </span>
+                  )}
+                </div>
+
+                {/* Ô tìm kiếm nhanh + Lọc Dự án / Bộ phận */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      autoFocus={!editingAdvance}
+                      value={modalWorkerSearch}
+                      onChange={(e) => setModalWorkerSearch(e.target.value)}
+                      placeholder="Tìm mã NV/CN (PNC-TV01...), tên nhân viên, SĐT, STK ngân hàng..."
+                      className="w-full pl-9 pr-8 py-2 bg-white border border-sky-300 focus:border-sky-600 rounded-xl text-xs font-medium text-slate-800 focus:outline-none shadow-2xs"
+                    />
+                    {modalWorkerSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setModalWorkerSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                        title="Xóa từ khóa tìm kiếm"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <select
+                    value={modalSubGroupFilter}
+                    onChange={(e) => setModalSubGroupFilter(e.target.value)}
+                    className="sm:w-52 px-3 py-2 bg-white border border-sky-300 focus:border-sky-600 rounded-xl text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+                  >
+                    <option value="ALL">
+                      {formTargetType === 'PERMANENT'
+                        ? `Tất cả bộ phận (${availableWorkers.length})`
+                        : `Tất cả dự án (${availableWorkers.length})`}
                     </option>
-                  ))}
-                </select>
+                    {availableModalSubGroups.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Bảng danh sách nhân sự cuộn mượt — Click 1 chạm để chọn */}
+                <div className="bg-white border border-sky-200 rounded-xl overflow-hidden shadow-2xs">
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-600 font-black uppercase text-[10px] sticky top-0 z-10 border-b border-slate-200">
+                        <tr>
+                          <th className="py-2 px-2.5 w-10 text-center">CHỌN</th>
+                          <th className="py-2 px-2.5 w-24">MÃ NV</th>
+                          <th className="py-2 px-2.5">HỌ VÀ TÊN NHÂN SỰ</th>
+                          <th className="py-2 px-2.5">DỰ ÁN / BỘ PHẬN</th>
+                          <th className="py-2 px-2.5">STK NGÂN HÀNG</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredModalWorkers.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-slate-500">
+                              Không tìm thấy nhân sự nào khớp với từ khóa <strong>"{modalWorkerSearch}"</strong>.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredModalWorkers.map((w) => {
+                            const isSelected = w.id === formWorkerId || w.code === formWorkerId;
+                            const currentPeriodKey = getPeriodKeyFromIsoDate(formRequestDate);
+                            const existingAdvTotal = advances
+                              .filter(
+                                (a) =>
+                                  (editingAdvance ? a.id !== editingAdvance.id : true) &&
+                                  (a.workerId === w.id || a.workerCode === w.code) &&
+                                  a.periodKey === currentPeriodKey
+                              )
+                              .reduce((sum, a) => sum + (a.amount || 0), 0);
+
+                            return (
+                              <tr
+                                key={`${w.resolvedTargetType}-${w.id || w.code}`}
+                                onClick={() => setFormWorkerId(w.id)}
+                                className={`cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-sky-100/90 hover:bg-sky-100 font-semibold'
+                                    : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <td className="py-2 px-2.5 text-center">
+                                  <div
+                                    className={`w-4 h-4 rounded-full mx-auto flex items-center justify-center border ${
+                                      isSelected
+                                        ? 'bg-sky-600 border-sky-600 text-white'
+                                        : 'border-slate-300 bg-white'
+                                    }`}
+                                  >
+                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                  </div>
+                                </td>
+                                <td className="py-2 px-2.5 font-mono font-black text-sky-800 whitespace-nowrap">
+                                  {w.code}
+                                </td>
+                                <td className="py-2 px-2.5">
+                                  <div className="font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
+                                    <span>{w.name}</span>
+                                    {existingAdvTotal > 0 && (
+                                      <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-mono font-bold">
+                                        Đã ứng T{currentPeriodKey}: {formatVND(existingAdvTotal)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {w.roleLabel}
+                                    {w.phone ? ` • SĐT: ${w.phone}` : ''}
+                                  </div>
+                                </td>
+                                <td className="py-2 px-2.5 text-slate-700 font-medium">
+                                  {w.groupLabel}
+                                </td>
+                                <td className="py-2 px-2.5 font-mono text-[11px]">
+                                  {w.bankAccount ? (
+                                    <div>
+                                      <span className="font-bold text-blue-900">{w.bankAccount}</span>
+                                      {w.bankName && (
+                                        <span className="block font-sans text-[10px] text-slate-500">
+                                          {w.bankName}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="font-sans italic text-slate-400">
+                                      {w.bankName || 'Tiền mặt / Chưa có'}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1">Số tiền tạm ứng (VNĐ) *</label>
                   <input
@@ -1110,41 +1352,43 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                     Ngày: {toVnDateString(formRequestDate)} (Kỳ {getPeriodKeyFromIsoDate(formRequestDate)})
                   </div>
                 </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Phương thức chi</label>
+                  <select
+                    value={formMethod}
+                    onChange={(e) => setFormMethod(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-semibold bg-white cursor-pointer"
+                  >
+                    <option value="BANK">Chuyển khoản ATM</option>
+                    <option value="CASH">Tiền mặt công trường</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Phương thức chi</label>
-                <select
-                  value={formMethod}
-                  onChange={(e) => setFormMethod(e.target.value as any)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 font-semibold"
-                >
-                  <option value="BANK">Chuyển khoản ATM</option>
-                  <option value="CASH">Tiền mặt công trường</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Lý do xin tạm ứng *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formReason}
+                    onChange={(e) => setFormReason(e.target.value)}
+                    placeholder="Lý do chi tiết..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Lý do xin tạm ứng *</label>
-                <input
-                  type="text"
-                  required
-                  value={formReason}
-                  onChange={(e) => setFormReason(e.target.value)}
-                  placeholder="Lý do chi tiết..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Ghi chú thêm</label>
-                <input
-                  type="text"
-                  value={formNotes}
-                  onChange={(e) => setFormNotes(e.target.value)}
-                  placeholder="Thông tin tài khoản nhận, người bảo lãnh..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500"
-                />
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Ghi chú thêm</label>
+                  <input
+                    type="text"
+                    value={formNotes}
+                    onChange={(e) => setFormNotes(e.target.value)}
+                    placeholder="Thông tin tài khoản nhận, người bảo lãnh..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
@@ -1160,7 +1404,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isPushingCloud}
+                  disabled={isPushingCloud || !formWorkerId}
                   className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
                   <Save className="w-4 h-4" />
