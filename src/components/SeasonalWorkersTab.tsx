@@ -612,11 +612,18 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
       'Công trình': w.project,
       SĐT: w.phone,
       CCCD: w.idCard,
-      'Chu kỳ thanh toán': currentPeriodOption.cycleType === '1_WEEK' ? 'Lương 1 tuần' : 'Lương 2 tuần',
+      'Chu kỳ thanh toán':
+        (w.payrollCycleType || '1_MONTH') === 'TEAM'
+          ? 'Tổ Đội (Theo kỳ)'
+          : (w.payrollCycleType || '1_MONTH') === '1_WEEK'
+          ? 'Lương 1 tuần'
+          : (w.payrollCycleType || '1_MONTH') === '2_WEEKS'
+          ? 'Lương 2 tuần'
+          : 'Lương tháng',
       'Kỳ thanh toán': currentPeriodOption.label,
       'Thời gian': currentPeriodOption.dates.length > 0 ? `${currentPeriodOption.dates[0]} - ${currentPeriodOption.dates[currentPeriodOption.dates.length - 1]}` : currentPeriodOption.label,
-      'Đơn giá ngày (VNĐ)': w.dailyRate,
-      'Số ngày công': w.actualWorkDays,
+      'Đơn giá ngày (VNĐ)': (w.payrollCycleType || '1_MONTH') === 'TEAM' ? 'Theo kỳ Tổ Đội' : w.dailyRate,
+      'Số ngày công': (w.payrollCycleType || '1_MONTH') === 'TEAM' ? 'Không chấm công' : w.actualWorkDays,
       'Lương theo công (VNĐ)': w.salaryByDays,
       'Giờ OT (h)': w.overtimeHours,
       'Tiền OT (VNĐ)': w.overtimePay,
@@ -1284,16 +1291,31 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                       <div className="text-[10px] text-slate-400">{w.idCard || '—'}</div>
                     </td>
 
-                    {/* Đơn giá ngày - chỉ hiển thị số gọn nhẹ, không có ô textbox */}
+                    {/* Đơn giá ngày - Tổ Đội hiển thị "Theo kỳ Tổ Đội" thay vì gán nhầm vào đơn giá ngày công */}
                     <td
                       onClick={() => {
-                        setEditingWorker(w);
+                        const fullWorker =
+                          workers.find((x) => x.id === w.id || x.code === w.code) || w;
+                        setEditingWorker(fullWorker);
                         setIsFormOpen(true);
                       }}
                       className="p-2.5 border-r border-slate-200 text-right font-mono font-bold text-[#0f3d64] cursor-pointer hover:bg-sky-50"
-                      title="Bấm để sửa đơn giá ngày"
+                      title={
+                        (w.payrollCycleType || '1_MONTH') === 'TEAM'
+                          ? 'Nhân sự Tổ Đội không áp đơn giá ngày công mà nhận lương linh hoạt theo từng kỳ tại Tab Bản Lương Tổ Đội'
+                          : 'Bấm để sửa đơn giá ngày'
+                      }
                     >
-                      {formatNumberOnly(w.dailyRate || 0)} <span className="text-[10px] font-normal text-slate-500">đ</span>
+                      {(w.payrollCycleType || '1_MONTH') === 'TEAM' ? (
+                        <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200 font-sans text-[10px] font-bold">
+                          Theo kỳ Tổ Đội
+                        </span>
+                      ) : (
+                        <>
+                          {formatNumberOnly(w.dailyRate || 0)}{' '}
+                          <span className="text-[10px] font-normal text-slate-500">đ</span>
+                        </>
+                      )}
                     </td>
 
                     {/* Hình thức & STK */}
@@ -1353,18 +1375,20 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
                     {/* CỘT THAO TÁC */}
                     <td className="p-2 text-center no-print sticky right-0 bg-white hover:bg-sky-50/60 z-20 border-l border-slate-200">
                       <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedWorkerIdForShare(String(w.id));
-                            setIsMobileShareOpen(true);
-                          }}
-                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
-                          title="Tạo link & mã QR chấm công trên điện thoại cho thợ này"
-                        >
-                          <Smartphone className="w-3 h-3 text-emerald-700" />
-                          <span>Link thợ</span>
-                        </button>
+                        {(w.payrollCycleType || '1_MONTH') !== 'TEAM' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedWorkerIdForShare(String(w.id));
+                              setIsMobileShareOpen(true);
+                            }}
+                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                            title="Tạo link & mã QR chấm công trên điện thoại cho thợ này"
+                          >
+                            <Smartphone className="w-3 h-3 text-emerald-700" />
+                            <span>Link thợ</span>
+                          </button>
+                        )}
 
                         <button
                           type="button"

@@ -249,10 +249,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         currentMonth,
         currentYear
       );
-      const rateToUse =
-        w.payrollCycleType === 'TEAM' && synced.dailyRate !== undefined && synced.dailyRate >= 0
-          ? synced.dailyRate
-          : unifiedRate;
+      const rateToUse = w.payrollCycleType === 'TEAM' ? 0 : unifiedRate;
       const adv =
         w.payrollCycleType === 'TEAM'
           ? synced.advancePayment ?? w.advancePayment ?? 0
@@ -1132,7 +1129,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
               paymentMethod: payMethod,
               project: v.project || w.project,
               paymentDate: v.paymentDate || w.paymentDate,
-              dailyRate: v.salaryByDays || 0,
+              dailyRate: 0,
               actualWorkDays: 1,
               salaryByDays: v.salaryByDays || 0,
               overtimeHours: 0,
@@ -4573,7 +4570,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
                               onClick={() => {
                                 const printWorker: SeasonalWorker = {
                                   ...row.worker,
-                                  dailyRate: row.salaryByDays,
+                                  dailyRate: 0,
                                   actualWorkDays: 1,
                                   salaryByDays: row.salaryByDays,
                                   overtimeHours: 0,

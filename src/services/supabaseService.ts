@@ -1461,8 +1461,17 @@ export const loadSeasonalWorkersFromSupabase = async (
           actualWorkDays: Number(w.actualWorkDays ?? item.actual_work_days ?? 0),
           overtimeHours: Number(w.overtimeHours ?? item.overtime_hours ?? 0),
           overtimePay: Number(w.overtimePay ?? item.overtime_pay ?? 0),
-          dailyRate: Number(w.dailyRate ?? item.daily_rate ?? 0),
-          salaryByDays: Number(w.salaryByDays ?? (w.payrollCycleType === 'TEAM' ? w.dailyRate : 0) ?? 0),
+          dailyRate:
+            (w.payrollCycleType || item.payroll_cycle_type) === 'TEAM'
+              ? 0
+              : Number(w.dailyRate ?? item.daily_rate ?? 0),
+          salaryByDays: Number(
+            w.salaryByDays ??
+              ((w.payrollCycleType || item.payroll_cycle_type) === 'TEAM'
+                ? w.dailyRate ?? item.daily_rate
+                : 0) ??
+              0
+          ),
           mealAllowance: Number(w.mealAllowance ?? item.meal_allowance ?? 0),
           travelSafetyAllowance: Number(w.travelSafetyAllowance ?? item.travel_safety_allowance ?? 0),
           otherBonus: Number(w.otherBonus ?? item.other_bonus ?? 0),
@@ -2442,7 +2451,10 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
       ...(cleanedExisting?.periodRecords || {}),
       ...(cleanedLocal.periodRecords || {}),
     };
-    const effectiveDailyRate = Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
+    const effectiveDailyRate =
+      worker.payrollCycleType === 'TEAM'
+        ? 0
+        : Number(worker.dailyRate || existingWorkerData?.dailyRate || 0);
     Object.keys(mergedPeriodRecords).forEach((k) => {
       const r = mergedPeriodRecords[k];
       if (!r) return;
@@ -2463,7 +2475,7 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
           isRecorded: hasV,
           project: latestV?.project || r.project,
           paymentDate: latestV?.paymentDate || r.paymentDate,
-          dailyRate: sSal,
+          dailyRate: 0,
           actualWorkDays: hasV ? 1 : 0,
           salaryByDays: sSal,
           overtimePay: 0,
@@ -2477,24 +2489,39 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
         };
         return;
       }
-      const recRate = isTeamRec
-        ? Number(
-            r.salaryByDays !== undefined &&
-              r.salaryByDays > 0 &&
-              (!r.actualWorkDays || r.actualWorkDays === 1)
-              ? r.salaryByDays
-              : r.dailyRate ?? r.salaryByDays ?? effectiveDailyRate ?? 0
-          )
-        : effectiveDailyRate > 0
-        ? effectiveDailyRate
-        : Number(r.dailyRate || 0);
-      const workDays = isTeamRec
-        ? Number(r.actualWorkDays || 0) > 0
-          ? Number(r.actualWorkDays)
-          : r.isRecorded
-          ? 1
-          : 0
-        : Number(r.actualWorkDays || 0);
+      if (isTeamRec) {
+        const legacySal =
+          r.salaryByDays !== undefined && r.salaryByDays > 0
+            ? Number(r.salaryByDays)
+            : Number(r.dailyRate || 0);
+        const workDays =
+          legacySal > 0 && (Number(r.actualWorkDays || 0) > 0 || r.isRecorded) ? 1 : 0;
+        const sByDays = workDays > 0 ? Math.round(legacySal) : 0;
+        const totInc =
+          sByDays +
+          Number(r.mealAllowance || 0) +
+          Number(r.travelSafetyAllowance || 0) +
+          Number(r.otherBonus || 0);
+        const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+        const totDed = tax + Number(r.advancePayment || 0);
+        mergedPeriodRecords[k] = {
+          ...r,
+          cycleType: 'TEAM',
+          dailyRate: 0,
+          actualWorkDays: workDays,
+          salaryByDays: sByDays,
+          overtimeHours: 0,
+          overtimePay: 0,
+          totalIncome: totInc,
+          personalIncomeTax: tax,
+          totalDeductions: totDed,
+          netSalary: Math.max(0, totInc - totDed),
+        };
+        return;
+      }
+      const recRate =
+        effectiveDailyRate > 0 ? effectiveDailyRate : Number(r.dailyRate || 0);
+      const workDays = Number(r.actualWorkDays || 0);
       const sByDays = workDays > 0 ? Math.round(recRate * workDays) : 0;
       const otPay = Math.round((recRate / 8) * Number(r.overtimeHours || 0) * 1.5);
       const totInc =
@@ -2507,7 +2534,6 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
       const totDed = tax + Number(r.advancePayment || 0);
       mergedPeriodRecords[k] = {
         ...r,
-        ...(isTeamRec ? { cycleType: 'TEAM' } : {}),
         dailyRate: recRate,
         actualWorkDays: workDays,
         salaryByDays: sByDays,
@@ -2536,7 +2562,9 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
 
     const isPlaceholderPayload =
       Boolean((worker as any).__isUrlFallback) ||
-      (Number(worker.dailyRate || 0) === 0 && Number(existingWorkerData?.dailyRate || 0) > 0);
+      (worker.payrollCycleType !== 'TEAM' &&
+        Number(worker.dailyRate || 0) === 0 &&
+        Number(existingWorkerData?.dailyRate || 0) > 0);
 
     const mergedWorker = materializeSeasonalMonthlyAttendance(
       {
@@ -2572,7 +2600,12 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
         bankAccount: effectiveBankAccount,
         bankName: effectiveBankName,
         paymentMethod: effectivePaymentMethod,
-        dailyRate: effectiveDailyRate > 0 ? effectiveDailyRate : Number(worker.dailyRate || 0),
+        dailyRate:
+          worker.payrollCycleType === 'TEAM'
+            ? 0
+            : effectiveDailyRate > 0
+            ? effectiveDailyRate
+            : Number(worker.dailyRate || 0),
         actualWorkDays:
           worker.actualWorkDays !== undefined
             ? Number(worker.actualWorkDays || 0)

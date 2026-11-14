@@ -110,6 +110,21 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  const withSyncTimeout = <T,>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> => {
+    return new Promise<T>((resolve) => {
+      const timer = setTimeout(() => resolve(fallbackValue), ms);
+      promise
+        .then((val) => {
+          clearTimeout(timer);
+          resolve(val);
+        })
+        .catch(() => {
+          clearTimeout(timer);
+          resolve(fallbackValue);
+        });
+    });
+  };
+
   const persistAdvancesListToSupabase = async (
     targetList: SalaryAdvance[],
     periodKeyHint?: string,
@@ -118,12 +133,13 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setIsPushingCloud(true);
     setCloudErrorMsg(null);
     try {
-      if (onSaveData) {
-        await onSaveData();
-      }
       const connected = isSupabaseConfigured();
       setCloudConnected(connected);
+
       if (!connected) {
+        if (onSaveData) {
+          void Promise.resolve(onSaveData()).catch(() => {});
+        }
         setCloudErrorMsg(
           'Trình duyệt hiện tại chưa kết nối Supabase Cloud nên dữ liệu chỉ mới lưu trên máy này. Hãy nhấn "Kết nối Supabase Cloud" để ghi vào bảng salary_advances!'
         );
@@ -131,7 +147,23 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         return;
       }
 
-      const res = await syncSalaryAdvancesToSupabase(targetList, periodKeyHint || config.periodCode);
+      // Ghi trực tiếp bảng salary_advances lên Supabase trước tiên (nhanh ~200ms) có bảo vệ timeout 10s
+      const res = await withSyncTimeout(
+        syncSalaryAdvancesToSupabase(targetList, periodKeyHint || config.periodCode),
+        10000,
+        {
+          success: false,
+          count: 0,
+          message: 'Quá thời gian phản hồi từ mạng khi ghi bảng salary_advances.',
+          error: 'Mạng phản hồi chậm — vui lòng nhấn Lưu Data Lên Supabase để đồng bộ lại.',
+        }
+      );
+
+      // Đồng bộ nền sang toàn cục (LocalStorage, Server, Bản Lương) không chặn giao diện
+      if (onSaveData) {
+        void Promise.resolve(onSaveData()).catch(() => {});
+      }
+
       if (!res.success) {
         const errDetail = res.error || res.message || 'Không ghi được vào bảng salary_advances';
         setCloudErrorMsg(`Lỗi ghi bảng salary_advances: ${errDetail}`);
@@ -139,7 +171,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
         return;
       }
 
-      const verifiedCount = await refreshCloudAdvanceCount();
+      const verifiedCount = await withSyncTimeout(refreshCloudAdvanceCount(), 5000, null);
       const finalCount = verifiedCount !== null ? verifiedCount : res.count;
       setCloudErrorMsg(null);
       showToast(
@@ -220,67 +252,89 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       .trim();
   };
 
+  const selectedWorkerRowRef = React.useRef<HTMLTableRowElement | null>(null);
+
   // Danh sách worker khả dụng theo loại target - CHỈ HIỆN NHÂN SỰ ĐANG LÀM VIỆC (ACTIVE)
   const availableWorkers = useMemo(() => {
     if (formTargetType === 'PERMANENT') {
       return employees
         .filter((e) => (e.status || 'ACTIVE') === 'ACTIVE')
-        .map((e) => ({
-          id: e.id,
-          code: e.code,
-          name: e.fullName,
-          sub: e.department || 'Văn phòng',
-          groupLabel: e.department || 'Văn phòng',
-          roleLabel: e.title || 'Nhân viên chính thức',
-          phone: e.phone || '',
-          bankAccount: e.bankAccount || '',
-          bankName: e.bankName || '',
-          resolvedTargetType: 'PERMANENT' as const,
-        }));
+        .map((e) => {
+          const safeKey = String(e.id || e.code || '').trim();
+          const safeCode = String(e.code || e.id || '').trim();
+          return {
+            id: safeKey,
+            rawId: String(e.id || safeCode).trim(),
+            code: safeCode,
+            name: e.fullName,
+            sub: e.department || 'Văn phòng',
+            groupLabel: e.department || 'Văn phòng',
+            roleLabel: e.title || 'Nhân viên chính thức',
+            phone: e.phone || '',
+            bankAccount: e.bankAccount || '',
+            bankName: e.bankName || '',
+            resolvedTargetType: 'PERMANENT' as const,
+          };
+        });
     } else if (formTargetType === 'SEASONAL') {
       return seasonalWorkers
         .filter((w) => (w.status || 'ACTIVE') === 'ACTIVE')
-        .map((w) => ({
-          id: w.id,
-          code: w.code,
-          name: w.fullName,
-          sub: `${w.project || w.trade || ''}${w.payrollCycleType === 'TEAM' ? ' • Hệ Tổ đội' : ''}`,
-          groupLabel: w.project || 'Công trình',
-          roleLabel: `${w.trade || 'Thợ thời vụ'}${w.payrollCycleType === 'TEAM' ? ' (Tổ đội)' : ''}`,
-          phone: w.phone || '',
-          bankAccount: w.bankAccount || '',
-          bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
-          resolvedTargetType: 'SEASONAL' as const,
-        }));
+        .map((w) => {
+          const safeKey = String(w.id || w.code || '').trim();
+          const safeCode = String(w.code || w.id || '').trim();
+          return {
+            id: safeKey,
+            rawId: String(w.id || safeCode).trim(),
+            code: safeCode,
+            name: w.fullName,
+            sub: `${w.project || w.trade || ''}${w.payrollCycleType === 'TEAM' ? ' • Hệ Tổ đội' : ''}`,
+            groupLabel: w.project || 'Công trình',
+            roleLabel: `${w.trade || 'Thợ thời vụ'}${w.payrollCycleType === 'TEAM' ? ' (Tổ đội)' : ''}`,
+            phone: w.phone || '',
+            bankAccount: w.bankAccount || '',
+            bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
+            resolvedTargetType: 'SEASONAL' as const,
+          };
+        });
     } else {
       const seasonalTeams = seasonalWorkers
         .filter((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM')
-        .map((w) => ({
-          id: w.id,
-          code: w.code,
-          name: w.fullName,
-          sub: `${w.project || w.trade || 'Tổ đội'} • Bản Lương Tổ Đội`,
-          groupLabel: w.project || 'Tổ đội thi công',
-          roleLabel: `${w.trade || 'Công nhân Tổ đội'}${w.teamName ? ` • ${w.teamName}` : ''}`,
-          phone: w.phone || '',
-          bankAccount: w.bankAccount || '',
-          bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
-          resolvedTargetType: 'SEASONAL' as const,
-        }));
+        .map((w) => {
+          const safeKey = String(w.id || w.code || '').trim();
+          const safeCode = String(w.code || w.id || '').trim();
+          return {
+            id: safeKey,
+            rawId: String(w.id || safeCode).trim(),
+            code: safeCode,
+            name: w.fullName,
+            sub: `${w.project || w.trade || 'Tổ đội'} • Bản Lương Tổ Đội`,
+            groupLabel: w.project || 'Tổ đội thi công',
+            roleLabel: `${w.trade || 'Công nhân Tổ đội'}${w.teamName ? ` • ${w.teamName}` : ''}`,
+            phone: w.phone || '',
+            bankAccount: w.bankAccount || '',
+            bankName: w.bankName || (w.paymentMethod === 'CASH' ? 'Tiền mặt' : ''),
+            resolvedTargetType: 'SEASONAL' as const,
+          };
+        });
       const legacyTeams = teamWorkers
         .filter((t) => (t.status || 'ACTIVE') === 'ACTIVE')
-        .map((t) => ({
-          id: t.id,
-          code: t.code,
-          name: t.teamName,
-          sub: `${t.leaderName} (${t.project})`,
-          groupLabel: t.project || 'Tổ đội khoán',
-          roleLabel: `Đội trưởng: ${t.leaderName}`,
-          phone: t.phone || '',
-          bankAccount: t.bankAccount || '',
-          bankName: t.bankName || '',
-          resolvedTargetType: 'TEAM' as const,
-        }));
+        .map((t) => {
+          const safeKey = String(t.id || t.code || '').trim();
+          const safeCode = String(t.code || t.id || '').trim();
+          return {
+            id: safeKey,
+            rawId: String(t.id || safeCode).trim(),
+            code: safeCode,
+            name: t.teamName,
+            sub: `${t.leaderName} (${t.project})`,
+            groupLabel: t.project || 'Tổ đội khoán',
+            roleLabel: `Đội trưởng: ${t.leaderName}`,
+            phone: t.phone || '',
+            bankAccount: t.bankAccount || '',
+            bankName: t.bankName || '',
+            resolvedTargetType: 'TEAM' as const,
+          };
+        });
       return [...seasonalTeams, ...legacyTeams];
     }
   }, [formTargetType, employees, seasonalWorkers, teamWorkers]);
@@ -311,8 +365,19 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
   }, [availableWorkers, modalWorkerSearch, modalSubGroupFilter]);
 
   const selectedModalWorkerObj = useMemo(() => {
-    return availableWorkers.find((w) => w.id === formWorkerId || w.code === formWorkerId) || null;
+    const targetKey = String(formWorkerId || '').trim();
+    if (!targetKey) return null;
+    return availableWorkers.find((w) => w.id === targetKey || w.code === targetKey) || null;
   }, [availableWorkers, formWorkerId]);
+
+  // Tự động cuộn tới đúng dòng nhân sự đang chọn khi mở cửa sổ Sửa Phiếu Tạm Ứng
+  React.useEffect(() => {
+    if (!isModalOpen) return;
+    const t = setTimeout(() => {
+      selectedWorkerRowRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [isModalOpen, editingAdvance?.id]);
 
   const openAddModal = () => {
     setEditingAdvance(null);
@@ -320,11 +385,13 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setFormTargetType(target);
     setModalWorkerSearch('');
     setModalSubGroupFilter('ALL');
-    const firstActive =
+    const firstActiveEmp = employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE');
+    const firstActiveSea = seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE');
+    const firstKey =
       target === 'PERMANENT'
-        ? employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE')?.id
-        : seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE')?.id;
-    setFormWorkerId(firstActive || '');
+        ? String(firstActiveEmp?.id || firstActiveEmp?.code || '').trim()
+        : String(firstActiveSea?.id || firstActiveSea?.code || '').trim();
+    setFormWorkerId(firstKey);
     setFormAmount(3000000);
     setFormRequestDate(getTodayIsoDate());
     setFormReason(target === 'PERMANENT' ? 'Tạm ứng tiền lương giữa kỳ' : 'Tạm ứng tiền sinh hoạt công trường giữa kỳ');
@@ -338,23 +405,42 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setModalWorkerSearch('');
     setModalSubGroupFilter('ALL');
     setFormTargetType(adv.targetType);
-    // Tìm workerId khớp theo id hoặc code
-    let matchedId = adv.workerId;
+    const advWId = String(adv.workerId || '').trim();
+    const advWCode = String(adv.workerCode || '').trim();
+    let matchedId = advWId || advWCode;
+
     if (adv.targetType === 'PERMANENT') {
-      const emp = employees.find((e) => e.id === adv.workerId || e.code === adv.workerCode);
-      if (emp) matchedId = emp.id;
+      const emp = employees.find(
+        (e) =>
+          (Boolean(advWId) && String(e.id || '').trim() === advWId) ||
+          (Boolean(advWCode) && String(e.code || '').trim() === advWCode)
+      );
+      if (emp) matchedId = String(emp.id || emp.code || matchedId).trim();
     } else if (adv.targetType === 'SEASONAL') {
-      const sw = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
-      if (sw) matchedId = sw.id;
+      const sw = seasonalWorkers.find(
+        (w) =>
+          (Boolean(advWId) && String(w.id || '').trim() === advWId) ||
+          (Boolean(advWCode) && String(w.code || '').trim() === advWCode)
+      );
+      if (sw) matchedId = String(sw.id || sw.code || matchedId).trim();
     } else if (adv.targetType === 'TEAM') {
-      const swTeam = seasonalWorkers.find((w) => w.id === adv.workerId || w.code === adv.workerCode);
+      const swTeam = seasonalWorkers.find(
+        (w) =>
+          (Boolean(advWId) && String(w.id || '').trim() === advWId) ||
+          (Boolean(advWCode) && String(w.code || '').trim() === advWCode)
+      );
       if (swTeam) {
-        matchedId = swTeam.id;
+        matchedId = String(swTeam.id || swTeam.code || matchedId).trim();
       } else {
-        const tw = teamWorkers.find((t) => t.id === adv.workerId || t.code === adv.workerCode);
-        if (tw) matchedId = tw.id;
+        const tw = teamWorkers.find(
+          (t) =>
+            (Boolean(advWId) && String(t.id || '').trim() === advWId) ||
+            (Boolean(advWCode) && String(t.code || '').trim() === advWCode)
+        );
+        if (tw) matchedId = String(tw.id || tw.code || matchedId).trim();
       }
     }
+
     setFormWorkerId(matchedId);
     setFormAmount(adv.amount || 0);
     setFormRequestDate(toIsoDateString(adv.requestDate || adv.paymentDate));
@@ -364,21 +450,26 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleCreateAdvance = async (e: React.FormEvent) => {
+  const handleCreateAdvance = (e: React.FormEvent) => {
     e.preventDefault();
+    const targetKey = String(formWorkerId || '').trim();
     const selectedWorker =
-      availableWorkers.find((w) => w.id === formWorkerId || w.code === formWorkerId) ||
+      (targetKey
+        ? availableWorkers.find((w) => w.id === targetKey || w.code === targetKey)
+        : undefined) ||
       (editingAdvance
         ? {
-            id: editingAdvance.workerId,
-            code: editingAdvance.workerCode,
+            id: String(editingAdvance.workerId || editingAdvance.workerCode || '').trim(),
+            rawId: String(editingAdvance.workerId || editingAdvance.workerCode || '').trim(),
+            code: String(editingAdvance.workerCode || editingAdvance.workerId || '').trim(),
             name: editingAdvance.workerName,
             sub: editingAdvance.departmentOrProject,
+            resolvedTargetType: editingAdvance.targetType,
           }
         : undefined);
 
     if (!selectedWorker) {
-      showToast('Vui lòng chọn nhân sự tạm ứng!');
+      showToast('Vui lòng chọn nhân sự nhận tạm ứng trong danh sách!');
       return;
     }
 
@@ -388,9 +479,9 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     if (editingAdvance) {
       const updatedAdv: SalaryAdvance = {
         ...editingAdvance,
-        targetType: (selectedWorker as any).resolvedTargetType || formTargetType,
-        workerId: selectedWorker.id,
-        workerCode: selectedWorker.code,
+        targetType: selectedWorker.resolvedTargetType || formTargetType,
+        workerId: selectedWorker.rawId || selectedWorker.id || selectedWorker.code,
+        workerCode: selectedWorker.code || selectedWorker.id,
         workerName: selectedWorker.name,
         departmentOrProject: selectedWorker.sub || 'Công ty Phúc Nguyên',
         amount: Number(formAmount) || 0,
@@ -405,7 +496,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       onUpdateAdvance(updatedAdv);
       setEditingAdvance(null);
       setIsModalOpen(false);
-      await persistAdvancesListToSupabase(nextList, derivedPeriodKey, updatedAdv.advanceCode);
+      showToast(`✓ Đã cập nhật phiếu ${updatedAdv.advanceCode} — Đang đồng bộ lên Supabase...`);
+      void persistAdvancesListToSupabase(nextList, derivedPeriodKey, updatedAdv.advanceCode);
       return;
     }
 
@@ -428,9 +520,9 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     const newAdv: SalaryAdvance = {
       id: `adv-${Date.now()}`,
       advanceCode: candidateCode,
-      targetType: (selectedWorker as any).resolvedTargetType || formTargetType,
-      workerId: selectedWorker.id,
-      workerCode: selectedWorker.code,
+      targetType: selectedWorker.resolvedTargetType || formTargetType,
+      workerId: selectedWorker.rawId || selectedWorker.id || selectedWorker.code,
+      workerCode: selectedWorker.code || selectedWorker.id,
       workerName: selectedWorker.name,
       departmentOrProject: selectedWorker.sub || 'Công ty Phúc Nguyên',
       amount: Number(formAmount) || 0,
@@ -447,7 +539,8 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
     const nextList = [newAdv, ...advances];
     onAddAdvance(newAdv);
     setIsModalOpen(false);
-    await persistAdvancesListToSupabase(nextList, derivedPeriodKey, newAdv.advanceCode);
+    showToast(`✓ Đã tạo phiếu ${newAdv.advanceCode} — Đang đồng bộ lên Supabase...`);
+    void persistAdvancesListToSupabase(nextList, derivedPeriodKey, newAdv.advanceCode);
   };
 
   // Thay đổi trạng thái ứng
@@ -1071,7 +1164,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
       {isModalOpen && (
         <div
           onClick={(e) => {
-            if (e.target === e.currentTarget && !isPushingCloud) {
+            if (e.target === e.currentTarget) {
               setEditingAdvance(null);
               setIsModalOpen(false);
             }
@@ -1109,7 +1202,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                       setModalWorkerSearch('');
                       setModalSubGroupFilter('ALL');
                       const firstEmp = employees.find((e) => (e.status || 'ACTIVE') === 'ACTIVE');
-                      setFormWorkerId(firstEmp?.id || '');
+                      setFormWorkerId(String(firstEmp?.id || firstEmp?.code || '').trim());
                     }}
                     className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
                       formTargetType === 'PERMANENT' ? 'bg-[#0f3d64] text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'
@@ -1124,7 +1217,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                       setModalWorkerSearch('');
                       setModalSubGroupFilter('ALL');
                       const firstSea = seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE');
-                      setFormWorkerId(firstSea?.id || '');
+                      setFormWorkerId(String(firstSea?.id || firstSea?.code || '').trim());
                     }}
                     className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
                       formTargetType === 'SEASONAL' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-200'
@@ -1138,10 +1231,13 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                       setFormTargetType('TEAM');
                       setModalWorkerSearch('');
                       setModalSubGroupFilter('ALL');
-                      const firstTeamWorker =
-                        seasonalWorkers.find((w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM')?.id ||
-                        teamWorkers.find((t) => (t.status || 'ACTIVE') === 'ACTIVE')?.id ||
-                        '';
+                      const swTeam = seasonalWorkers.find(
+                        (w) => (w.status || 'ACTIVE') === 'ACTIVE' && w.payrollCycleType === 'TEAM'
+                      );
+                      const legacyTeam = teamWorkers.find((t) => (t.status || 'ACTIVE') === 'ACTIVE');
+                      const firstTeamWorker = String(
+                        swTeam?.id || swTeam?.code || legacyTeam?.id || legacyTeam?.code || ''
+                      ).trim();
                       setFormWorkerId(firstTeamWorker);
                     }}
                     className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
@@ -1246,13 +1342,16 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                           </tr>
                         ) : (
                           filteredModalWorkers.map((w) => {
-                            const isSelected = w.id === formWorkerId || w.code === formWorkerId;
+                            const targetKey = String(formWorkerId || '').trim();
+                            const isSelected =
+                              Boolean(targetKey) && (w.id === targetKey || w.code === targetKey);
                             const currentPeriodKey = getPeriodKeyFromIsoDate(formRequestDate);
                             const existingAdvTotal = advances
                               .filter(
                                 (a) =>
                                   (editingAdvance ? a.id !== editingAdvance.id : true) &&
-                                  (a.workerId === w.id || a.workerCode === w.code) &&
+                                  ((Boolean(a.workerId) && a.workerId === w.rawId) ||
+                                    (Boolean(a.workerCode) && a.workerCode === w.code)) &&
                                   a.periodKey === currentPeriodKey
                               )
                               .reduce((sum, a) => sum + (a.amount || 0), 0);
@@ -1260,6 +1359,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                             return (
                               <tr
                                 key={`${w.resolvedTargetType}-${w.id || w.code}`}
+                                ref={isSelected ? selectedWorkerRowRef : undefined}
                                 onClick={() => setFormWorkerId(w.id)}
                                 className={`cursor-pointer transition-colors ${
                                   isSelected
@@ -1404,8 +1504,7 @@ export const SalaryAdvancesTab: React.FC<SalaryAdvancesTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isPushingCloud || !formWorkerId}
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition"
                 >
                   <Save className="w-4 h-4" />
                   <span>

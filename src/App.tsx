@@ -1523,29 +1523,86 @@ export default function App() {
           }
         });
 
-        if (resolvedDailyRate >= 0) {
+        const effectiveResolvedDailyRate =
+          resolvedCycleType === 'TEAM' ? 0 : resolvedDailyRate;
+
+        if (effectiveResolvedDailyRate >= 0) {
           Object.keys(mergedPeriodRecs).forEach((pKey) => {
             const r = mergedPeriodRecs[pKey];
             if (!r) return;
             const isTeamRec = resolvedCycleType === 'TEAM' || r.cycleType === 'TEAM';
-            const recRate = isTeamRec
-              ? Number(
-                  r.salaryByDays !== undefined &&
-                    r.salaryByDays > 0 &&
-                    (!r.actualWorkDays || r.actualWorkDays === 1)
-                    ? r.salaryByDays
-                    : r.dailyRate ?? r.salaryByDays ?? resolvedDailyRate ?? 0
-                )
-              : resolvedDailyRate > 0
-              ? resolvedDailyRate
-              : Number(r.dailyRate || 0);
-            const workDays = isTeamRec
-              ? Number(r.actualWorkDays || 0) > 0
-                ? Number(r.actualWorkDays)
-                : r.isRecorded
-                ? 1
-                : 0
-              : Number(r.actualWorkDays || 0);
+            if (isTeamRec && Array.isArray(r.teamVouchers)) {
+              const vouchers = r.teamVouchers;
+              const hasV = vouchers.length > 0;
+              const sSal = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.salaryByDays || 0)), 0);
+              const sBon = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.otherBonus || 0)), 0);
+              const sAdv = vouchers.reduce((s: number, v: any) => s + Math.max(0, Number(v?.advancePayment || 0)), 0);
+              const totInc = sSal + sBon;
+              const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+              const totDed = tax + sAdv;
+              const latestV = hasV ? vouchers[vouchers.length - 1] : undefined;
+              mergedPeriodRecs[pKey] = {
+                ...r,
+                cycleType: 'TEAM',
+                isRecorded: hasV,
+                project: latestV?.project || r.project,
+                paymentDate: latestV?.paymentDate || r.paymentDate,
+                dailyRate: 0,
+                actualWorkDays: hasV ? 1 : 0,
+                salaryByDays: sSal,
+                overtimeHours: 0,
+                overtimePay: 0,
+                mealAllowance: 0,
+                travelSafetyAllowance: 0,
+                otherBonus: sBon,
+                totalIncome: totInc,
+                personalIncomeTax: tax,
+                advancePayment: sAdv,
+                totalDeductions: totDed,
+                netSalary: Math.max(0, totInc - totDed),
+                teamVouchers: vouchers,
+              };
+              return;
+            }
+            if (isTeamRec) {
+              const legacySal =
+                r.salaryByDays !== undefined && r.salaryByDays > 0
+                  ? Number(r.salaryByDays)
+                  : Number(r.dailyRate || 0);
+              const workDays =
+                legacySal > 0 && (Number(r.actualWorkDays || 0) > 0 || r.isRecorded) ? 1 : 0;
+              const sByDays = workDays > 0 ? Math.round(legacySal) : 0;
+              const otherBon =
+                Number(r.mealAllowance || 0) +
+                Number(r.travelSafetyAllowance || 0) +
+                Number(r.otherBonus || 0);
+              const totInc = sByDays + otherBon;
+              const tax = !(r.hasTaxCommitment ?? true) && totInc >= 2000000 ? Math.round(totInc * 0.1) : 0;
+              const totDed = tax + Number(r.advancePayment || 0);
+              mergedPeriodRecs[pKey] = {
+                ...r,
+                cycleType: 'TEAM',
+                dailyRate: 0,
+                actualWorkDays: workDays,
+                salaryByDays: sByDays,
+                overtimeHours: 0,
+                overtimePay: 0,
+                mealAllowance: 0,
+                travelSafetyAllowance: 0,
+                otherBonus: otherBon,
+                totalIncome: totInc,
+                personalIncomeTax: tax,
+                totalDeductions: totDed,
+                netSalary: Math.max(0, totInc - totDed),
+              };
+              return;
+            }
+
+            const recRate =
+              effectiveResolvedDailyRate > 0
+                ? effectiveResolvedDailyRate
+                : Number(r.dailyRate || 0);
+            const workDays = Number(r.actualWorkDays || 0);
             const sByDays = workDays > 0 ? Math.round(recRate * workDays) : 0;
             const otPay = Math.round((recRate / 8) * Number(r.overtimeHours || 0) * 1.5);
             const totInc =
@@ -1558,7 +1615,6 @@ export default function App() {
             const totDed = tax + Number(r.advancePayment || 0);
             mergedPeriodRecs[pKey] = {
               ...r,
-              ...(isTeamRec ? { cycleType: 'TEAM' } : {}),
               dailyRate: recRate,
               actualWorkDays: workDays,
               salaryByDays: sByDays,
@@ -1629,8 +1685,8 @@ export default function App() {
           ...(Math.max(exBankTime, cwBankTime) > 0
             ? { bankUpdatedAt: Math.max(exBankTime, cwBankTime) }
             : {}),
-          dailyRate: resolvedDailyRate,
-          ...(Math.max(exRateTime, cwRateTime) > 0
+          dailyRate: effectiveResolvedDailyRate,
+          ...(resolvedCycleType !== 'TEAM' && Math.max(exRateTime, cwRateTime) > 0
             ? { dailyRateUpdatedAt: Math.max(exRateTime, cwRateTime) }
             : {}),
           ...(resolvedCycleType !== 'TEAM'
@@ -2225,6 +2281,7 @@ export default function App() {
       finalWorker = {
         ...next[idx],
         ...recalculated,
+        dailyRate: effectiveCycleType === 'TEAM' ? 0 : recalculated.dailyRate,
         bankAccount:
           recalculated.bankAccount !== undefined
             ? recalculated.bankAccount
@@ -2235,7 +2292,7 @@ export default function App() {
             : next[idx].bankName || 'Vietcombank',
         paymentMethod: recalculated.paymentMethod || next[idx].paymentMethod || 'BANK',
         bankUpdatedAt: Date.now(),
-        dailyRateUpdatedAt: Date.now(),
+        ...(effectiveCycleType !== 'TEAM' ? { dailyRateUpdatedAt: Date.now() } : {}),
         updatedAt: Date.now(),
         monthlyAttendance: {
           ...(next[idx].monthlyAttendance || {}),

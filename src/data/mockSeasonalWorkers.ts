@@ -488,7 +488,7 @@ export function buildTeamPeriodRecordFromVouchers(
     periodLabel: period.label,
     cycleType: 'TEAM',
     isRecorded: hasVouchers,
-    dailyRate: sumSalaryByDays,
+    dailyRate: 0,
     project: latestVoucher?.project || worker.project,
     paymentDate: latestVoucher?.paymentDate || worker.paymentDate,
     actualWorkDays: hasVouchers ? 1 : 0,
@@ -515,7 +515,7 @@ export function buildTeamPeriodRecordFromVouchers(
     payrollCycleType: 'TEAM',
     project: latestVoucher?.project || worker.project,
     paymentDate: latestVoucher?.paymentDate || worker.paymentDate,
-    dailyRate: sumSalaryByDays,
+    dailyRate: 0,
     actualWorkDays: hasVouchers ? 1 : 0,
     salaryByDays: sumSalaryByDays,
     overtimeHours: 0,
@@ -582,7 +582,7 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
       ...worker,
       project: latest?.project || worker.project,
       paymentDate: latest?.paymentDate || worker.paymentDate,
-      dailyRate: sumSal,
+      dailyRate: 0,
       actualWorkDays: 1,
       salaryByDays: sumSal,
       overtimeHours: 0,
@@ -600,29 +600,26 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
     };
   }
 
-  const dailyRate = Math.max(0, worker.dailyRate || 0);
+  const dailyRate = isTeamCycle ? 0 : Math.max(0, worker.dailyRate || 0);
   const actualWorkDays = Math.max(0, worker.actualWorkDays || 0);
-  const overtimeHours = Math.max(0, worker.overtimeHours || 0);
+  const overtimeHours = isTeamCycle ? 0 : Math.max(0, worker.overtimeHours || 0);
   const advancePayment = Math.max(0, worker.advancePayment || 0);
-  const mealAllowance = Math.max(0, worker.mealAllowance || 0);
-  const travelSafetyAllowance = Math.max(0, worker.travelSafetyAllowance || 0);
+  const mealAllowance = isTeamCycle ? 0 : Math.max(0, worker.mealAllowance || 0);
+  const travelSafetyAllowance = isTeamCycle ? 0 : Math.max(0, worker.travelSafetyAllowance || 0);
   const otherBonus = Math.max(0, worker.otherBonus || 0);
 
-  const directTeamSalary =
-    isTeamCycle && typeof worker.salaryByDays === 'number' && worker.salaryByDays > 0 && dailyRate === 0
-      ? Math.round(worker.salaryByDays)
-      : 0;
-  const effectiveDailyRate = directTeamSalary > 0 ? directTeamSalary : dailyRate;
+  const directTeamSalary = isTeamCycle
+    ? Math.max(0, Math.round(Number(worker.salaryByDays || worker.dailyRate || 0)))
+    : 0;
 
-  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công (trừ Tổ Đội đã chọn trả lương trong kỳ)
-  const hasParticipated =
-    actualWorkDays > 0 ||
-    overtimeHours > 0 ||
-    (isTeamCycle && Boolean(worker.selectedForAttendance));
+  // Nếu nhân sự chưa tham gia chấm công (0 công, 0 giờ OT): Bản lương để 0 đ cho đến khi có chấm công (trừ Tổ Đội đã có lương kỳ)
+  const hasParticipated = isTeamCycle
+    ? directTeamSalary > 0 || Boolean(worker.selectedForAttendance && actualWorkDays > 0)
+    : actualWorkDays > 0 || overtimeHours > 0;
   if (!hasParticipated) {
     return {
       ...worker,
-      dailyRate: isTeamCycle ? 0 : effectiveDailyRate,
+      dailyRate: isTeamCycle ? 0 : dailyRate,
       actualWorkDays: 0,
       salaryByDays: 0,
       overtimeHours: 0,
@@ -638,14 +635,12 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
     };
   }
 
-  // 1. Tiền lương theo ngày công (hoặc lương trực tiếp đối với Tổ Đội)
-  const salaryByDays = isTeamCycle
-    ? Math.round(effectiveDailyRate * (actualWorkDays > 0 ? actualWorkDays : 1))
-    : Math.round(effectiveDailyRate * actualWorkDays);
+  // 1. Tiền lương theo ngày công (hoặc lương theo kỳ đối với Tổ Đội, không nhân đơn giá ngày công)
+  const salaryByDays = isTeamCycle ? directTeamSalary : Math.round(dailyRate * actualWorkDays);
 
-  // 2. Tiền làm thêm giờ (Đơn giá 1 giờ = Đơn giá ngày / 8 giờ, hệ số OT x 1.5)
-  const hourlyRate = effectiveDailyRate / 8;
-  const overtimePay = Math.round(hourlyRate * overtimeHours * 1.5);
+  // 2. Tiền làm thêm giờ (Đơn giá 1 giờ = Đơn giá ngày / 8 giờ, hệ số OT x 1.5; Tổ Đội không tính OT ngày)
+  const hourlyRate = dailyRate / 8;
+  const overtimePay = isTeamCycle ? 0 : Math.round(hourlyRate * overtimeHours * 1.5);
 
   // 3. Tổng thu nhập
   const totalIncome = salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
@@ -664,8 +659,8 @@ export function recomputeSeasonalWorkerPayroll(worker: SeasonalWorker): Seasonal
 
   return {
     ...worker,
-    dailyRate,
-    actualWorkDays,
+    dailyRate: isTeamCycle ? 0 : dailyRate,
+    actualWorkDays: isTeamCycle ? (salaryByDays > 0 ? 1 : 0) : actualWorkDays,
     salaryByDays,
     overtimeHours,
     overtimePay,
@@ -743,6 +738,10 @@ export function buildSeasonalMonthlyAttendanceRecord(
  * sang Danh Sách Thời Vụ, Bản Chấm Công và Bản Lương cho bất kỳ Tháng/Năm nào.
  */
 export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
+  // Nhân sự thuộc danh sách Tổ Đội không chấm công và không áp đơn giá ngày công cố định (nhận lương linh hoạt theo từng kỳ)
+  if (!worker || worker.payrollCycleType === 'TEAM') {
+    return 0;
+  }
   if ((worker as any).dailyRateUpdatedAt !== undefined && typeof worker.dailyRate === 'number') {
     return Math.max(0, worker.dailyRate);
   }
@@ -751,7 +750,7 @@ export function getUnifiedWorkerDailyRate(worker: SeasonalWorker): number {
   }
   if (worker.periodRecords) {
     for (const rec of Object.values(worker.periodRecords)) {
-      if (rec && rec.dailyRate && rec.dailyRate > 0) {
+      if (rec && rec.cycleType !== 'TEAM' && rec.dailyRate && rec.dailyRate > 0) {
         return rec.dailyRate;
       }
     }
@@ -868,7 +867,7 @@ function syncPeriodRecordsDailyRate(
           isRecorded: hasV,
           project: latestV?.project || rec.project,
           paymentDate: latestV?.paymentDate || rec.paymentDate,
-          dailyRate: sSal,
+          dailyRate: 0,
           actualWorkDays: hasV ? 1 : 0,
           salaryByDays: sSal,
           overtimePay: 0,
@@ -884,26 +883,18 @@ function syncPeriodRecordsDailyRate(
         };
         return;
       }
-      const teamRate =
-        rec.salaryByDays !== undefined &&
-        rec.salaryByDays > 0 &&
-        (!rec.actualWorkDays || rec.actualWorkDays === 1)
+      const legacyTeamSalary =
+        rec.salaryByDays !== undefined && rec.salaryByDays > 0
           ? Number(rec.salaryByDays)
-          : Number(rec.dailyRate ?? rec.salaryByDays ?? unifiedRate ?? 0);
+          : Number(rec.dailyRate || 0);
       const workDays =
-        Number(rec.actualWorkDays || 0) > 0
-          ? Number(rec.actualWorkDays)
-          : rec.isRecorded
-          ? 1
-          : 0;
-      const salaryByDays = workDays > 0 ? Math.round(teamRate * workDays) : 0;
-      const otHours = Number(rec.overtimeHours || 0);
-      const overtimePay = Math.round((teamRate / 8) * otHours * 1.5);
-      const mealAllowance = Number(rec.mealAllowance || 0);
-      const travelSafetyAllowance = Number(rec.travelSafetyAllowance || 0);
-      const otherBonus = Number(rec.otherBonus || 0);
-      const totalIncome =
-        salaryByDays + overtimePay + mealAllowance + travelSafetyAllowance + otherBonus;
+        legacyTeamSalary > 0 && (Number(rec.actualWorkDays || 0) > 0 || rec.isRecorded) ? 1 : 0;
+      const salaryByDays = workDays > 0 ? Math.round(legacyTeamSalary) : 0;
+      const otherBonus =
+        Number(rec.mealAllowance || 0) +
+        Number(rec.travelSafetyAllowance || 0) +
+        Number(rec.otherBonus || 0);
+      const totalIncome = salaryByDays + otherBonus;
       const hasTaxCommitment = rec.hasTaxCommitment ?? true;
       const personalIncomeTax =
         !hasTaxCommitment && totalIncome >= 2000000 ? Math.round(totalIncome * 0.1) : 0;
@@ -912,10 +903,14 @@ function syncPeriodRecordsDailyRate(
       result[key] = {
         ...rec,
         cycleType: 'TEAM',
-        dailyRate: teamRate,
+        dailyRate: 0,
         actualWorkDays: workDays,
         salaryByDays,
-        overtimePay,
+        overtimeHours: 0,
+        overtimePay: 0,
+        mealAllowance: 0,
+        travelSafetyAllowance: 0,
+        otherBonus,
         totalIncome,
         personalIncomeTax,
         totalDeductions,
@@ -1214,7 +1209,7 @@ export function syncSeasonalWorkerForMonth(
         ...worker,
         project: latestVoucher.project || teamRec?.project || worker.project,
         paymentDate: latestVoucher.paymentDate || teamRec?.paymentDate || worker.paymentDate,
-        dailyRate: sumSalary,
+        dailyRate: 0,
         salaryByDays: sumSalary,
         attendanceMonth: month,
         attendanceYear: year,
@@ -1787,7 +1782,7 @@ export function getWorkerForPeriod(rawWorker: SeasonalWorker, period: PayrollPer
           ...worker,
           project: latestVoucher.project || existingRecord?.project || worker.project,
           paymentDate: latestVoucher.paymentDate || existingRecord?.paymentDate || worker.paymentDate,
-          dailyRate: sumSalary,
+          dailyRate: 0,
           salaryByDays: sumSalary,
           currentPeriodKey: pKey,
           currentWeekId: period.id,
@@ -2072,13 +2067,47 @@ export function recordWorkerPeriod(
   const declaredCycle: SeasonalCycleType =
     patch.payrollCycleType || worker.payrollCycleType || period.cycleType || '1_MONTH';
 
+  // RIÊNG NHÓM TỔ ĐỘI ('TEAM'): Không dùng đơn giá ngày công (dailyRate = 0), bảo toàn tuyệt đối các kỳ lương Tổ Đội (teamVouchers) đã lập
+  if (declaredCycle === 'TEAM') {
+    const baseTeamWorker: SeasonalWorker = {
+      ...worker,
+      ...patch,
+      dailyRate: 0,
+      payrollCycleType: 'TEAM',
+    };
+    const existingVouchers = extractTeamPeriodVouchers(existingPeriodRec, baseTeamWorker);
+    const updatedVouchers = existingVouchers.map((v, idx) =>
+      normalizeSingleTeamVoucher(
+        {
+          ...v,
+          hasTaxCommitment:
+            patch.hasTaxCommitment !== undefined
+              ? patch.hasTaxCommitment
+              : v.hasTaxCommitment ?? baseTeamWorker.hasTaxCommitment ?? true,
+        },
+        baseTeamWorker,
+        idx + 1
+      )
+    );
+    const rebuiltTeamWorker = buildTeamPeriodRecordFromVouchers(
+      baseTeamWorker,
+      period,
+      updatedVouchers
+    );
+    return {
+      ...rebuiltTeamWorker,
+      status: patch.status !== undefined ? patch.status : worker.status,
+      hasTaxCommitment:
+        patch.hasTaxCommitment !== undefined
+          ? patch.hasTaxCommitment
+          : worker.hasTaxCommitment ?? true,
+      dailyRate: 0,
+    };
+  }
+
   const effectivePeriodDailyRate =
-    declaredCycle === 'TEAM' && patch.salaryByDays !== undefined && patch.salaryByDays >= 0
-      ? patch.salaryByDays
-      : patch.dailyRate !== undefined && patch.dailyRate >= 0
+    patch.dailyRate !== undefined && patch.dailyRate >= 0
       ? patch.dailyRate
-      : declaredCycle === 'TEAM' && existingPeriodRec?.dailyRate !== undefined
-      ? existingPeriodRec.dailyRate
       : periodDailyRate;
 
   const updated = recomputeSeasonalWorkerPayroll({
@@ -2095,16 +2124,12 @@ export function recordWorkerPeriod(
   });
 
   const isPeriodParticipating =
-    declaredCycle === 'TEAM' && patch.selectedForAttendance !== undefined
-      ? Boolean(patch.selectedForAttendance)
-      : updated.actualWorkDays > 0 ||
-        updated.overtimeHours > 0 ||
-        (declaredCycle === 'TEAM' && Boolean(existingPeriodRec?.isRecorded) && patch.actualWorkDays === undefined);
+    updated.actualWorkDays > 0 || updated.overtimeHours > 0;
 
   const periodRecord: SeasonalPeriodRecord = {
     periodKey: pKey,
     periodLabel: period.label,
-    cycleType: declaredCycle === 'TEAM' ? 'TEAM' : period.cycleType,
+    cycleType: period.cycleType,
     isRecorded: isPeriodParticipating,
     dailyRate: effectivePeriodDailyRate,
     project: patch.project || existingPeriodRec?.project || worker.project,
@@ -2137,21 +2162,15 @@ export function recordWorkerPeriod(
     otherBonus: Math.max(0, Number(patch.otherBonus ?? worker.otherBonus ?? 0)),
   };
 
-  const periodRecords =
-    declaredCycle === 'TEAM'
-      ? {
-          ...(worker.periodRecords || {}),
-          [pKey]: periodRecord,
-        }
-      : syncPeriodRecordsDailyRate(
-          {
-            ...(worker.periodRecords || {}),
-            [pKey]: periodRecord,
-          },
-          effectivePeriodDailyRate,
-          false,
-          configuredAllowances
-        );
+  const periodRecords = syncPeriodRecordsDailyRate(
+    {
+      ...(worker.periodRecords || {}),
+      [pKey]: periodRecord,
+    },
+    effectivePeriodDailyRate,
+    false,
+    configuredAllowances
+  );
 
   // Nếu người dùng xóa trắng kỳ Cả Tháng về 0 công, đồng bộ xóa luôn các kỳ tuần/đợt của tháng đó để không bị phục hồi lại công cũ
   if (!isPeriodParticipating && period.cycleType === '1_MONTH') {
@@ -2181,12 +2200,11 @@ export function recordWorkerPeriod(
     });
   }
 
-  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này (chỉ ghi đè days khi người dùng thực sự sửa số công / OT / lịch và không phải Tổ Đội)
+  // Đồng bộ lại monthlyAttendance cho các ngày trong chu kỳ này (chỉ ghi đè days khi người dùng thực sự sửa số công / OT / lịch)
   const isAttendancePatched =
-    declaredCycle !== 'TEAM' &&
-    (patch.actualWorkDays !== undefined ||
-      patch.overtimeHours !== undefined ||
-      patch.weeklyTimesheet !== undefined);
+    patch.actualWorkDays !== undefined ||
+    patch.overtimeHours !== undefined ||
+    patch.weeklyTimesheet !== undefined;
   const monthlyAttendance = worker.monthlyAttendance ? { ...worker.monthlyAttendance } : {};
   if (isAttendancePatched && effectiveTimesheet && effectiveTimesheet.length > 0) {
     const pYear = period.year || 2026;
@@ -2739,7 +2757,7 @@ export function ensureSeasonalHistoricalMonths(rawWorker: SeasonalWorker): Seaso
 
   return {
     ...worker,
-    dailyRate: unifiedRate > 0 ? unifiedRate : worker.dailyRate,
+    dailyRate: isTeamWorker ? 0 : unifiedRate > 0 ? unifiedRate : worker.dailyRate,
     monthlyAttendance: nextMonthly,
     periodRecords: nextPeriods,
   };

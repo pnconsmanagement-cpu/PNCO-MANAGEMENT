@@ -37,6 +37,7 @@ import {
   recordWorkerPeriod,
   createTimesheetForPeriod,
   createEmptyTimesheetForPeriod,
+  getTeamWorkerVouchersForMonth,
 } from '../data/mockSeasonalWorkers';
 import { initialProjects } from '../data/mockProjectsAndTeams';
 import { formatNumberOnly } from '../utils/numberToVietnameseWords';
@@ -365,6 +366,56 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     }
   }, [worker?.id, isOpen]);
 
+  // Danh sách các kỳ lương Tổ Đội đã lập của công nhân này trong tháng đang xem (mỗi tuần/kỳ có thể nhận mức khác nhau)
+  const teamVouchersInSelectedMonth = useMemo(() => {
+    if (cycleType !== 'TEAM') return [];
+    const mergedSource: SeasonalWorker = {
+      ...(worker || form),
+      ...form,
+      periodRecords: {
+        ...(worker?.periodRecords || {}),
+        ...(form.periodRecords || {}),
+      },
+    };
+    return getTeamWorkerVouchersForMonth(mergedSource, attendanceMonth, attendanceYear);
+  }, [cycleType, worker, form, attendanceMonth, attendanceYear]);
+
+  const teamMonthSummary = useMemo(() => {
+    let totalSalary = 0;
+    let totalBonus = 0;
+    let totalIncome = 0;
+    let totalTax = 0;
+    let totalAdvance = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+    teamVouchersInSelectedMonth.forEach((v) => {
+      const sal = Math.max(0, Math.round(Number(v.salaryByDays || 0)));
+      const bon = Math.max(0, Math.round(Number(v.otherBonus || 0)));
+      const inc = sal + bon;
+      const tax = !form.hasTaxCommitment && inc >= 2000000 ? Math.round(inc * 0.1) : 0;
+      const adv = Math.max(0, Math.round(Number(v.advancePayment || 0)));
+      const ded = tax + adv;
+      const net = Math.max(0, inc - ded);
+      totalSalary += sal;
+      totalBonus += bon;
+      totalIncome += inc;
+      totalTax += tax;
+      totalAdvance += adv;
+      totalDeductions += ded;
+      totalNet += net;
+    });
+    return {
+      count: teamVouchersInSelectedMonth.length,
+      totalSalary,
+      totalBonus,
+      totalIncome,
+      totalTax,
+      totalAdvance,
+      totalDeductions,
+      totalNet,
+    };
+  }, [teamVouchersInSelectedMonth, form.hasTaxCommitment]);
+
   if (!isOpen) return null;
 
   // Cập nhật trường chung và tính toán tức thời
@@ -402,19 +453,19 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const firstPeriod = newPeriods[0];
     setSelectedPeriodId(firstPeriod.id);
 
-    // Chuyển chu kỳ: Nạp bản ghi của kỳ mới (hoặc reset 0 công nếu chưa có)
+    // Chuyển chu kỳ: Nạp bản ghi của kỳ mới (hoặc reset 0 công nếu chưa có; Tổ Đội luôn dailyRate = 0)
     const workerWithSavedCurrent = recordWorkerPeriod(
-      { ...form, payrollCycleType: newCycle },
+      { ...form, payrollCycleType: newCycle, dailyRate: newCycle === 'TEAM' ? 0 : form.dailyRate },
       activePeriod,
       {
         payrollCycleType: newCycle,
         project: form.project,
-        dailyRate: form.dailyRate,
-        actualWorkDays: form.actualWorkDays,
-        overtimeHours: form.overtimeHours,
+        dailyRate: newCycle === 'TEAM' ? 0 : form.dailyRate,
+        actualWorkDays: newCycle === 'TEAM' ? 0 : form.actualWorkDays,
+        overtimeHours: newCycle === 'TEAM' ? 0 : form.overtimeHours,
         weeklyTimesheet: timesheet,
-        mealAllowance: form.mealAllowance,
-        travelSafetyAllowance: form.travelSafetyAllowance,
+        mealAllowance: newCycle === 'TEAM' ? 0 : form.mealAllowance,
+        travelSafetyAllowance: newCycle === 'TEAM' ? 0 : form.travelSafetyAllowance,
         otherBonus: form.otherBonus,
         advancePayment: form.advancePayment,
         selectedForAttendance: form.selectedForAttendance,
@@ -425,7 +476,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     setForm(
       recomputeSeasonalWorkerPayroll({
         ...newPeriodState,
-        dailyRate: newPeriodState.dailyRate || form.dailyRate,
+        dailyRate: newCycle === 'TEAM' ? 0 : newPeriodState.dailyRate || form.dailyRate,
         payrollCycleType: newCycle,
       })
     );
@@ -473,6 +524,17 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const newPeriod = newPeriods.find((p) => p.id === selectedPeriodId) || newPeriods[0];
     setSelectedPeriodId(newPeriod.id);
 
+    if (cycleType === 'TEAM') {
+      const nextState = getWorkerForPeriod({ ...form, payrollCycleType: 'TEAM', dailyRate: 0 }, newPeriod);
+      setForm({
+        ...nextState,
+        dailyRate: 0,
+        hasTaxCommitment: form.hasTaxCommitment,
+        payrollCycleType: 'TEAM',
+      });
+      return;
+    }
+
     const workerWithSaved = recordWorkerPeriod(form, activePeriod, {
       dailyRate: form.dailyRate,
       actualWorkDays: form.actualWorkDays,
@@ -499,6 +561,17 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
     const newPeriods = getPayrollPeriods(newYear, attendanceMonth, cycleType);
     const newPeriod = newPeriods.find((p) => p.id === selectedPeriodId) || newPeriods[0];
     setSelectedPeriodId(newPeriod.id);
+
+    if (cycleType === 'TEAM') {
+      const nextState = getWorkerForPeriod({ ...form, payrollCycleType: 'TEAM', dailyRate: 0 }, newPeriod);
+      setForm({
+        ...nextState,
+        dailyRate: 0,
+        hasTaxCommitment: form.hasTaxCommitment,
+        payrollCycleType: 'TEAM',
+      });
+      return;
+    }
 
     const workerWithSaved = recordWorkerPeriod(form, activePeriod, {
       dailyRate: form.dailyRate,
@@ -685,7 +758,9 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     const finalWorker = recordWorkerPeriod(
       {
+        ...(worker || {}),
         ...form,
+        dailyRate: cycleType === 'TEAM' ? 0 : form.dailyRate,
         bankAccount: cleanedBankAccount,
         bankName: cleanedBankName,
         paymentMethod: cleanedPaymentMethod,
@@ -695,21 +770,20 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
       {
         payrollCycleType: cycleType,
         project: form.project,
-        dailyRate: form.dailyRate,
-        actualWorkDays: targetDays,
-        overtimeHours: targetOT,
-        weeklyTimesheet: finalTimesheet,
-        mealAllowance: form.mealAllowance,
-        travelSafetyAllowance: form.travelSafetyAllowance,
-        otherBonus: form.otherBonus,
-        advancePayment: form.advancePayment,
+        dailyRate: cycleType === 'TEAM' ? 0 : form.dailyRate,
+        actualWorkDays: cycleType === 'TEAM' ? undefined : targetDays,
+        overtimeHours: cycleType === 'TEAM' ? 0 : targetOT,
+        weeklyTimesheet: cycleType === 'TEAM' ? undefined : finalTimesheet,
+        mealAllowance: cycleType === 'TEAM' ? 0 : form.mealAllowance,
+        travelSafetyAllowance: cycleType === 'TEAM' ? 0 : form.travelSafetyAllowance,
+        otherBonus: cycleType === 'TEAM' ? undefined : form.otherBonus,
+        advancePayment: cycleType === 'TEAM' ? undefined : form.advancePayment,
         hasTaxCommitment: form.hasTaxCommitment,
         bankAccount: cleanedBankAccount,
         bankName: cleanedBankName,
         paymentMethod: cleanedPaymentMethod,
         notes: form.notes,
-        selectedForAttendance:
-          cycleType === 'TEAM' ? Boolean(form.selectedForAttendance || targetDays > 0) : undefined,
+        status: form.status,
       }
     );
 
@@ -719,6 +793,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
 
     onSave({
       ...finalWorker,
+      dailyRate: cycleType === 'TEAM' ? 0 : finalWorker.dailyRate,
       bankAccount: cleanedBankAccount,
       bankName: cleanedBankName,
       paymentMethod: cleanedPaymentMethod,
@@ -1135,7 +1210,7 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900">
                       {cycleType === 'TEAM'
-                        ? '3. KÊ KHAI CHI PHÍ LƯƠNG / THANH TOÁN TỔ ĐỘI THEO THÁNG'
+                        ? '3. CHẾ ĐỘ NHẬN LƯƠNG THEO KỲ TỔ ĐỘI & THUẾ TNCN'
                         : '3. BẢNG CHẤM CÔNG & ĐƠN GIÁ LƯƠNG THEO CHU KỲ'}
                     </h4>
                     <span className="px-2 py-0.5 bg-amber-400 text-slate-950 font-black rounded text-[10px] uppercase">
@@ -1144,13 +1219,13 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                         : cycleType === '2_WEEKS'
                         ? 'Lương 2 Tuần'
                         : cycleType === 'TEAM'
-                        ? 'Tổ Đội (Không chấm công)'
+                        ? 'Tổ Đội (Nhận lương theo kỳ • Không chấm công)'
                         : 'Lương Cả Tháng'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     {cycleType === 'TEAM'
-                      ? 'Nhân viên Tổ Đội không xuất hiện trong Bản Chấm Công. Khi chọn trả lương tại Bản Lương sẽ lưu chi phí theo tháng và dự án.'
+                      ? 'Nhân sự Tổ Đội không chấm công và không áp đơn giá ngày công cố định (mỗi tuần/kỳ có thể nhận mức lương khác nhau).'
                       : 'Hỗ trợ chuyển đổi giữa chu kỳ 1 tuần, 2 tuần và cả tháng. Tự động đồng bộ với link chấm công di động.'}
                   </p>
                 </div>
@@ -1187,87 +1262,169 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
               )}
             </div>
 
-            {/* BANNER CHẾ ĐỘ TỔ ĐỘI (KHÔNG CẦN CHẤM CÔNG) */}
+            {/* GIAO DIỆN RIÊNG CHO NHÓM TỔ ĐỘI (KHÔNG ĐƠN GIÁ NGÀY, KHÔNG CHẤM CÔNG — LƯƠNG THEO TỪNG KỲ) */}
             {cycleType === 'TEAM' && (
-              <div className="bg-purple-50/90 border border-purple-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="space-y-1">
-                  <div className="font-black text-purple-950 flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-purple-700 text-white rounded text-[10px] uppercase">Tổ Đội</span>
-                    <span>Nhân sự Tổ Đội — Quản lý chi phí trả lương theo Tháng & Dự án</span>
+              <div className="space-y-3.5 text-xs">
+                <div className="bg-purple-50/90 border border-purple-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-1 max-w-2xl">
+                    <div className="font-black text-purple-950 flex items-center gap-2">
+                      <span className="px-2 py-0.5 bg-purple-700 text-white rounded text-[10px] uppercase">Tổ Đội</span>
+                      <span>Nhận lương linh hoạt theo từng Kỳ Lương Tổ Đội (không cố định đơn giá ngày công)</span>
+                    </div>
+                    <p className="text-[11px] text-purple-800 leading-relaxed">
+                      • Công nhân Tổ Đội không xuất hiện trong <strong>2.2 Bản Chấm Công</strong> và không gán cứng mức lương vào đơn giá ngày vì mỗi tuần/đợt có thể nhận số tiền khác nhau.
+                      <br />• Để nhập hoặc điều chỉnh tiền lương từng đợt của công nhân này, hãy lập kỳ lương tại <strong>2.3 Bản Lương → Tab Bản Lương Tổ Đội (+ Tạo kỳ lương Tổ Đội)</strong>.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-purple-800">
-                    • Không hiển thị trong <strong>2.2 Bản Chấm Công</strong>. Bạn có thể chọn nhân viên này trả lương trực tiếp tại <strong>2.3 Bản Lương → Tab Bản Lương Tổ Đội</strong> hoặc bật chọn trả lương cho tháng bên dưới.
-                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Bộ chọn Tháng / Năm tra cứu các kỳ lương đã nhận của Tổ Đội */}
+                    <div className="flex items-center gap-1 bg-white border border-purple-300 rounded-lg p-1 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => handleStepMonth('PREV')}
+                        className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <select
+                        value={attendanceMonth}
+                        onChange={(e) => handleMonthChange(parseInt(e.target.value, 10))}
+                        className="bg-transparent font-black text-purple-950 text-xs py-0.5 pr-1 border-none focus:ring-0 cursor-pointer"
+                      >
+                        {MONTHS_LIST.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-slate-300">/</span>
+                      <select
+                        value={attendanceYear}
+                        onChange={(e) => handleYearChange(parseInt(e.target.value, 10))}
+                        className="bg-transparent font-black text-purple-950 text-xs py-0.5 pl-1 pr-1 border-none focus:ring-0 cursor-pointer font-mono"
+                      >
+                        {YEARS_LIST.map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleStepMonth('NEXT')}
+                        className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <span
+                      className={`px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 border ${
+                        teamMonthSummary.count > 0
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      <CheckCircle2 className={`w-4 h-4 ${teamMonthSummary.count > 0 ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <span>
+                        {teamMonthSummary.count > 0
+                          ? `Đã nhận ${teamMonthSummary.count} kỳ trong T${attendanceMonth}/${attendanceYear}`
+                          : `Chưa có kỳ lương T${attendanceMonth}/${attendanceYear}`}
+                      </span>
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Bộ chọn Tháng / Năm thanh toán cho Tổ Đội */}
-                  <div className="flex items-center gap-1 bg-white border border-purple-300 rounded-lg p-1 shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => handleStepMonth('PREV')}
-                      className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <select
-                      value={attendanceMonth}
-                      onChange={(e) => handleMonthChange(parseInt(e.target.value, 10))}
-                      className="bg-transparent font-black text-purple-950 text-xs py-0.5 pr-1 border-none focus:ring-0 cursor-pointer"
-                    >
-                      {MONTHS_LIST.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-slate-300">/</span>
-                    <select
-                      value={attendanceYear}
-                      onChange={(e) => handleYearChange(parseInt(e.target.value, 10))}
-                      className="bg-transparent font-black text-purple-950 text-xs py-0.5 pl-1 pr-1 border-none focus:ring-0 cursor-pointer font-mono"
-                    >
-                      {YEARS_LIST.map((y) => (
-                        <option key={y} value={y}>
-                          {y}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => handleStepMonth('NEXT')}
-                      className="p-1 hover:bg-purple-50 rounded text-slate-600 cursor-pointer"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+                {/* Bảng liệt kê các kỳ lương đã nhận trong tháng đang chọn (nếu có) */}
+                <div className="bg-white border border-purple-200 rounded-xl overflow-hidden shadow-2xs">
+                  <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wide">
+                      Danh sách các kỳ lương đã lập trong Tháng {attendanceMonth}/{attendanceYear}
+                    </span>
+                    <span className="text-[11px] text-purple-800 font-bold">
+                      Tổng thực nhận: <span className="font-mono">{formatNumberOnly(teamMonthSummary.totalNet)} đ</span>
+                    </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextSelected = !(form.selectedForAttendance || form.actualWorkDays > 0);
-                      const nextDays = nextSelected ? (form.actualWorkDays > 0 ? form.actualWorkDays : 1) : 0;
-                      setForm((prev) =>
-                        recomputeSeasonalWorkerPayroll({
-                          ...prev,
-                          actualWorkDays: nextDays,
-                          selectedForAttendance: nextSelected,
-                        })
-                      );
-                    }}
-                    className={`px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs border ${
-                      form.selectedForAttendance || form.actualWorkDays > 0
-                        ? 'bg-emerald-600 text-white border-emerald-700'
-                        : 'bg-white text-purple-900 border-purple-300 hover:bg-purple-100'
-                    }`}
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>
-                      {form.selectedForAttendance || form.actualWorkDays > 0
-                        ? `✓ Đã chọn trả lương Tháng ${attendanceMonth}/${attendanceYear}`
-                        : `+ Chọn trả lương trong Tháng ${attendanceMonth}/${attendanceYear}`}
-                    </span>
-                  </button>
+                  {teamVouchersInSelectedMonth.length === 0 ? (
+                    <div className="p-4 text-center text-slate-500 text-xs">
+                      Chưa phát sinh kỳ lương Tổ Đội nào cho công nhân này trong <strong>Tháng {attendanceMonth}/{attendanceYear}</strong>.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="bg-purple-50/60 text-purple-950 font-bold border-b border-purple-100 text-[11px]">
+                          <tr>
+                            <th className="py-2 px-3">Kỳ lương / Đợt</th>
+                            <th className="py-2 px-3">Ngày chi</th>
+                            <th className="py-2 px-3">Dự án thi công</th>
+                            <th className="py-2 px-3 text-right">Tiền lương kỳ</th>
+                            <th className="py-2 px-3 text-right">Phụ cấp / Thưởng</th>
+                            <th className="py-2 px-3 text-right">Tạm ứng trừ kỳ</th>
+                            <th className="py-2 px-3 text-right">Thuế TNCN</th>
+                            <th className="py-2 px-3 text-right">Thực lĩnh kỳ</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {teamVouchersInSelectedMonth.map((v, idx) => {
+                            const sal = Math.max(0, Math.round(Number(v.salaryByDays || 0)));
+                            const bon = Math.max(0, Math.round(Number(v.otherBonus || 0)));
+                            const inc = sal + bon;
+                            const tax = !form.hasTaxCommitment && inc >= 2000000 ? Math.round(inc * 0.1) : 0;
+                            const adv = Math.max(0, Math.round(Number(v.advancePayment || 0)));
+                            const net = Math.max(0, inc - tax - adv);
+                            return (
+                              <tr key={v.id || idx} className="hover:bg-purple-50/30">
+                                <td className="py-2 px-3 font-bold text-purple-900 font-mono">
+                                  {v.batchCode || `Đợt ${idx + 1}`}
+                                </td>
+                                <td className="py-2 px-3 font-mono text-slate-600">
+                                  {v.paymentDate || '—'}
+                                </td>
+                                <td className="py-2 px-3 font-semibold text-[#0f3d64]">
+                                  {v.project || form.project || '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                                  {formatNumberOnly(sal)} đ
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono text-emerald-700">
+                                  {bon > 0 ? `${formatNumberOnly(bon)} đ` : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono text-rose-700">
+                                  {adv > 0 ? `${formatNumberOnly(adv)} đ` : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono text-rose-600">
+                                  {tax > 0 ? `${formatNumberOnly(tax)} đ` : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-black text-emerald-700">
+                                  {formatNumberOnly(net)} đ
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Cấu hình Cam kết thuế 08 cho nhân sự Tổ Đội */}
+                <div className="bg-white p-3 rounded-xl border border-slate-300 flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2.5 cursor-pointer font-bold text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={form.hasTaxCommitment}
+                      onChange={(e) => updateField('hasTaxCommitment', e.target.checked)}
+                      className="w-4 h-4 text-purple-700 rounded focus:ring-purple-500"
+                    />
+                    <span>Đã có Cam kết 08/CK-TNCN (Áp dụng khi tính các kỳ lương Tổ Đội)</span>
+                  </label>
+                  <span className="text-[11px] font-semibold text-slate-600">
+                    {form.hasTaxCommitment
+                      ? '✓ Miễn khấu trừ thuế TNCN 10% tại nguồn'
+                      : '⚠ Khấu trừ 10% đối với kỳ lương từ 2.000.000đ trở lên'}
+                  </span>
                 </div>
               </div>
             )}
@@ -1740,14 +1897,15 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
               </div>
             )}
 
-            {/* CÁC TRƯỜNG TÀI CHÍNH: ĐƠN GIÁ, PHỤ CẤP, TẠM ỨNG & THUẾ TNCN */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 text-xs pt-1">
-              {/* Đơn giá ngày công */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-semibold text-slate-700">
-                    Đơn giá ngày công *
-                  </label>
+            {/* CÁC TRƯỜNG TÀI CHÍNH CHẤM CÔNG NGÀY: ĐƠN GIÁ NGÀY, NGÀY CÔNG, OT, PHỤ CẤP (CHỈ HIỂN THỊ CHO LƯƠNG 1 TUẦN / 2 TUẦN / THÁNG) */}
+            {cycleType !== 'TEAM' && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 text-xs pt-1">
+                {/* Đơn giá ngày công */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">
+                      Đơn giá ngày công *
+                    </label>
                 </div>
                 <input
                   type="number"
@@ -1947,13 +2105,18 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
                 </p>
               </div>
             </div>
+            )}
           </div>
 
           {/* Nhóm 4: Hình thức nhận tiền & Thông tin thanh toán */}
           <div>
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5 border-b pb-1 border-slate-200">
               <CreditCard className="w-4 h-4 text-sky-700" />
-              <span>4. Hình thức thanh toán lương tuần & Tài khoản ngân hàng</span>
+              <span>
+                {cycleType === 'TEAM'
+                  ? '4. Hình thức thanh toán lương Tổ Đội & Tài khoản ngân hàng'
+                  : '4. Hình thức thanh toán lương tuần & Tài khoản ngân hàng'}
+              </span>
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
               <div>
@@ -2003,33 +2166,51 @@ export const SeasonalWorkerModal: React.FC<SeasonalWorkerModalProps> = ({
             </div>
           </div>
 
-          {/* BẢNG TỔNG HỢP THU NHẬP & THỰC LĨNH TUẦN TỨC THỜI */}
+          {/* BẢNG TỔNG HỢP THU NHẬP & THỰC LĨNH TỨC THỜI */}
           <div className="bg-slate-50 border border-slate-300 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs shrink-0 shadow-2xs">
             <div className="flex flex-wrap items-center gap-6">
               <div>
-                <span className="text-slate-500 block text-[11px]">Tổng thu nhập (A):</span>
-                <span className="font-bold text-slate-900 font-mono text-sm">{formatNumberOnly(form.totalIncome)} đ</span>
+                <span className="text-slate-500 block text-[11px]">
+                  {cycleType === 'TEAM' ? `Tổng lương các kỳ T${attendanceMonth}/${attendanceYear}:` : 'Tổng thu nhập (A):'}
+                </span>
+                <span className="font-bold text-slate-900 font-mono text-sm">
+                  {formatNumberOnly(cycleType === 'TEAM' ? teamMonthSummary.totalIncome : form.totalIncome)} đ
+                </span>
               </div>
               <div className="border-l border-slate-300 pl-4">
                 <span className="text-slate-500 block text-[11px]">Thuế TNCN 10%:</span>
-                <span className={`font-bold font-mono text-sm ${form.personalIncomeTax > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                  {formatNumberOnly(form.personalIncomeTax)} đ
+                <span
+                  className={`font-bold font-mono text-sm ${
+                    (cycleType === 'TEAM' ? teamMonthSummary.totalTax : form.personalIncomeTax) > 0
+                      ? 'text-rose-600'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {formatNumberOnly(cycleType === 'TEAM' ? teamMonthSummary.totalTax : form.personalIncomeTax)} đ
                 </span>
               </div>
               <div className="border-l border-slate-300 pl-4">
                 <span className="text-slate-500 block text-[11px]">Tạm ứng tại CT:</span>
-                <span className="font-bold text-rose-700 font-mono text-sm">{formatNumberOnly(form.advancePayment)} đ</span>
+                <span className="font-bold text-rose-700 font-mono text-sm">
+                  {formatNumberOnly(cycleType === 'TEAM' ? teamMonthSummary.totalAdvance : form.advancePayment)} đ
+                </span>
               </div>
               <div className="border-l border-slate-300 pl-4">
                 <span className="text-slate-500 block text-[11px]">Tổng giảm trừ (B):</span>
-                <span className="font-bold text-rose-800 font-mono text-sm">{formatNumberOnly(form.totalDeductions)} đ</span>
+                <span className="font-bold text-rose-800 font-mono text-sm">
+                  {formatNumberOnly(cycleType === 'TEAM' ? teamMonthSummary.totalDeductions : form.totalDeductions)} đ
+                </span>
               </div>
             </div>
 
             <div className="bg-emerald-50 border-2 border-emerald-400 px-5 py-2.5 rounded-xl text-right shadow-xs">
-              <span className="text-[11px] font-bold text-emerald-800 block uppercase">THỰC LĨNH THANH TOÁN:</span>
+              <span className="text-[11px] font-bold text-emerald-800 block uppercase">
+                {cycleType === 'TEAM'
+                  ? `TỔNG THỰC LĨNH T${attendanceMonth}/${attendanceYear}:`
+                  : 'THỰC LĨNH THANH TOÁN:'}
+              </span>
               <span className="text-lg font-black text-emerald-700 font-mono">
-                {formatNumberOnly(form.netSalary)} VNĐ
+                {formatNumberOnly(cycleType === 'TEAM' ? teamMonthSummary.totalNet : form.netSalary)} VNĐ
               </span>
             </div>
           </div>
