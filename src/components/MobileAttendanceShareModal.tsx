@@ -34,6 +34,7 @@ interface MobileAttendanceShareModalProps {
   config: CompanyConfig;
   selectedWorkerId?: string | null;
   onOpenMobileView?: (workerCode?: string) => void;
+  onEnsureSaved?: () => Promise<void> | void;
 }
 
 export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProps> = ({
@@ -43,6 +44,7 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
   config,
   selectedWorkerId,
   onOpenMobileView,
+  onEnsureSaved,
 }) => {
   const [shareMode, setShareMode] = useState<'SPECIFIC' | 'GENERAL'>('SPECIFIC');
   const [currentWorkerId, setCurrentWorkerId] = useState<string>(() => {
@@ -53,6 +55,13 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
   const [copied, setCopied] = useState(false);
   const [copiedMsg, setCopiedMsg] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Tự động đồng bộ dữ liệu chấm công vừa chấm trên bảng lên Server & Cloud ngay khi mở cửa sổ Link/QR điện thoại
+  useEffect(() => {
+    if (isOpen && onEnsureSaved) {
+      void Promise.resolve(onEnsureSaved()).catch(() => {});
+    }
+  }, [isOpen]);
 
   // Cập nhật khi selectedWorkerId thay đổi
   useEffect(() => {
@@ -67,10 +76,12 @@ export const MobileAttendanceShareModal: React.FC<MobileAttendanceShareModalProp
       (w) => String(w.id) === String(currentWorkerId) || w.code === String(currentWorkerId)
     ) || workers[0];
 
-  // Luôn ưu tiên tháng và năm hiện hành thực tế (ví dụ: Tháng 11 / 2026)
+  // Ưu tiên tháng/năm đang xem trên Bảng Chấm Công / Bảng Lương (ví dụ Tháng 11 / 2026) để Link mở đúng kỳ vừa chấm
   const now = new Date();
-  const currentMonth = now.getMonth() + 1; // 11
-  const currentYear = now.getFullYear();   // 2026
+  const currentMonth =
+    config.month && config.month >= 1 && config.month <= 12 ? config.month : now.getMonth() + 1;
+  const currentYear =
+    config.year && config.year >= 2024 && config.year <= 2030 ? config.year : now.getFullYear();
 
   const [showCustomUrl, setShowCustomUrl] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState(() => {

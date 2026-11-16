@@ -2314,10 +2314,20 @@ export default function App() {
     seasonalWorkersRef.current = next;
     setSeasonalWorkers(next);
 
-    // Đồng bộ 2 chiều: nếu người dùng nhập/sửa trực tiếp tiền Tạm ứng của thợ (tại 2.1 Sửa thợ hoặc 2.3 Bản Lương Tổ Đội), tự động tạo/cập nhật phiếu trong salaryAdvances để ghi lên bảng salary_advances khi nhấn Lưu Data
     const curM = configRef.current.month || realDateInfo.realMonth;
     const curY = configRef.current.year || realDateInfo.realYear;
     const mStr = String(curM).padStart(2, '0');
+    const curMonthKey = `${curY}-${mStr}`;
+    if (finalWorker.code && finalWorker.payrollCycleType !== 'TEAM') {
+      try {
+        localStorage.setItem(
+          `pncons_mobile_days_${finalWorker.code}_${curY}_${curM}`,
+          JSON.stringify(finalWorker.monthlyAttendance?.[curMonthKey]?.days || {})
+        );
+      } catch {}
+    }
+
+    // Đồng bộ 2 chiều: nếu người dùng nhập/sửa trực tiếp tiền Tạm ứng của thợ (tại 2.1 Sửa thợ hoặc 2.3 Bản Lương Tổ Đội), tự động tạo/cập nhật phiếu trong salaryAdvances để ghi lên bảng salary_advances khi nhấn Lưu Data
     const monthPeriodKey = `${curY}-${mStr}_MONTH`;
     const targetAdv = Number(
       finalWorker.periodRecords?.[monthPeriodKey]?.advancePayment ??
@@ -2501,6 +2511,18 @@ export default function App() {
 
     employeesRef.current = nextList;
     setEmployees(nextList);
+
+    const matchedUpdatedEmp = nextList.find(
+      (e) => e.id === recalculated.id || e.code === recalculated.code
+    );
+    if (matchedUpdatedEmp?.code) {
+      try {
+        localStorage.setItem(
+          `pncons_mobile_days_${matchedUpdatedEmp.code}_${curY}_${curM}`,
+          JSON.stringify(matchedUpdatedEmp.monthlyAttendance?.[curMonthKey]?.days || {})
+        );
+      } catch {}
+    }
 
     // Đồng bộ 2 chiều: nếu người dùng nhập/sửa trực tiếp tiền Tạm ứng trong hồ sơ NV chính thức, tự động tạo/cập nhật phiếu trong salaryAdvances
     if (updated.advancePayment !== undefined) {
@@ -3882,7 +3904,12 @@ export default function App() {
           onOpenBatchZalo={() => setIsBatchZaloOpen(true)}
           onOpenCompanyModal={() => setIsCompanyOpen(true)}
           onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
-          onOpenMobileAttendance={() => setIsMobileAttendanceView(true)}
+          onOpenMobileAttendance={() => {
+            if (hasUnsavedChangesRef.current) {
+              void handleManualForceSync();
+            }
+            setIsMobileAttendanceView(true);
+          }}
           onSaveData={handleManualForceSync}
           hasUnsavedChanges={hasUnsavedChanges}
           cloudSyncStatus={cloudSyncStatus}
@@ -4085,6 +4112,9 @@ export default function App() {
                       onUpdateEmployee={handleUpdateEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       onOpenMobileView={(workerCode) => {
+                        if (hasUnsavedChangesRef.current) {
+                          void handleManualForceSync();
+                        }
                         sessionStorage.setItem('pncons_is_admin_preview', 'true');
                         setActiveMobileWorkerCode(workerCode);
                         setIsMobileAttendanceView(true);
@@ -4288,6 +4318,9 @@ export default function App() {
                       onResetWorkers={handleResetSeasonalWorkers}
                       onReorderWorkers={handleReorderSeasonalWorkers}
                       onOpenMobileView={(workerCode) => {
+                        if (hasUnsavedChangesRef.current) {
+                          void handleManualForceSync();
+                        }
                         sessionStorage.setItem('pncons_is_admin_preview', 'true');
                         setActiveMobileWorkerCode(workerCode);
                         setIsMobileAttendanceView(true);
@@ -4318,6 +4351,9 @@ export default function App() {
                       onUpdateEmployee={handleUpdateEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       onOpenMobileView={(workerCode) => {
+                        if (hasUnsavedChangesRef.current) {
+                          void handleManualForceSync();
+                        }
                         sessionStorage.setItem('pncons_is_admin_preview', 'true');
                         setActiveMobileWorkerCode(workerCode);
                         setIsMobileAttendanceView(true);

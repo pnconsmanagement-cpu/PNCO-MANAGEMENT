@@ -168,29 +168,109 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   const currentRealYear = now.getFullYear();
 
   const [month, setMonth] = useState<number>(() => {
-    if (typeof window === 'undefined') return currentRealMonth;
+    if (typeof window === 'undefined') return isAdminPreview && config.month ? config.month : currentRealMonth;
     const urlParams = new URLSearchParams(window.location.search);
     const forceM = parseInt(urlParams.get('force_m') || '', 10);
     if (!isNaN(forceM) && forceM >= 1 && forceM <= 12) return forceM;
     const m = parseInt(urlParams.get('m') || '', 10);
     if (!isNaN(m) && m >= 1 && m <= 12) return m;
+    if (isAdminPreview && config.month && config.month >= 1 && config.month <= 12) {
+      return config.month;
+    }
     return currentRealMonth;
   });
 
   const [year, setYear] = useState<number>(() => {
-    if (typeof window === 'undefined') return currentRealYear;
+    if (typeof window === 'undefined') return isAdminPreview && config.year ? config.year : currentRealYear;
     const urlParams = new URLSearchParams(window.location.search);
     const forceY = parseInt(urlParams.get('force_y') || '', 10);
     if (!isNaN(forceY) && forceY >= 2024 && forceY <= 2030) return forceY;
     const y = parseInt(urlParams.get('y') || '', 10);
     if (!isNaN(y) && y >= 2024 && y <= 2030) return y;
+    if (isAdminPreview && config.year && config.year >= 2024 && config.year <= 2030) {
+      return config.year;
+    }
     return currentRealYear;
   });
 
   // Bản ghi nhân sự tải trực tiếp từ Cloud/Server cho điện thoại mở độc lập
   const [remoteLoadedWorker, setRemoteLoadedWorker] = useState<SeasonalWorker | null>(null);
+  const workersPropRef = useRef<SeasonalWorker[]>(workers);
+  useEffect(() => {
+    workersPropRef.current = workers;
+  }, [workers]);
 
-  // 3. TÌM HOẶC KHỞI TẠO ĐỐI TƯỢNG NHÂN SỰ HIỆN TẠI (ĐẢM BẢO KHÔNG GHI ĐÈ ĐƠN GIÁ LƯƠNG = 0)
+  // Hợp nhất thông minh dữ liệu chấm công các tháng: Luôn giữ bản ghi có dấu thời gian mới hơn, tuyệt đối không để dữ liệu cũ trên Cloud/Server ghi đè mất các ngày vừa chấm trên Bảng Lương!
+  const mergeMonthlyAttendanceMaps = (
+    primaryMap?: SeasonalWorker['monthlyAttendance'],
+    incomingMap?: SeasonalWorker['monthlyAttendance']
+  ): NonNullable<SeasonalWorker['monthlyAttendance']> => {
+    const result: NonNullable<SeasonalWorker['monthlyAttendance']> = {
+      ...(primaryMap || {}),
+    };
+    if (!incomingMap) return result;
+
+    const getEffectiveTimestamp = (rec: any): number => {
+      const raw = String(rec?.lastSubmittedAt || '');
+      if (!raw || raw === '2026-09-01T00:00:00.000Z' || raw === '2026-10-01T00:00:00.000Z') {
+        return 0;
+      }
+      const parsed = new Date(raw).getTime();
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const countValidDays = (rec: any): number => {
+      if (!rec?.days || typeof rec.days !== 'object') return 0;
+      return Object.entries(rec.days).filter(([k, d]: [string, any]) => {
+        const n = Number(k);
+        return (
+          Number.isInteger(n) &&
+          n >= 1 &&
+          n <= 31 &&
+          d &&
+          (Number(d.workUnits || 0) > 0 || Number(d.otHours || 0) > 0 || Boolean(d.statusType))
+        );
+      }).length;
+    };
+
+    Object.entries(incomingMap).forEach(([mKey, incRec]) => {
+      if (!incRec) return;
+      const curRec = result[mKey];
+      if (!curRec) {
+        result[mKey] = incRec;
+        return;
+      }
+      const curTs = getEffectiveTimestamp(curRec);
+      const incTs = getEffectiveTimestamp(incRec);
+      const curDaysCount = countValidDays(curRec);
+      const incDaysCount = countValidDays(incRec);
+
+      if (curTs > 0 && incTs > 0) {
+        if (incTs > curTs + 1000) {
+          result[mKey] = incRec;
+        } else if (Math.abs(incTs - curTs) <= 1000 && incDaysCount > curDaysCount) {
+          result[mKey] = incRec;
+        }
+        return;
+      }
+
+      if (incTs > 0 && curTs === 0) {
+        if (curDaysCount > incDaysCount && isAdminPreview) {
+          return;
+        }
+        result[mKey] = incRec;
+        return;
+      }
+
+      if (curTs === 0 && incTs === 0 && incDaysCount > curDaysCount) {
+        result[mKey] = incRec;
+      }
+    });
+
+    return result;
+  };
+
+  // 3. TÌM HOẶC KHỞI TẠO ĐỐI TƯỢNG NHÂN SỰ HIỆN TẠI (ĐẢM BẢO KHÔNG GHI ĐÈ ĐƠN GIÁ LƯƠNG = 0 VÀ KHÔNG MẤT NGÀY CÔNG MỚI CHẤM)
   const currentWorker = useMemo(() => {
     const targetCode = selectedWorkerCode || parsedWorkerInfo.code;
     const found = workers.find(
@@ -199,15 +279,15 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     if (found) {
       if (remoteLoadedWorker && (remoteLoadedWorker.code === found.code || String(remoteLoadedWorker.id) === String(found.id))) {
         return {
-          ...found,
           ...remoteLoadedWorker,
+          ...found,
           dailyRate: Number(found.dailyRate || remoteLoadedWorker.dailyRate || 0),
           bankAccount: found.bankAccount || remoteLoadedWorker.bankAccount || '',
           bankName: found.bankName || remoteLoadedWorker.bankName || '',
-          monthlyAttendance: {
-            ...(found.monthlyAttendance || {}),
-            ...(remoteLoadedWorker.monthlyAttendance || {}),
-          },
+          monthlyAttendance: mergeMonthlyAttendanceMaps(
+            found.monthlyAttendance,
+            remoteLoadedWorker.monthlyAttendance
+          ),
         };
       }
       if (parsedWorkerInfo.name && (!found.fullName || found.fullName === 'Công Nhân')) {
@@ -331,7 +411,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
     return Array.from(new Set(names));
   }, [availableProjects]);
 
-  // Hàm tìm nhân sự từ danh sách Thời Vụ hoặc Nhân Viên Chính Thức
+  // Hàm tìm nhân sự từ danh sách Thời Vụ hoặc Nhân Viên Chính Thức (hợp nhất an toàn nếu có bản ghi trùng mã)
   const findMatchingWorkerFromSources = (
     targetCode: string,
     seaList?: SeasonalWorker[] | null,
@@ -339,17 +419,47 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
   ): SeasonalWorker | null => {
     if (!targetCode) return null;
     if (seaList && seaList.length > 0) {
-      const matchedSea = seaList.find(
+      const matchedSeas = seaList.filter(
         (w) => w.code === targetCode || String(w.id) === targetCode
       );
-      if (matchedSea) return matchedSea;
+      if (matchedSeas.length === 1) return matchedSeas[0];
+      if (matchedSeas.length > 1) {
+        const sorted = [...matchedSeas].sort(
+          (a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0)
+        );
+        let mergedAtt = sorted[0].monthlyAttendance || {};
+        for (let i = 1; i < sorted.length; i++) {
+          mergedAtt = mergeMonthlyAttendanceMaps(mergedAtt, sorted[i].monthlyAttendance);
+        }
+        return {
+          ...sorted[0],
+          monthlyAttendance: mergedAtt,
+        };
+      }
     }
     if (empList && empList.length > 0) {
-      const matchedEmp = empList.find(
+      const matchedEmps = empList.filter(
         (e) => e.code === targetCode || String(e.id) === targetCode || `PERM_${e.id}` === targetCode
       );
-      if (matchedEmp) {
-        return convertEmployeeToMobileWorker(matchedEmp, config.standardWorkDays || 26);
+      if (matchedEmps.length >= 1) {
+        const sortedEmps = [...matchedEmps].sort(
+          (a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0)
+        );
+        const converted = convertEmployeeToMobileWorker(
+          sortedEmps[0],
+          config.standardWorkDays || 26
+        );
+        if (sortedEmps.length > 1) {
+          let mergedAtt = converted.monthlyAttendance || {};
+          for (let i = 1; i < sortedEmps.length; i++) {
+            mergedAtt = mergeMonthlyAttendanceMaps(mergedAtt, sortedEmps[i].monthlyAttendance);
+          }
+          return {
+            ...converted,
+            monthlyAttendance: mergedAtt,
+          };
+        }
+        return converted;
       }
     }
     return null;
@@ -377,13 +487,14 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
 
       let loadedWorker: SeasonalWorker | null = null;
       const looksPermanent = /^PNC0\d+/i.test(targetCode) || targetCode.startsWith('PERM_');
+      const activePeriodCode = `${String(month).padStart(2, '0')}/${year}`;
 
       // 1. Ưu tiên tải trực tiếp từ Supabase Cloud (hỗ trợ cả Nhân viên chính thức & Công nhân thời vụ)
       if (isSupabaseConfigured()) {
         try {
           if (looksPermanent) {
             const [cloudEmps, projs] = await Promise.all([
-              loadEmployeesFromSupabase(),
+              loadEmployeesFromSupabase(activePeriodCode),
               loadProjectsFromSupabase(),
             ]);
             if (projs && projs.length > 0) {
@@ -394,12 +505,12 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
             }
             loadedWorker = findMatchingWorkerFromSources(targetCode, null, cloudEmps);
             if (!loadedWorker) {
-              const cloudSea = await loadSeasonalWorkersFromSupabase();
+              const cloudSea = await loadSeasonalWorkersFromSupabase(activePeriodCode);
               loadedWorker = findMatchingWorkerFromSources(targetCode, cloudSea, null);
             }
           } else {
             const [cloudSea, projs] = await Promise.all([
-              loadSeasonalWorkersFromSupabase(),
+              loadSeasonalWorkersFromSupabase(activePeriodCode),
               loadProjectsFromSupabase(),
             ]);
             if (projs && projs.length > 0) {
@@ -410,7 +521,7 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
             }
             loadedWorker = findMatchingWorkerFromSources(targetCode, cloudSea, null);
             if (!loadedWorker) {
-              const cloudEmps = await loadEmployeesFromSupabase();
+              const cloudEmps = await loadEmployeesFromSupabase(activePeriodCode);
               loadedWorker = findMatchingWorkerFromSources(targetCode, null, cloudEmps);
             }
           }
@@ -435,20 +546,28 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
       }
 
       if (loadedWorker && !hasUnsavedMobileRef.current && Date.now() - lastLocalEditAtRef.current >= 8000) {
-        setRemoteLoadedWorker(loadedWorker);
-        const mKey = `${year}-${String(month).padStart(2, '0')}`;
-        const localSubmittedAt = currentWorker?.monthlyAttendance?.[mKey]?.lastSubmittedAt;
-        const remoteSubmittedAt = loadedWorker.monthlyAttendance?.[mKey]?.lastSubmittedAt;
+        const localFound = workersPropRef.current.find(
+          (w) => w.code === targetCode || String(w.id) === targetCode
+        );
+        const safeMergedMonthly = mergeMonthlyAttendanceMaps(
+          localFound?.monthlyAttendance,
+          loadedWorker.monthlyAttendance
+        );
+        const safeLoadedWorker: SeasonalWorker = {
+          ...loadedWorker,
+          monthlyAttendance: safeMergedMonthly,
+        };
+        setRemoteLoadedWorker((prevRemote) => ({
+          ...safeLoadedWorker,
+          monthlyAttendance: mergeMonthlyAttendanceMaps(
+            prevRemote && (prevRemote.code === targetCode || String(prevRemote.id) === targetCode)
+              ? prevRemote.monthlyAttendance
+              : undefined,
+            safeMergedMonthly
+          ),
+        }));
 
-        if (localSubmittedAt && remoteSubmittedAt) {
-          if (new Date(localSubmittedAt).getTime() > new Date(remoteSubmittedAt).getTime()) {
-            return;
-          }
-        } else if (isAdminPreview && currentWorker?.monthlyAttendance?.[mKey] && !remoteSubmittedAt) {
-          return;
-        }
-
-        const record = getWorkerMonthlyAttendance(loadedWorker, year, month);
+        const record = getWorkerMonthlyAttendance(safeLoadedWorker, year, month);
         setAttendanceDays(record.days);
       }
     } catch {}
@@ -479,9 +598,27 @@ export const MobileAttendanceApp: React.FC<MobileAttendanceAppProps> = ({
         serverData.employees
       );
       if (matched) {
-        setRemoteLoadedWorker(matched);
-        const record = getWorkerMonthlyAttendance(matched, year, month);
-        setAttendanceDays(record.days);
+        const localFound = workersPropRef.current.find(
+          (w) => w.code === targetCode || String(w.id) === targetCode
+        );
+        const mergedWithLocal = mergeMonthlyAttendanceMaps(
+          localFound?.monthlyAttendance,
+          matched.monthlyAttendance
+        );
+        setRemoteLoadedWorker((prevRemote) => {
+          const prevAtt =
+            prevRemote && (prevRemote.code === targetCode || String(prevRemote.id) === targetCode)
+              ? prevRemote.monthlyAttendance
+              : undefined;
+          const finalMonthly = mergeMonthlyAttendanceMaps(prevAtt, mergedWithLocal);
+          const safeWorker: SeasonalWorker = {
+            ...matched,
+            monthlyAttendance: finalMonthly,
+          };
+          const record = getWorkerMonthlyAttendance(safeWorker, year, month);
+          setAttendanceDays(record.days);
+          return safeWorker;
+        });
       }
     });
 

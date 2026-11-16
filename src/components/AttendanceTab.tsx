@@ -503,6 +503,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
             },
           });
           updatedSingleEmp = nextEmp;
+          try {
+            localStorage.setItem(
+              `pncons_mobile_days_${nextEmp.code}_${currentYear}_${currentMonth}`,
+              JSON.stringify(finalMap)
+            );
+          } catch {}
           return nextEmp;
         }
         return emp;
@@ -548,6 +554,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
           );
           const nextWorker = recomputeSeasonalWorkerPayroll(updatedFromHelper);
           updatedSingleWorker = nextWorker;
+          try {
+            localStorage.setItem(
+              `pncons_mobile_days_${nextWorker.code}_${currentYear}_${currentMonth}`,
+              JSON.stringify(nextWorker.monthlyAttendance?.[monthKey]?.days || {})
+            );
+          } catch {}
           return nextWorker;
         }
         return w;
@@ -733,6 +745,12 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         onBatchUpdateSeasonal?.(updatedList);
       }
     }
+    try {
+      localStorage.setItem(
+        `pncons_mobile_days_${workerCode}_${currentYear}_${currentMonth}`,
+        JSON.stringify({})
+      );
+    } catch {}
     setEditingCell(null);
     setToastMessage(`Đã đặt về "Chưa chấm công" (0 công) tháng ${currentMonth}/${currentYear} của ${workerCode}!`);
   };
@@ -1608,6 +1626,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         config={config}
         selectedWorkerId={shareModalTargetId}
         onOpenMobileView={onOpenMobileView}
+        onEnsureSaved={hasUnsavedChanges && onSaveData ? onSaveData : undefined}
       />
 
       {/* Toast Notification */}

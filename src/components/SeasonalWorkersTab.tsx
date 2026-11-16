@@ -1739,6 +1739,7 @@ export const SeasonalWorkersTab: React.FC<SeasonalWorkersTabProps> = ({
           setIsMobileShareOpen(false);
           if (onOpenMobileView) onOpenMobileView(workerCode);
         }}
+        onEnsureSaved={hasUnsavedChanges && onSaveData ? onSaveData : undefined}
       />
     </div>
   );

@@ -85,6 +85,103 @@ export const materializeSeasonalMonthlyAttendance = (
   };
 };
 
+/**
+ * Ghi an toàn danh sách bản ghi chấm công lên bảng attendance_records của Supabase:
+ * - Khử trùng lặp theo (worker_code, year, month)
+ * - Tự động xử lý xung đột khóa UNIQUE (worker_code, month, year, period_key) vs PRIMARY KEY (id)
+ *   để không bao giờ có 1 dòng lỗi làm kẹt cả lô chấm công của toàn công ty!
+ */
+const upsertAttendanceRecordsSafe = async (
+  client: SupabaseClient,
+  rawPayloads: any[]
+): Promise<void> => {
+  if (!Array.isArray(rawPayloads) || rawPayloads.length === 0) return;
+
+  const dedupedByKey = new Map<string, any>();
+  const usedIds = new Set<string>();
+  rawPayloads.forEach((item) => {
+    if (!item || !item.worker_code || !item.month || !item.year) return;
+    const key = `${String(item.worker_code).trim()}_${Number(item.year)}_${Number(item.month)}`;
+    dedupedByKey.set(key, item);
+  });
+
+  const batch: any[] = [];
+  dedupedByKey.forEach((item, key) => {
+    let safeId = String(item.id || `ATT-${key}`);
+    if (usedIds.has(safeId)) {
+      safeId = `ATT-${key}`;
+    }
+    usedIds.add(safeId);
+    batch.push({ ...item, id: safeId });
+  });
+
+  if (batch.length === 0) return;
+
+  const { error: firstErr } = await client
+    .from('attendance_records')
+    .upsert(batch, { onConflict: 'id' });
+
+  if (!firstErr) return;
+
+  // Nếu vướng xung đột UNIQUE (worker_code, month, year, period_key) do có bản ghi cũ mang id khác -> dọn bản ghi xung đột rồi upsert lại
+  try {
+    const workerCodes = Array.from(
+      new Set(batch.map((b) => String(b.worker_code).trim()).filter(Boolean))
+    );
+    if (workerCodes.length > 0) {
+      const { data: existingRows } = await client
+        .from('attendance_records')
+        .select('id, worker_code, month, year')
+        .in('worker_code', workerCodes);
+
+      if (Array.isArray(existingRows) && existingRows.length > 0) {
+        const expectedIdByKey = new Map<string, string>();
+        batch.forEach((b) => {
+          expectedIdByKey.set(
+            `${String(b.worker_code).trim()}_${Number(b.year)}_${Number(b.month)}`,
+            String(b.id)
+          );
+        });
+        const conflictIds: string[] = [];
+        existingRows.forEach((r: any) => {
+          const rKey = `${String(r.worker_code || '').trim()}_${Number(r.year)}_${Number(r.month)}`;
+          const expectedId = expectedIdByKey.get(rKey);
+          if (expectedId && r.id && String(r.id) !== expectedId) {
+            conflictIds.push(String(r.id));
+          }
+        });
+        if (conflictIds.length > 0) {
+          await client.from('attendance_records').delete().in('id', conflictIds);
+        }
+      }
+    }
+
+    const { error: secondErr } = await client
+      .from('attendance_records')
+      .upsert(batch, { onConflict: 'id' });
+
+    if (!secondErr) return;
+
+    // Dự phòng cuối cùng: ghi từng nhân sự để 1 bản ghi lỗi không bao giờ chặn các nhân sự khác
+    for (const row of batch) {
+      const { error: rowErr } = await client
+        .from('attendance_records')
+        .upsert(row, { onConflict: 'id' });
+      if (rowErr) {
+        await client
+          .from('attendance_records')
+          .delete()
+          .eq('worker_code', row.worker_code)
+          .eq('month', row.month)
+          .eq('year', row.year);
+        await client.from('attendance_records').insert(row);
+      }
+    }
+  } catch (fallbackErr) {
+    console.warn('[Supabase Sync] upsertAttendanceRecordsSafe fallback warning:', fallbackErr);
+  }
+};
+
 
 /**
  * Tự động phát hiện và áp dụng cấu hình Supabase từ URL hash (#sb_url=...&sb_key=...)
@@ -634,14 +731,14 @@ export const syncEmployeesToSupabase = async (
     const existingByCode = new Map<string, { id: string; code?: string; employee_data?: Employee }>();
     const existingById = new Map<string, { id: string; code?: string; employee_data?: Employee }>();
     const existingAttMap = new Map<string, string>();
+    const duplicateEmpAttIds: string[] = [];
     const selectCols = options?.fastLocalAuthoritative ? 'id, code' : 'id, code, employee_data';
     try {
       const [empLookupRes, attLookupRes] = await Promise.all([
         client.from('employees').select(selectCols),
         client
           .from('attendance_records')
-          .select('id, worker_code, month, year')
-          .eq('worker_type', 'PERMANENT'),
+          .select('id, worker_code, month, year, worker_type'),
       ]);
       if (empLookupRes.data && Array.isArray(empLookupRes.data)) {
         empLookupRes.data.forEach((row: any) => {
@@ -652,7 +749,13 @@ export const syncEmployeesToSupabase = async (
       if (attLookupRes.data && Array.isArray(attLookupRes.data)) {
         attLookupRes.data.forEach((r: any) => {
           if (r.worker_code && r.year && r.month) {
-            existingAttMap.set(`${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`, String(r.id));
+            const key = `${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`;
+            const prevId = existingAttMap.get(key);
+            if (prevId && prevId !== String(r.id)) {
+              duplicateEmpAttIds.push(String(r.id));
+            } else {
+              existingAttMap.set(key, String(r.id));
+            }
           }
         });
       }
@@ -768,11 +871,13 @@ export const syncEmployeesToSupabase = async (
       usedIds.add(p.id);
     });
 
-    // Chuẩn bị sẵn dữ liệu attendance_records để chạy SONG SONG cùng lúc với upsert employees (giảm một nửa thời gian chờ mạng)
+    // Chuẩn bị sẵn dữ liệu attendance_records để chạy SONG SONG cùng lúc với upsert employees (giữ đồng nhất dấu thời gian với employee_data)
     const attPayloads: any[] = [];
     const activeEmpAttIds = new Set<string>();
+    const empCodeSet = new Set<string>();
     const saveIsoNow = new Date().toISOString();
     payload.forEach((p) => {
+      empCodeSet.add(p.code);
       const emp = p.employee_data;
       if (emp?.monthlyAttendance) {
         Object.entries(emp.monthlyAttendance).forEach(([, mRec]) => {
@@ -780,6 +885,13 @@ export const syncEmployeesToSupabase = async (
             const mStr = String(mRec.month).padStart(2, '0');
             const mapKey = `${p.code}_${mRec.year}_${Number(mRec.month)}`;
             const canonicalAttId = existingAttMap.get(mapKey) || `ATT-EMP-${mRec.year}-${mStr}-${p.code}`;
+            const recIso =
+              mRec.lastSubmittedAt &&
+              mRec.lastSubmittedAt !== '2026-09-01T00:00:00.000Z' &&
+              mRec.lastSubmittedAt !== '2026-10-01T00:00:00.000Z'
+                ? mRec.lastSubmittedAt
+                : saveIsoNow;
+            mRec.lastSubmittedAt = recIso;
             activeEmpAttIds.add(canonicalAttId);
             attPayloads.push({
               id: canonicalAttId,
@@ -793,13 +905,19 @@ export const syncEmployeesToSupabase = async (
               total_work_days: Number(mRec.totalWorkDays || 0),
               total_ot_hours: Number(mRec.totalOtHours || 0),
               attendance_data: isValidDailyAttendanceMap(mRec.days) ? mRec.days : {},
-              updated_at: saveIsoNow,
+              updated_at: recIso,
             });
           }
         });
       }
     });
-    const staleEmpAttIds = Array.from(existingAttMap.values()).filter((id) => !activeEmpAttIds.has(id));
+    const staleEmpAttIds = [...duplicateEmpAttIds];
+    existingAttMap.forEach((attId, mapKey) => {
+      const wCode = mapKey.split('_')[0];
+      if (empCodeSet.has(wCode) && !activeEmpAttIds.has(attId)) {
+        staleEmpAttIds.push(attId);
+      }
+    });
 
     const staleIdsToDelete: string[] = [];
     existingById.forEach((row: any, rowId: string) => {
@@ -821,20 +939,7 @@ export const syncEmployeesToSupabase = async (
       ]).catch(() => {});
     }
 
-    const syncEmpAttPromise = (async () => {
-      try {
-        if (attPayloads.length > 0) {
-          const { error: attUpsertErr } = await client
-            .from('attendance_records')
-            .upsert(attPayloads, { onConflict: 'id' });
-          if (attUpsertErr) {
-            await client
-              .from('attendance_records')
-              .upsert(attPayloads, { onConflict: 'worker_code,month,year,period_key' });
-          }
-        }
-      } catch {}
-    })();
+    const syncEmpAttPromise = upsertAttendanceRecordsSafe(client, attPayloads);
 
     const [empUpsertRes] = await Promise.all([
       client.from('employees').upsert(payload, { onConflict: 'id' }),
@@ -980,15 +1085,21 @@ export const loadEmployeesFromSupabase = async (
     if (attRecords.length > 0) {
       list.forEach((emp) => {
         const empNormName = normalizeEmpName(emp.fullName);
-        const matchingAtts = attRecords.filter((a) => {
-          if (a.worker_type && a.worker_type !== 'PERMANENT') return false;
-          const codeMatch = a.worker_code === emp.code || a.worker_code === emp.id;
-          if (!codeMatch) return false;
-          if (a.worker_name && normalizeEmpName(a.worker_name) !== empNormName) {
-            return false;
-          }
-          return true;
-        });
+        const matchingAtts = attRecords
+          .filter((a) => {
+            if (a.worker_type && a.worker_type !== 'PERMANENT') return false;
+            const codeMatch = a.worker_code === emp.code || a.worker_code === emp.id;
+            if (!codeMatch) return false;
+            if (a.worker_name && normalizeEmpName(a.worker_name) !== empNormName) {
+              return false;
+            }
+            return true;
+          })
+          .sort((a, b) => {
+            const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+            const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+            return ta - tb;
+          });
         matchingAtts.forEach((att) => {
           const mNum = Number(att.month);
           const yNum = Number(att.year);
@@ -998,6 +1109,8 @@ export const loadEmployeesFromSupabase = async (
 
           const existingRec = emp.monthlyAttendance[monthKey];
           const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+          const existingHasDays = isValidDailyAttendanceMap(existingRec?.days);
+          const empUpdatedTs = Number(emp.updatedAt || 0);
           const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
           const attHasDays = isValidDailyAttendanceMap(att.attendance_data);
           const attIsExplicitClear =
@@ -1007,11 +1120,17 @@ export const loadEmployeesFromSupabase = async (
             Object.keys(att.attendance_data).length === 0 &&
             Number(att.total_work_days || 0) === 0 &&
             Number(att.total_ot_hours || 0) === 0 &&
-            attTs > existingTs + 1500;
+            attTs > Math.max(existingTs, empUpdatedTs) + 1500;
 
           if (attHasDays || attIsExplicitClear) {
-            // Chỉ ghi đè từ attendance_records khi chưa có trong employee_data hoặc thực sự được gửi mới hơn (>1.5s) từ Mobile App
-            if (!existingRec || (attTs > 0 && attTs > existingTs + 1500)) {
+            // Không để bản ghi cũ trong attendance_records ghi đè dữ liệu mới hơn trong employee_data
+            const isNewerThanEmployeeRow =
+              !existingHasDays || !empUpdatedTs || attTs >= empUpdatedTs - 2000;
+            if (
+              !existingRec ||
+              (!existingHasDays && Number(existingRec.totalWorkDays || 0) === 0) ||
+              (attTs > 0 && attTs > existingTs + 1500 && isNewerThanEmployeeRow)
+            ) {
               emp.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
@@ -1062,14 +1181,14 @@ export const syncSeasonalWorkersToSupabase = async (
     const existingByCode = new Map<string, { id: string; code: string; worker_data?: SeasonalWorker }>();
     const existingById = new Map<string, { id: string; code: string; worker_data?: SeasonalWorker }>();
     const existingAttMap = new Map<string, string>();
+    const duplicateSeaAttIds: string[] = [];
     const selectCols = options?.fastLocalAuthoritative ? 'id, code' : 'id, code, worker_data';
     try {
       const [seaLookupRes, attLookupRes] = await Promise.all([
         client.from('seasonal_workers').select(selectCols),
         client
           .from('attendance_records')
-          .select('id, worker_code, month, year')
-          .eq('worker_type', 'SEASONAL'),
+          .select('id, worker_code, month, year, worker_type'),
       ]);
       if (seaLookupRes.data && Array.isArray(seaLookupRes.data)) {
         seaLookupRes.data.forEach((row: any) => {
@@ -1080,7 +1199,13 @@ export const syncSeasonalWorkersToSupabase = async (
       if (attLookupRes.data && Array.isArray(attLookupRes.data)) {
         attLookupRes.data.forEach((r: any) => {
           if (r.worker_code && r.year && r.month) {
-            existingAttMap.set(`${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`, String(r.id));
+            const key = `${String(r.worker_code).trim()}_${Number(r.year)}_${Number(r.month)}`;
+            const prevId = existingAttMap.get(key);
+            if (prevId && prevId !== String(r.id)) {
+              duplicateSeaAttIds.push(String(r.id));
+            } else {
+              existingAttMap.set(key, String(r.id));
+            }
           }
         });
       }
@@ -1247,7 +1372,7 @@ export const syncSeasonalWorkersToSupabase = async (
       };
     });
 
-    // Chuẩn bị sẵn dữ liệu attendance_records để chạy SONG SONG cùng lúc với upsert seasonal_workers
+    // Chuẩn bị sẵn dữ liệu attendance_records để chạy SONG SONG cùng lúc với upsert seasonal_workers (giữ đồng nhất dấu thời gian với worker_data)
     const attPayloads: any[] = [];
     const activeSeaAttIds = new Set<string>();
     const workerCodeSet = new Set<string>();
@@ -1262,6 +1387,13 @@ export const syncSeasonalWorkersToSupabase = async (
             const mStr = String(mRec.month).padStart(2, '0');
             const mapKey = `${workerCode}_${Number(mRec.year)}_${Number(mRec.month)}`;
             const canonicalAttId = existingAttMap.get(mapKey) || `ATT-SEA-${mRec.year}-${mStr}-${workerCode}`;
+            const recIso =
+              mRec.lastSubmittedAt &&
+              mRec.lastSubmittedAt !== '2026-09-01T00:00:00.000Z' &&
+              mRec.lastSubmittedAt !== '2026-10-01T00:00:00.000Z'
+                ? mRec.lastSubmittedAt
+                : saveIsoNow;
+            mRec.lastSubmittedAt = recIso;
             activeSeaAttIds.add(canonicalAttId);
             attPayloads.push({
               id: canonicalAttId,
@@ -1275,7 +1407,7 @@ export const syncSeasonalWorkersToSupabase = async (
               total_work_days: Number(mRec.totalWorkDays || 0),
               total_ot_hours: Number(mRec.totalOtHours || 0),
               attendance_data: mRec.days || {},
-              updated_at: saveIsoNow,
+              updated_at: recIso,
             });
           }
         });
@@ -1291,7 +1423,7 @@ export const syncSeasonalWorkersToSupabase = async (
       }
     });
 
-    const staleSeaAttIds: string[] = [];
+    const staleSeaAttIds: string[] = [...duplicateSeaAttIds];
     existingAttMap.forEach((attId, mapKey) => {
       const wCode = mapKey.split('_')[0];
       if (workerCodeSet.has(wCode) && !activeSeaAttIds.has(attId)) {
@@ -1310,20 +1442,7 @@ export const syncSeasonalWorkersToSupabase = async (
       ]).catch(() => {});
     }
 
-    const syncSeaAttPromise = (async () => {
-      try {
-        if (attPayloads.length > 0) {
-          const { error: attErr } = await client.from('attendance_records').upsert(attPayloads, { onConflict: 'id' });
-          if (attErr) {
-            await client
-              .from('attendance_records')
-              .upsert(attPayloads, { onConflict: 'worker_code,month,year,period_key' });
-          }
-        }
-      } catch (attErr) {
-        console.warn('[Supabase Sync] Sync seasonal attendance_records warning:', attErr);
-      }
-    })();
+    const syncSeaAttPromise = upsertAttendanceRecordsSafe(client, attPayloads);
 
     const [seaUpsertRes] = await Promise.all([
       client.from('seasonal_workers').upsert(payload, { onConflict: 'id' }),
@@ -1494,9 +1613,15 @@ export const loadSeasonalWorkersFromSupabase = async (
       list.forEach((w) => {
         if (w.payrollCycleType === 'TEAM') return;
         const workerCode = w.code || w.id;
-        const matchingAtts = attRecords.filter(
-          (a) => a.worker_code === workerCode || a.worker_code === w.code || a.worker_code === w.id
-        );
+        const matchingAtts = attRecords
+          .filter(
+            (a) => a.worker_code === workerCode || a.worker_code === w.code || a.worker_code === w.id
+          )
+          .sort((a, b) => {
+            const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+            const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+            return ta - tb;
+          });
         const octAtt = matchingAtts.find((a) => Number(a.month) === 10 && Number(a.year) === 2026);
         matchingAtts.forEach((att) => {
           const mNum = Number(att.month);
@@ -1522,6 +1647,7 @@ export const loadSeasonalWorkersFromSupabase = async (
 
           const existingRec = w.monthlyAttendance[monthKey];
           const existingTs = existingRec?.lastSubmittedAt ? new Date(existingRec.lastSubmittedAt).getTime() : 0;
+          const workerUpdatedTs = Number(w.updatedAt || 0);
           const attTs = att.updated_at ? new Date(att.updated_at).getTime() : 0;
           const attHasValidDays = isValidDailyAttendanceMap(att.attendance_data);
           const existingHasValidDays = isValidDailyAttendanceMap(existingRec?.days);
@@ -1534,10 +1660,17 @@ export const loadSeasonalWorkersFromSupabase = async (
             Object.keys(att.attendance_data).length === 0 &&
             attWorkDays === 0 &&
             attOtHours === 0 &&
-            attTs > existingTs + 1500;
+            attTs > Math.max(existingTs, workerUpdatedTs) + 1500;
 
           if (attHasValidDays || attIsExplicitClear) {
-            if (!existingRec || (!existingHasValidDays && Number(existingRec.totalWorkDays || 0) === 0) || (attTs > 0 && attTs > existingTs + 1500)) {
+            // Không bao giờ để bản ghi cũ trong attendance_records ghi đè mất các ngày công mới chấm và lưu trong seasonal_workers.worker_data!
+            const isNewerThanWorkerRow =
+              !existingHasValidDays || !workerUpdatedTs || attTs >= workerUpdatedTs - 2000;
+            if (
+              !existingRec ||
+              (!existingHasValidDays && Number(existingRec.totalWorkDays || 0) === 0) ||
+              (attTs > 0 && attTs > existingTs + 1500 && isNewerThanWorkerRow)
+            ) {
               w.monthlyAttendance[monthKey] = {
                 monthKey,
                 month: mNum,
@@ -2714,18 +2847,7 @@ const executeSyncSingleSeasonalWorkerToSupabase = async (
         }
       });
       if (attBatch.length > 0) {
-        try {
-          const { error: attErr } = await client
-            .from('attendance_records')
-            .upsert(attBatch, { onConflict: 'id' });
-          if (attErr) {
-            await client
-              .from('attendance_records')
-              .upsert(attBatch, { onConflict: 'worker_code,month,year,period_key' });
-          }
-        } catch (e) {
-          console.warn('[Supabase Sync] Upsert attendance_records warning:', e);
-        }
+        await upsertAttendanceRecordsSafe(client, attBatch);
       }
     }
 
@@ -3057,16 +3179,7 @@ export const syncSingleEmployeeToSupabase = async (
         }
       });
       if (attBatch.length > 0) {
-        try {
-          const { error: attErr } = await client
-            .from('attendance_records')
-            .upsert(attBatch, { onConflict: 'id' });
-          if (attErr) {
-            await client
-              .from('attendance_records')
-              .upsert(attBatch, { onConflict: 'worker_code,month,year' });
-          }
-        } catch {}
+        await upsertAttendanceRecordsSafe(client, attBatch);
       }
     }
 
