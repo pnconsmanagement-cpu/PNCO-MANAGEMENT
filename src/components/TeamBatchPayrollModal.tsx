@@ -921,11 +921,10 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                     Điền nhanh mức lương chung:
                   </span>
                   <input
-                    type="number"
-                    min="0"
-                    step="any"
+                    type="text"
+                    inputMode="numeric"
                     value={quickFillSalary}
-                    onChange={(e) => setQuickFillSalary(e.target.value)}
+                    onChange={(e) => setQuickFillSalary(e.target.value.replace(/[^\d]/g, ''))}
                     placeholder="VD: 5000000"
                     className="w-32 px-2 py-1 border border-slate-300 focus:border-amber-500 rounded-lg text-xs font-mono font-bold text-right text-amber-950 focus:outline-none"
                   />
@@ -999,13 +998,16 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                             </td>
                             <td className="py-2 px-3 text-right">
                               <input
-                                type="number"
-                                min="0"
-                                step="any"
+                                type="text"
+                                inputMode="numeric"
                                 placeholder="Nhập tiền lương..."
                                 value={item.salaryByDays}
                                 onChange={(e) =>
-                                  handleChangeWorkerField(wKey, 'salaryByDays', e.target.value)
+                                  handleChangeWorkerField(
+                                    wKey,
+                                    'salaryByDays',
+                                    e.target.value.replace(/[^\d]/g, '')
+                                  )
                                 }
                                 className="w-40 px-2.5 py-1.5 bg-amber-50/50 focus:bg-white border-2 border-amber-400 focus:border-amber-600 rounded-lg text-right font-mono font-black text-xs text-purple-950 focus:outline-none"
                               />
@@ -1017,26 +1019,32 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                             </td>
                             <td className="py-2 px-3 text-right">
                               <input
-                                type="number"
-                                min="0"
-                                step="any"
+                                type="text"
+                                inputMode="numeric"
                                 placeholder="0"
                                 value={item.otherBonus}
                                 onChange={(e) =>
-                                  handleChangeWorkerField(wKey, 'otherBonus', e.target.value)
+                                  handleChangeWorkerField(
+                                    wKey,
+                                    'otherBonus',
+                                    e.target.value.replace(/[^\d]/g, '')
+                                  )
                                 }
                                 className="w-28 px-2 py-1.5 bg-white border border-slate-300 focus:border-emerald-500 rounded-lg text-right font-mono font-semibold text-xs text-emerald-800 focus:outline-none"
                               />
                             </td>
                             <td className="py-2 px-3 text-right">
                               <input
-                                type="number"
-                                min="0"
-                                step="any"
+                                type="text"
+                                inputMode="numeric"
                                 placeholder="0"
                                 value={item.advancePayment}
                                 onChange={(e) =>
-                                  handleChangeWorkerField(wKey, 'advancePayment', e.target.value)
+                                  handleChangeWorkerField(
+                                    wKey,
+                                    'advancePayment',
+                                    e.target.value.replace(/[^\d]/g, '')
+                                  )
                                 }
                                 className="w-28 px-2 py-1.5 bg-white border border-slate-300 focus:border-rose-500 rounded-lg text-right font-mono font-semibold text-xs text-rose-700 focus:outline-none"
                               />
