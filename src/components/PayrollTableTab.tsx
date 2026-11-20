@@ -84,6 +84,9 @@ interface PayrollTableTabProps {
   onDeleteEmployee: (id: string) => void;
   onUpdateSeasonalWorker?: (worker: SeasonalWorker) => void;
   onBatchUpdateTeamWorkersList?: (workers: SeasonalWorker[]) => void;
+  onSaveTeamBatchToCloud?: (
+    workers: SeasonalWorker[]
+  ) => Promise<{ success: boolean; error?: string }>;
   onSavePayrollToCloud?: () => Promise<void> | void;
   onReloadFromCloud?: () => Promise<void> | void;
   onOpenSupabaseModal?: () => void;
@@ -104,6 +107,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
   onDeleteEmployee,
   onUpdateSeasonalWorker,
   onBatchUpdateTeamWorkersList,
+  onSaveTeamBatchToCloud,
   onSavePayrollToCloud,
   onReloadFromCloud,
   onOpenSupabaseModal,
@@ -942,7 +946,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     setIsTeamBatchModalOpen(true);
   };
 
-  const handleSaveTeamBatchAndSync = (
+  const handleSaveTeamBatchAndSync = async (
     updatedTeamWorkers: SeasonalWorker[],
     noticeMessage: string,
     savedBatchCode: string
@@ -950,6 +954,36 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     setIsTeamBatchModalOpen(false);
     setEditingTeamPeriodGroup(null);
     setSeasonalCycleTab('TEAM');
+
+    if (onSaveTeamBatchToCloud) {
+      setIsSavingPayroll(true);
+      setSavePayrollNotice(`⏳ Đang lưu nhanh Kỳ lương Tổ Đội [${savedBatchCode}] vào Database...`);
+      try {
+        const res = await onSaveTeamBatchToCloud(updatedTeamWorkers);
+        if (res.success) {
+          setSavePayrollNotice(noticeMessage);
+          setTimeout(() => {
+            setSavePayrollNotice((prev) => (prev === noticeMessage ? null : prev));
+          }, 6500);
+        } else {
+          setSavePayrollNotice(
+            `⚠ Đã lưu Kỳ lương [${savedBatchCode}] tạm trên máy nhưng lỗi ghi Database (${
+              res.error || 'mất kết nối'
+            }) — vui lòng nhấn "Lưu Data" để thử lại!`
+          );
+        }
+      } catch (err: any) {
+        setSavePayrollNotice(
+          `⚠ Đã lưu Kỳ lương [${savedBatchCode}] tạm trên máy (${
+            err?.message || 'lỗi kết nối'
+          }) — vui lòng nhấn "Lưu Data" để đồng bộ lại Cloud.`
+        );
+      } finally {
+        setIsSavingPayroll(false);
+      }
+      return;
+    }
+
     if (onBatchUpdateTeamWorkersList) {
       onBatchUpdateTeamWorkersList(updatedTeamWorkers);
     } else if (onUpdateSeasonalWorker) {
@@ -963,7 +997,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         .then(() => {
           setSavePayrollNotice(noticeMessage);
           setTimeout(() => {
-            setSavePayrollNotice(null);
+            setSavePayrollNotice((prev) => (prev === noticeMessage ? null : prev));
           }, 6500);
         })
         .catch(() => {
@@ -977,7 +1011,7 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     } else {
       setSavePayrollNotice(noticeMessage);
       setTimeout(() => {
-        setSavePayrollNotice(null);
+        setSavePayrollNotice((prev) => (prev === noticeMessage ? null : prev));
       }, 6500);
     }
   };
@@ -1011,22 +1045,37 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
         setViewingTeamPeriodGroupKey(null);
       }
       setConfirmDeleteGroupKey(null);
-      if (onBatchUpdateTeamWorkersList) {
-        onBatchUpdateTeamWorkersList(updatedWorkers);
-      } else if (onUpdateSeasonalWorker) {
-        updatedWorkers.forEach((uw) => onUpdateSeasonalWorker(uw));
-      }
       setIsSavingPayroll(true);
+      setSavePayrollNotice(`⏳ Đang xóa Kỳ lương [${group.displayCode}] khỏi Database...`);
       try {
-        if (onSavePayrollToCloud) {
-          await Promise.resolve(onSavePayrollToCloud());
+        if (onSaveTeamBatchToCloud) {
+          const res = await onSaveTeamBatchToCloud(updatedWorkers);
+          if (res.success) {
+            const okMsg = `✓ Đã xóa Kỳ lương [${group.displayCode} - ngày ${group.paymentDateDisplay}] (${updatedWorkers.length} công nhân) và cập nhật Database!`;
+            setSavePayrollNotice(okMsg);
+            setTimeout(() => {
+              setSavePayrollNotice((prev) => (prev === okMsg ? null : prev));
+            }, 5500);
+          } else {
+            setSavePayrollNotice(
+              `⚠ Đã xóa [${group.displayCode}] trên máy nhưng lỗi ghi Database (${res.error || 'mất kết nối'}) — vui lòng nhấn "Lưu Data"!`
+            );
+          }
+        } else {
+          if (onBatchUpdateTeamWorkersList) {
+            onBatchUpdateTeamWorkersList(updatedWorkers);
+          } else if (onUpdateSeasonalWorker) {
+            updatedWorkers.forEach((uw) => onUpdateSeasonalWorker(uw));
+          }
+          if (onSavePayrollToCloud) {
+            await Promise.resolve(onSavePayrollToCloud());
+          }
+          const okMsg = `✓ Đã xóa Kỳ lương [${group.displayCode} - ngày ${group.paymentDateDisplay}] (${updatedWorkers.length} công nhân) và cập nhật Database!`;
+          setSavePayrollNotice(okMsg);
+          setTimeout(() => {
+            setSavePayrollNotice((prev) => (prev === okMsg ? null : prev));
+          }, 5500);
         }
-        setSavePayrollNotice(
-          `✓ Đã xóa Kỳ lương [${group.displayCode} - ngày ${group.paymentDateDisplay}] (${updatedWorkers.length} công nhân) và cập nhật Database!`
-        );
-        setTimeout(() => {
-          setSavePayrollNotice(null);
-        }, 5500);
       } finally {
         setIsSavingPayroll(false);
       }
@@ -1053,6 +1102,29 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
     };
 
     setConfirmRemoveVoucherId(null);
+
+    if (onSaveTeamBatchToCloud) {
+      setIsSavingPayroll(true);
+      setSavePayrollNotice(`⏳ Đang gỡ ${row.worker.fullName} khỏi ${group.displayCode}...`);
+      try {
+        const res = await onSaveTeamBatchToCloud([updatedWorker]);
+        if (res.success) {
+          const okMsg = `✓ Đã gỡ công nhân ${row.worker.fullName} khỏi ${group.displayCode} (${group.paymentDateDisplay}) & cập nhật Database!`;
+          setSavePayrollNotice(okMsg);
+          setTimeout(() => {
+            setSavePayrollNotice((prev) => (prev === okMsg ? null : prev));
+          }, 5000);
+        } else {
+          setSavePayrollNotice(
+            `⚠ Đã gỡ ${row.worker.fullName} trên máy nhưng lỗi ghi Database (${res.error || 'mất kết nối'}) — vui lòng nhấn "Lưu Data"!`
+          );
+        }
+      } finally {
+        setIsSavingPayroll(false);
+      }
+      return;
+    }
+
     if (onBatchUpdateTeamWorkersList) {
       onBatchUpdateTeamWorkersList([updatedWorker]);
     } else if (onUpdateSeasonalWorker) {
@@ -1982,15 +2054,31 @@ export const PayrollTableTab: React.FC<PayrollTableTabProps> = ({
             )}
 
             {savePayrollNotice && (
-              <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between shadow-2xs">
+              <div
+                className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between shadow-2xs border ${
+                  savePayrollNotice.startsWith('⚠')
+                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : savePayrollNotice.startsWith('⏳')
+                    ? 'bg-sky-50 border-sky-300 text-sky-900'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                }`}
+              >
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <CheckCircle2
+                    className={`w-4 h-4 shrink-0 ${
+                      savePayrollNotice.startsWith('⚠')
+                        ? 'text-rose-600'
+                        : savePayrollNotice.startsWith('⏳')
+                        ? 'text-sky-600 animate-spin'
+                        : 'text-emerald-600'
+                    }`}
+                  />
                   <span>{savePayrollNotice}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSavePayrollNotice(null)}
-                  className="text-emerald-700 hover:text-emerald-950 font-black px-1.5 cursor-pointer"
+                  className="opacity-75 hover:opacity-100 font-black px-1.5 cursor-pointer"
                 >
                   ✕
                 </button>

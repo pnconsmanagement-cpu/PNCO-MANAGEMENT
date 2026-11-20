@@ -35,6 +35,7 @@ import {
   syncCompanyConfigToSupabase,
   syncEmployeesToSupabase,
   syncSeasonalWorkersToSupabase,
+  syncTeamBatchWorkersToSupabase,
   syncTeamWorkersToSupabase,
   syncProjectsToSupabase,
   syncSalaryAdvancesToSupabase,
@@ -1877,10 +1878,59 @@ export default function App() {
             )
           : latestEmployees;
 
-      const appliedSea =
+      let appliedSea =
         cloudSea && cloudSea.length > 0
           ? formatAuthoritativeSeasonalFromRemote(cloudSea, curM, curY)
           : latestSeasonal;
+
+      // Bảo vệ chống mất Kỳ lương Tổ Đội khi người dùng bấm F5 ngay lúc đang đồng bộ hoặc gặp lỗi mạng tạm thời
+      let pendingTeamToRetry: SeasonalWorker[] = [];
+      try {
+        const rawPendingTeam = localStorage.getItem('pncons_pending_team_batch_workers_v1');
+        if (rawPendingTeam) {
+          const parsedPending = JSON.parse(rawPendingTeam);
+          if (Array.isArray(parsedPending) && parsedPending.length > 0) {
+            const pendingById = new Map<string, SeasonalWorker>();
+            const pendingByCode = new Map<string, SeasonalWorker>();
+            parsedPending.forEach((pw: SeasonalWorker) => {
+              if (!pw || pw.payrollCycleType !== 'TEAM') return;
+              if (pw.id) pendingById.set(String(pw.id), pw);
+              if (pw.code) pendingByCode.set(String(pw.code), pw);
+            });
+            if (pendingById.size > 0 || pendingByCode.size > 0) {
+              appliedSea = appliedSea.map((existing) => {
+                if (existing.payrollCycleType !== 'TEAM') return existing;
+                const matchedPending =
+                  (existing.id ? pendingById.get(String(existing.id)) : undefined) ||
+                  (existing.code ? pendingByCode.get(String(existing.code)) : undefined);
+                if (!matchedPending) return existing;
+                const pendingTs = Number(matchedPending.updatedAt || 0);
+                const cloudTs = Number(existing.updatedAt || 0);
+                if (pendingTs > 0 && pendingTs >= cloudTs) {
+                  const mergedPending: SeasonalWorker = {
+                    ...existing,
+                    ...matchedPending,
+                    payrollCycleType: 'TEAM',
+                    dailyRate: 0,
+                    periodRecords: {
+                      ...(existing.periodRecords || {}),
+                      ...(matchedPending.periodRecords || {}),
+                    },
+                    updatedAt: pendingTs,
+                  };
+                  const syncedPending = syncSeasonalWorkerForMonth(mergedPending, curM, curY);
+                  pendingTeamToRetry.push(syncedPending);
+                  return syncedPending;
+                }
+                return existing;
+              });
+              if (pendingTeamToRetry.length === 0) {
+                localStorage.removeItem('pncons_pending_team_batch_workers_v1');
+              }
+            }
+          }
+        }
+      } catch {}
 
       const effectiveAdvs =
         cloudAdvs !== null
@@ -1935,6 +1985,23 @@ export default function App() {
       }
       setCloudSyncStatus('synced');
       setLastSyncedText(getLastSyncedTime());
+
+      if (pendingTeamToRetry.length > 0 && isSupabaseConfigured()) {
+        void syncTeamBatchWorkersToSupabase(pendingTeamToRetry, curPeriod)
+          .then((retryRes) => {
+            if (retryRes.success) {
+              try {
+                localStorage.removeItem('pncons_pending_team_batch_workers_v1');
+              } catch {}
+              fetchCloudSyncSignature()
+                .then((sig) => {
+                  if (sig) lastKnownCloudSigRef.current = sig;
+                })
+                .catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
 
       fetchCloudSyncSignature()
         .then((sig) => {
@@ -2853,6 +2920,9 @@ export default function App() {
       if (!cloudSyncErrorMsg) {
         hasUnsavedChangesRef.current = false;
         setHasUnsavedChanges(false);
+        try {
+          localStorage.removeItem('pncons_pending_team_batch_workers_v1');
+        } catch {}
       }
 
       notifyCrossTab();
@@ -3451,6 +3521,207 @@ export default function App() {
 
     seasonalWorkersRef.current = nextList;
     setSeasonalWorkers(nextList);
+    try {
+      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
+    } catch {}
+  };
+
+  // Lưu & đồng bộ SIÊU TỐC (~0.3s) RIÊNG các công nhân Tổ Đội vừa lập / sửa / xóa Kỳ Lương Tổ Đội lên Database (không đụng chạm 50+ thợ thời vụ hay chấm công!)
+  const handleSaveTeamBatchWorkersToCloud = async (
+    teamUpdates: SeasonalWorker[]
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!Array.isArray(teamUpdates) || teamUpdates.length === 0) {
+      return { success: true };
+    }
+
+    const nowTs = Date.now();
+    lastLocalEditAtRef.current = nowTs;
+    lastWriteCompletedAtRef.current = nowTs;
+
+    const curM = configRef.current.month || realDateInfo.realMonth;
+    const curY = configRef.current.year || realDateInfo.realYear;
+
+    const updatesById = new Map<string, SeasonalWorker>();
+    const updatesByCode = new Map<string, SeasonalWorker>();
+    teamUpdates.forEach((u) => {
+      if (u.id) updatesById.set(String(u.id), u);
+      if (u.code) updatesByCode.set(String(u.code), u);
+    });
+
+    const mergedChangedTeamWorkers: SeasonalWorker[] = [];
+    const nextList = seasonalWorkersRef.current.map((existing) => {
+      if (existing.payrollCycleType !== 'TEAM') {
+        return existing;
+      }
+      const matched =
+        (existing.id ? updatesById.get(String(existing.id)) : undefined) ||
+        (existing.code ? updatesByCode.get(String(existing.code)) : undefined);
+      if (!matched) {
+        return existing;
+      }
+      const mergedWorker: SeasonalWorker = {
+        ...existing,
+        ...matched,
+        payrollCycleType: 'TEAM',
+        dailyRate: 0,
+        bankAccount: matched.bankAccount !== undefined ? matched.bankAccount : existing.bankAccount || '',
+        bankName: matched.bankName !== undefined ? matched.bankName : existing.bankName || 'Vietcombank',
+        paymentMethod: matched.paymentMethod || existing.paymentMethod || 'BANK',
+        monthlyAttendance: {
+          ...(existing.monthlyAttendance || {}),
+          ...(matched.monthlyAttendance || {}),
+        },
+        periodRecords: {
+          ...(existing.periodRecords || {}),
+          ...(matched.periodRecords || {}),
+        },
+        updatedAt: nowTs,
+      };
+      const syncedWorker = syncSeasonalWorkerForMonth(mergedWorker, curM, curY);
+      mergedChangedTeamWorkers.push(syncedWorker);
+      return syncedWorker;
+    });
+
+    // 1. Cập nhật ngay lập tức trên UI & LocalStorage (0ms) + ghi hàng đợi bảo vệ chống mất dữ liệu khi nhấn F5
+    seasonalWorkersRef.current = nextList;
+    setSeasonalWorkers(nextList);
+    try {
+      localStorage.setItem('payroll_seasonal_workers', JSON.stringify(nextList));
+      const existingPendingRaw = localStorage.getItem('pncons_pending_team_batch_workers_v1');
+      const existingPending: SeasonalWorker[] = existingPendingRaw ? JSON.parse(existingPendingRaw) : [];
+      const pendingMap = new Map<string, SeasonalWorker>();
+      if (Array.isArray(existingPending)) {
+        existingPending.forEach((pw) => {
+          const k = String(pw?.code || pw?.id || '');
+          if (k) pendingMap.set(k, pw);
+        });
+      }
+      mergedChangedTeamWorkers.forEach((cw) => {
+        const k = String(cw.code || cw.id || '');
+        if (k) pendingMap.set(k, cw);
+      });
+      localStorage.setItem(
+        'pncons_pending_team_batch_workers_v1',
+        JSON.stringify(Array.from(pendingMap.values()))
+      );
+    } catch {}
+
+    if (mergedChangedTeamWorkers.length === 0) {
+      return { success: true };
+    }
+
+    const latestCfg = configRef.current;
+    const latestEmps = employeesRef.current;
+    const latestProjects = projectsRef.current;
+    const latestTeams = teamWorkersRef.current;
+    const latestAdvances = salaryAdvancesRef.current;
+    const sbCfg = getSupabaseConfig();
+    const cfgToSync: CompanyConfig = {
+      ...latestCfg,
+      ...(sbCfg.url && sbCfg.anonKey
+        ? { supabaseUrl: sbCfg.url, supabaseAnonKey: sbCfg.anonKey }
+        : {}),
+    } as CompanyConfig;
+
+    beginSyncTask(true);
+    try {
+      const serverSavePromise = saveAllToServer(
+        cfgToSync,
+        latestEmps,
+        nextList,
+        latestProjects,
+        latestTeams,
+        latestAdvances
+      ).catch(() => false);
+
+      if (isSupabaseConfigured()) {
+        const [sbRes] = await Promise.all([
+          syncTeamBatchWorkersToSupabase(mergedChangedTeamWorkers, cfgToSync.periodCode),
+          serverSavePromise,
+        ]);
+
+        if (!sbRes.success) {
+          hasUnsavedChangesRef.current = true;
+          setHasUnsavedChanges(true);
+          endSyncTask('error');
+          return { success: false, error: sbRes.error || sbRes.message };
+        }
+
+        // Xóa khỏi hàng đợi pending chỉ SAU KHI Supabase xác nhận đã lưu thành công!
+        try {
+          const syncedKeys = new Set(
+            mergedChangedTeamWorkers.map((w) => String(w.code || w.id || ''))
+          );
+          const rawP = localStorage.getItem('pncons_pending_team_batch_workers_v1');
+          if (rawP) {
+            const arrP = JSON.parse(rawP);
+            if (Array.isArray(arrP)) {
+              const remainingP = arrP.filter(
+                (pw: any) => !syncedKeys.has(String(pw?.code || pw?.id || ''))
+              );
+              if (remainingP.length === 0) {
+                localStorage.removeItem('pncons_pending_team_batch_workers_v1');
+              } else {
+                localStorage.setItem('pncons_pending_team_batch_workers_v1', JSON.stringify(remainingP));
+              }
+            }
+          }
+        } catch {}
+
+        markCloudPartsAsSynced(
+          cfgToSync,
+          latestEmps,
+          nextList,
+          latestTeams,
+          latestProjects,
+          latestAdvances
+        );
+        markSnapshotAsSaved(cfgToSync, latestEmps, nextList, latestAdvances);
+        hasUnsavedChangesRef.current = false;
+        setHasUnsavedChanges(false);
+        lastWriteCompletedAtRef.current = Date.now();
+        notifyCrossTab();
+
+        const nowTime = getLastSyncedTime() || new Date().toLocaleTimeString('vi-VN');
+        setLastSyncedText(nowTime);
+        endSyncTask('synced');
+
+        // Cập nhật chữ ký đồng bộ & bảng payroll_records chạy ngầm (không làm chậm thao tác người dùng)
+        fetchCloudSyncSignature()
+          .then((sig) => {
+            if (sig) lastKnownCloudSigRef.current = sig;
+          })
+          .catch(() => {});
+        const pCode =
+          cfgToSync.periodCode ||
+          `${String(cfgToSync.month || 11).padStart(2, '0')}/${cfgToSync.year || 2026}`;
+        const pTag = pCode.replace('/', '_');
+        void syncPayrollRecordsToSupabase(
+          buildPayrollRecordsForSync(cfgToSync, latestEmps, nextList, latestTeams),
+          pTag
+        ).catch(() => {});
+
+        return { success: true };
+      }
+
+      // Chế độ không kết nối Supabase -> chờ lưu xong máy chủ cục bộ
+      await serverSavePromise;
+      try {
+        localStorage.removeItem('pncons_pending_team_batch_workers_v1');
+      } catch {}
+      markSnapshotAsSaved(cfgToSync, latestEmps, nextList, latestAdvances);
+      hasUnsavedChangesRef.current = false;
+      setHasUnsavedChanges(false);
+      lastWriteCompletedAtRef.current = Date.now();
+      notifyCrossTab();
+      endSyncTask('synced');
+      return { success: true };
+    } catch (err: any) {
+      hasUnsavedChangesRef.current = true;
+      setHasUnsavedChanges(true);
+      endSyncTask('error');
+      return { success: false, error: err?.message || 'Lỗi kết nối Database' };
+    }
   };
 
   // Đồng bộ 100% danh sách nhân viên và công nhân thời vụ theo đúng Tháng/Năm đang chọn (config.month / config.year)
@@ -4382,6 +4653,7 @@ export default function App() {
                       onDeleteEmployee={handleDeleteEmployee}
                       onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                       onBatchUpdateTeamWorkersList={handleBatchUpdateTeamSeasonalWorkers}
+                      onSaveTeamBatchToCloud={handleSaveTeamBatchWorkersToCloud}
                       onSavePayrollToCloud={handleManualForceSync}
                       onReloadFromCloud={() => reloadLatestFromCloud()}
                       onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
@@ -4487,6 +4759,7 @@ export default function App() {
                   onDeleteEmployee={handleDeleteEmployee}
                   onUpdateSeasonalWorker={handleUpdateSeasonalWorker}
                   onBatchUpdateTeamWorkersList={handleBatchUpdateTeamSeasonalWorkers}
+                  onSaveTeamBatchToCloud={handleSaveTeamBatchWorkersToCloud}
                   onSavePayrollToCloud={handleManualForceSync}
                   onReloadFromCloud={() => reloadLatestFromCloud()}
                   onOpenSupabaseModal={() => setIsSupabaseOpen(true)}
