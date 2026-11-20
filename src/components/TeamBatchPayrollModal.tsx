@@ -923,7 +923,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                   <input
                     type="number"
                     min="0"
-                    step="100000"
+                    step="any"
                     value={quickFillSalary}
                     onChange={(e) => setQuickFillSalary(e.target.value)}
                     placeholder="VD: 5000000"
@@ -1001,7 +1001,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                               <input
                                 type="number"
                                 min="0"
-                                step="100000"
+                                step="any"
                                 placeholder="Nhập tiền lương..."
                                 value={item.salaryByDays}
                                 onChange={(e) =>
@@ -1019,7 +1019,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                               <input
                                 type="number"
                                 min="0"
-                                step="50000"
+                                step="any"
                                 placeholder="0"
                                 value={item.otherBonus}
                                 onChange={(e) =>
@@ -1032,7 +1032,7 @@ export const TeamBatchPayrollModal: React.FC<TeamBatchPayrollModalProps> = ({
                               <input
                                 type="number"
                                 min="0"
-                                step="100000"
+                                step="any"
                                 placeholder="0"
                                 value={item.advancePayment}
                                 onChange={(e) =>

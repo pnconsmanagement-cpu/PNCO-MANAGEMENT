@@ -215,6 +215,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     dateStr: string;
     dayOfWeek: string;
   } | null>(null);
+  const [customOtInput, setCustomOtInput] = useState<string>('');
 
   useEffect(() => {
     setModifiedEmployees(
@@ -589,6 +590,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
 
     if (status === 'NONE') {
       delete baseMap[day];
+      if (editingCell && editingCell.workerCode === workerCode && editingCell.day === day) {
+        setCustomOtInput('');
+      }
     } else {
       const workUnits =
         status === 'FULL' || status === 'LATE' ? 1 : status === 'HALF' ? 0.5 : 0;
@@ -609,6 +613,9 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
         note: prev?.note,
         updatedAt: new Date().toISOString(),
       };
+      if (editingCell && editingCell.workerCode === workerCode && editingCell.day === day) {
+        setCustomOtInput(otHours > 0 && ![0, 1, 2, 3, 4, 8].includes(otHours) ? String(otHours) : '');
+      }
     }
     applyWorkerDaysMapUpdate(workerCode, baseMap, true);
   };
@@ -902,6 +909,16 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
     const map = getCurrentDaysMapForWorker(editingCell.workerCode);
     return map[editingCell.day] || null;
   }, [editingCell, groupedSections]);
+
+  useEffect(() => {
+    if (!editingCell) {
+      setCustomOtInput('');
+      return;
+    }
+    const map = getCurrentDaysMapForWorker(editingCell.workerCode);
+    const curOt = map[editingCell.day]?.otHours || 0;
+    setCustomOtInput(curOt > 0 && ![0, 1, 2, 3, 4, 8].includes(curOt) ? String(curOt) : '');
+  }, [editingCell?.workerCode, editingCell?.day]);
 
   const participatingCount = useMemo(() => {
     let count = 0;
@@ -1566,14 +1583,15 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                   <button
                     key={h}
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      setCustomOtInput('');
                       handleSelectDayOtHours(
                         editingCell.workerCode,
                         editingCell.day,
                         editingCell.dateStr,
                         h
-                      )
-                    }
+                      );
+                    }}
                     className={`py-1.5 rounded-lg text-xs font-extrabold border cursor-pointer transition ${
                       (activeEditingDayDetail?.otHours || 0) === h
                         ? 'bg-[#f57c00] text-white border-[#f57c00] shadow-2xs'
@@ -1583,6 +1601,112 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({
                     {h}h
                   </button>
                 ))}
+              </div>
+
+              <div className="flex items-center gap-2 pt-0.5">
+                <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
+                  Nhập số khác:
+                </span>
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customOtInput}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(',', '.');
+                      if (!/^\d*\.?\d*$/.test(raw)) return;
+                      setCustomOtInput(raw);
+                      if (raw === '') {
+                        handleSelectDayOtHours(
+                          editingCell.workerCode,
+                          editingCell.day,
+                          editingCell.dateStr,
+                          0
+                        );
+                        return;
+                      }
+                      if (raw.endsWith('.')) return;
+                      const parsed = Math.min(
+                        24,
+                        Math.max(0, Math.round(parseFloat(raw) * 100) / 100)
+                      );
+                      if (!Number.isNaN(parsed)) {
+                        handleSelectDayOtHours(
+                          editingCell.workerCode,
+                          editingCell.day,
+                          editingCell.dateStr,
+                          parsed
+                        );
+                        if (parseFloat(raw) > 24) {
+                          setCustomOtInput('24');
+                        }
+                      }
+                    }}
+                    onBlur={() => {
+                      const normalized = customOtInput.replace(',', '.').trim();
+                      if (!normalized || normalized === '.') {
+                        setCustomOtInput('');
+                        if (normalized === '.') {
+                          handleSelectDayOtHours(
+                            editingCell.workerCode,
+                            editingCell.day,
+                            editingCell.dateStr,
+                            0
+                          );
+                        }
+                        return;
+                      }
+                      const parsed = Math.min(
+                        24,
+                        Math.max(0, Math.round(parseFloat(normalized) * 100) / 100)
+                      );
+                      if (!Number.isNaN(parsed)) {
+                        handleSelectDayOtHours(
+                          editingCell.workerCode,
+                          editingCell.day,
+                          editingCell.dateStr,
+                          parsed
+                        );
+                        setCustomOtInput(
+                          parsed > 0 && ![0, 1, 2, 3, 4, 8].includes(parsed)
+                            ? String(parsed)
+                            : ''
+                        );
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const normalized = customOtInput.replace(',', '.').trim();
+                        if (normalized && normalized !== '.') {
+                          const parsed = Math.min(
+                            24,
+                            Math.max(0, Math.round(parseFloat(normalized) * 100) / 100)
+                          );
+                          if (!Number.isNaN(parsed)) {
+                            handleSelectDayOtHours(
+                              editingCell.workerCode,
+                              editingCell.day,
+                              editingCell.dateStr,
+                              parsed
+                            );
+                          }
+                        }
+                        setEditingCell(null);
+                      }
+                    }}
+                    placeholder="VD: 1.5, 2.5, 3.5, 5, 6..."
+                    className={`w-full py-1.5 pl-2.5 pr-9 rounded-lg text-xs font-extrabold border outline-none transition ${
+                      (activeEditingDayDetail?.otHours || 0) > 0 &&
+                      ![0, 1, 2, 3, 4, 8].includes(activeEditingDayDetail?.otHours || 0)
+                        ? 'bg-orange-50 text-[#e65100] border-[#f57c00] ring-1 ring-[#f57c00]/30'
+                        : 'bg-slate-50/80 text-slate-800 border-slate-200 focus:bg-white focus:border-[#f57c00] focus:ring-1 focus:ring-[#f57c00]/30'
+                    } placeholder:font-normal placeholder:text-slate-400`}
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 pointer-events-none">
+                    giờ
+                  </span>
+                </div>
               </div>
             </div>
 
